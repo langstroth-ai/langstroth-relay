@@ -13,7 +13,7 @@ LABEL org.opencontainers.image.title="Ligus Relay" \
       org.opencontainers.image.source="https://github.com/ligus-ai/relay" \
       org.opencontainers.image.licenses="MIT"
 COPY --from=build /out/ligus-relay /usr/local/bin/ligus-relay
-# Former binary name, kept as an alias through v2.1 for custom entrypoints and
+# Former binary name, kept as an alias until v3.0 for custom entrypoints and
 # scripts that exec hive-relay directly.
 RUN ln -s ligus-relay /usr/local/bin/hive-relay
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

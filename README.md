@@ -14,8 +14,8 @@ presence. **It never sees plaintext.**
 > **Renamed from Hive.** The Go module is now `github.com/ligus-ai/relay`
 > (v0.2.0+; `github.com/honeyhive-ai/relay` v0.1.x is deprecated), the binary is
 > `ligus-relay` (the container image keeps a `hive-relay` alias, and
-> `cmd/hive-relay` still builds, through v2.1), and settings are named
-> `LIGUS_RELAY_*`. Every legacy `LIGUS_RELAY_*` name still works: the new name
+> `cmd/hive-relay` still builds, until v3.0), and settings are named
+> `LIGUS_RELAY_*`. Every legacy `HIVE_RELAY_*` name still works: the new name
 > wins if both are set, and the relay logs a one-time deprecation warning per
 > legacy name. Wire formats do not change: the `/v1` API, `hrt1` tokens,
 > `X-Hive-*` headers, the `hive-tunnel.1` subprotocol and the `hive_relay_*`
