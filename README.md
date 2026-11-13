@@ -1,7 +1,8 @@
 # Ligus Relay
 
 A small, **content-blind** rendezvous + envelope-forwarding server for
-[Ligus](https://github.com/ligus-ai/ligus). Ligus (LEE-gus) is short for
+[Ligus](https://ligus.ai) ([source](https://github.com/ligus-ai/ligus),
+[docs](https://docs.ligus.ai)). Ligus (LEE-gus) is short for
 *ligustica*, as in *Apis mellifera ligustica*, the Italian honeybee; the project
 was called Hive until v2.0, and this relay was `hive-relay`.
 
