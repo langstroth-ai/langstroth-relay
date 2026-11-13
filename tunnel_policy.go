@@ -76,7 +76,7 @@ type envTunnelPolicy struct {
 func TunnelPolicyFromEnv() TunnelPolicy { return tunnelPolicyFromEnv(EntitlementFromEnv()) }
 
 func tunnelPolicyFromEnv(ent EntitlementVerifier) TunnelPolicy {
-	p, err := newEnvTunnelPolicy(os.Getenv("HIVE_RELAY_TUNNEL"), os.Getenv("HIVE_RELAY_TUNNEL_HOSTS"), ent)
+	p, err := newEnvTunnelPolicy(getenv("HIVE_RELAY_TUNNEL"), getenv("HIVE_RELAY_TUNNEL_HOSTS"), ent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hive-relay: %v; the tunnel stays off\n", err)
 		return nil

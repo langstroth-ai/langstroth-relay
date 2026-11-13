@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -92,7 +91,7 @@ func (c *concurrencyLimiter) acquire() (release func(), ok bool) {
 }
 
 func envFloat(name string, def float64) float64 {
-	if v := os.Getenv(name); v != "" {
+	if v := getenv(name); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
 		}
@@ -101,7 +100,7 @@ func envFloat(name string, def float64) float64 {
 }
 
 func envInt64(name string, def int64) int64 {
-	if v := os.Getenv(name); v != "" {
+	if v := getenv(name); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}

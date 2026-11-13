@@ -88,7 +88,7 @@ func (s *APNsPushSender) Send(ctx context.Context, hostID, pid string, tok PushT
 // It returns (nil, nil) when none of them is set, and an error when the
 // configuration is incomplete or the key doesn't parse (push then stays off).
 func APNsPushSenderFromEnv() (*APNsPushSender, error) {
-	return apnsPushSenderFrom(os.Getenv)
+	return apnsPushSenderFrom(getenv)
 }
 
 func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {

@@ -136,14 +136,14 @@ type entitlementPolicy struct {
 //  2. HIVE_RELAY_ACCESS_TOKENS (comma-separated)   → static allowlist;
 //  3. otherwise                                    → open (self-host default).
 func entitlementFromEnv() entitlementPolicy {
-	if pk := os.Getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
+	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
 		if vk, ok := parsePubkey(pk); ok {
 			return entitlementPolicy{kind: entSigned, pubkey: vk}
 		}
 		// Parsing failed — fall through, but make it loud.
 		os.Stderr.WriteString("HIVE_RELAY_TOKEN_PUBKEY set but unparseable; ignoring\n")
 	}
-	if v := strings.TrimSpace(os.Getenv("HIVE_RELAY_ACCESS_TOKENS")); v != "" {
+	if v := strings.TrimSpace(getenv("HIVE_RELAY_ACCESS_TOKENS")); v != "" {
 		var hashes []string
 		for _, t := range strings.Split(v, ",") {
 			if t = strings.TrimSpace(t); t != "" {

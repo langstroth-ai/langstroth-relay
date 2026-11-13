@@ -137,31 +137,31 @@ func MainWith(ext Extension) {
 // the next machine move (P2-16). Self-hosters leave it unset and keep the
 // snapshot-store fallback.
 func buildStore(ctx context.Context) (Store, error) {
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := getenv("DATABASE_URL")
 	if envBool("HIVE_RELAY_REQUIRE_DB") && dsn == "" {
 		return nil, fmt.Errorf("HIVE_RELAY_REQUIRE_DB is set but DATABASE_URL is empty: refusing to boot on the ephemeral in-memory store")
 	}
 	if dsn != "" {
 		return newPostgresStore(ctx, dsn)
 	}
-	if dir := os.Getenv("HIVE_RELAY_DATA_DIR"); dir != "" {
+	if dir := getenv("HIVE_RELAY_DATA_DIR"); dir != "" {
 		return newMemoryStoreWithPersistence(dir), nil
 	}
 	return newMemoryStore(), nil
 }
 
 func resolveAddr() string {
-	if port := os.Getenv("PORT"); port != "" {
+	if port := getenv("PORT"); port != "" {
 		return "0.0.0.0:" + port
 	}
-	if addr := os.Getenv("HIVE_RELAY_ADDR"); addr != "" {
+	if addr := getenv("HIVE_RELAY_ADDR"); addr != "" {
 		return addr
 	}
 	return "0.0.0.0:8443"
 }
 
 func friendCapFromEnv() *int {
-	if v := os.Getenv("HIVE_RELAY_FRIEND_CAP"); v != "" {
+	if v := getenv("HIVE_RELAY_FRIEND_CAP"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return &n
 		}
@@ -235,7 +235,7 @@ func runPrune(what string, fn func() (int64, error)) {
 // daysEnv reads a non-negative day count from env, else the default (0 disables).
 func daysEnv(name string, def int) time.Duration {
 	d := def
-	if v := os.Getenv(name); v != "" {
+	if v := getenv(name); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			d = n
 		}

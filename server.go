@@ -40,7 +40,7 @@ var maxRequestBodyBytes = bodyCapFromEnv()
 
 func bodyCapFromEnv() int64 {
 	const def = 4 << 20 // 4 MiB
-	if v := os.Getenv("HIVE_RELAY_MAX_BODY_BYTES"); v != "" {
+	if v := getenv("HIVE_RELAY_MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			return n
 		}
@@ -135,7 +135,7 @@ func New(o Options) *Server {
 	if o.Entitlement == nil {
 		o.Entitlement = EntitlementFromEnv()
 	}
-	metricsToken := strings.TrimSpace(os.Getenv("HIVE_RELAY_METRICS_TOKEN"))
+	metricsToken := strings.TrimSpace(getenv("HIVE_RELAY_METRICS_TOKEN"))
 	s := &Server{
 		store:         o.Store,
 		entitlement:   o.Entitlement,
@@ -187,7 +187,7 @@ func New(o Options) *Server {
 			s.readGuard = membershipGuard{store: s.store}
 		}
 		// Optional identity verifier, independent of the entitlement policy.
-		if pk := strings.TrimSpace(os.Getenv("HIVE_RELAY_MEMBERSHIP_PUBKEY")); pk != "" {
+		if pk := strings.TrimSpace(getenv("HIVE_RELAY_MEMBERSHIP_PUBKEY")); pk != "" {
 			if vk, ok := parsePubkey(pk); ok {
 				s.memberVerifier = vk
 			} else {

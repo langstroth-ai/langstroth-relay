@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 )
@@ -59,7 +58,7 @@ const (
 
 // membershipFromEnv reports whether the membership feature is enabled.
 func membershipFromEnv() bool {
-	v := strings.TrimSpace(os.Getenv("HIVE_RELAY_MEMBERSHIP"))
+	v := strings.TrimSpace(getenv("HIVE_RELAY_MEMBERSHIP"))
 	return v == "1" || strings.EqualFold(v, "true")
 }
 

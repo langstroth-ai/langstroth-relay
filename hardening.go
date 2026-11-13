@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +57,7 @@ const (
 
 // envBool reports whether an env var is set to a truthy value (1/true/yes/on).
 func envBool(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	switch strings.ToLower(strings.TrimSpace(getenv(name))) {
 	case "1", "true", "yes", "on":
 		return true
 	}

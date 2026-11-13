@@ -5,7 +5,12 @@
 # just runs without a local snapshot.
 set -e
 
-DATA_DIR="${HIVE_RELAY_DATA_DIR:-}"
+# LIGUS_RELAY_* is the canonical prefix; HIVE_RELAY_* is still accepted.
+# Image default: snapshot store in /data unless either name is set (even empty).
+if [ -z "${LIGUS_RELAY_DATA_DIR+x}" ] && [ -z "${HIVE_RELAY_DATA_DIR+x}" ]; then
+  export LIGUS_RELAY_DATA_DIR=/data
+fi
+DATA_DIR="${LIGUS_RELAY_DATA_DIR:-${HIVE_RELAY_DATA_DIR:-}}"
 if [ -n "$DATA_DIR" ]; then
   mkdir -p "$DATA_DIR" 2>/dev/null || true
   chown -R hive:hive "$DATA_DIR" 2>/dev/null || true

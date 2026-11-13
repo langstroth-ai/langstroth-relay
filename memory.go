@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,13 +159,13 @@ func (s *memoryStore) latestSeq(_ context.Context, workspace string) (uint64, er
 // falling back to the documented defaults.
 func retentionFromEnv() (maxEnvelopes int, maxAge time.Duration) {
 	maxEnvelopes = defaultRetentionMaxEnvelopes
-	if v := os.Getenv("HIVE_RELAY_MAX_ENVELOPES"); v != "" {
+	if v := getenv("HIVE_RELAY_MAX_ENVELOPES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			maxEnvelopes = n
 		}
 	}
 	days := defaultRetentionDays
-	if v := os.Getenv("HIVE_RELAY_RETENTION_DAYS"); v != "" {
+	if v := getenv("HIVE_RELAY_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			days = n
 		}
