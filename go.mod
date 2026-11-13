@@ -1,3 +1,4 @@
+// Deprecated: this module has moved to github.com/ligus-ai/relay (the project is now Ligus). Update imports to github.com/ligus-ai/relay v0.2.0 or later.
 module github.com/honeyhive-ai/relay
 
 go 1.25.0

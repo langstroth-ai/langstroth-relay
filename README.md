@@ -1,5 +1,13 @@
 # hive-relay
 
+> **Moving to `github.com/ligus-ai/relay`.** Hive is becoming Ligus (short for
+> *ligustica*, as in *Apis mellifera ligustica*, the Italian honeybee). The Go
+> module `github.com/honeyhive-ai/relay` is deprecated as of v0.1.1; from v0.2.0
+> import `github.com/ligus-ai/relay` instead. The `/v1` API and `hrt1` tokens do
+> not change. Settings may already use the new `LIGUS_RELAY_*` names; every
+> `HIVE_RELAY_*` name below still works (the new name wins if both are set, and
+> the relay logs a one-time deprecation warning per legacy name).
+
 A small, **content-blind** rendezvous + envelope-forwarding server for Hive.
 Clients post opaque (end-to-end encrypted) event envelopes keyed by workspace
 and fetch everything after a cursor; the relay also brokers short pairing codes,
