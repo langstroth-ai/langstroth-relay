@@ -1,0 +1,8 @@
+# CI: split topology (relay-sync + relay-tunnel) on the in-chart Postgres.
+image:
+  repository: ligus-relay
+  tag: ci
+postgres:
+  enabled: true
+  persistence:
+    size: 256Mi

@@ -1,0 +1,41 @@
+{{- $fullname := include "ligus-relay.fullname" . -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ $fullname }}-test-health
+  labels:
+    {{- include "ligus-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: health
+      image: docker.io/curlimages/curl:8.17.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e
+          {{- if eq (include "ligus-relay.topology" .) "single" }}
+          curl -fsS http://{{ $fullname }}:{{ .Values.service.port }}/v1/health
+          {{- else }}
+          curl -fsS http://{{ $fullname }}-sync:{{ .Values.service.port }}/v1/health
+          {{- if ne .Values.tunnel.mode "off" }}
+          curl -fsS http://{{ $fullname }}-tunnel:{{ .Values.service.port }}/v1/health
+          # The tunnel route answers on the tunnel pod and is 404 on sync.
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://{{ $fullname }}-sync:{{ .Values.service.port }}/v1/tunnel/info)
+          test "$code" = 404
+          curl -fsS http://{{ $fullname }}-tunnel:{{ .Values.service.port }}/v1/tunnel/info
+          {{- end }}
+          {{- end }}

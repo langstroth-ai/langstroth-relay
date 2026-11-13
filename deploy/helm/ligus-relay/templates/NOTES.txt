@@ -1,0 +1,28 @@
+Ligus relay ({{ (include "ligus-relay.topology" .) }} topology, tunnel {{ .Values.tunnel.mode }}).
+{{- $fullname := include "ligus-relay.fullname" . }}
+{{- if eq (include "ligus-relay.topology" .) "single" }}
+  In-cluster URL: http://{{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+{{- else }}
+  Sync URL (LIGUS_RELAY_URL):     http://{{ $fullname }}-sync.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+{{- if ne .Values.tunnel.mode "off" }}
+  Tunnel URL (LIGUS_REMOTE_RELAY): http://{{ $fullname }}-tunnel.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+{{- end }}
+{{- end }}
+{{- if not (include "ligus-relay.hasDatabase" .) }}
+
+WARNING: no database. State is in memory{{ if .Values.persistence.enabled }} with a snapshot on a PVC{{ end }}; fine for kind/k3d, not for production.
+{{- end }}
+{{- if .Values.postgres.enabled }}
+
+WARNING: postgres.enabled runs a single development Postgres pod. Use a managed database in production.
+{{- end }}
+{{- if and (eq (include "ligus-relay.topology" .) "split") (or .Values.sync.autoscaling.enabled (gt (int .Values.sync.replicas) 1)) }}
+
+WARNING: more than one relay-sync replica. Short pairing codes, SSE nudges and rate limits are per process today (see README, Scaling).
+{{- end }}
+
+Clients outside the cluster need https://: enable ingress or httpRoute with TLS (idle timeout above 60 s for the tunnel).
+
+Check health:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ if eq (include "ligus-relay.topology" .) "single" }}{{ $fullname }}{{ else }}{{ $fullname }}-sync{{ end }} 8443:{{ .Values.service.port }}
+  curl -s http://127.0.0.1:8443/v1/health

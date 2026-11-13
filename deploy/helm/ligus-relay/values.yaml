@@ -1,0 +1,186 @@
+# Default values for ligus-relay. See README.md for the layout and the
+# reasoning behind each choice.
+
+image:
+  # The non-root distroless image built from deploy/container/Dockerfile.
+  repository: ghcr.io/ligus-ai/ligus-relay
+  # Defaults to the chart's appVersion.
+  tag: ""
+  # Pin by digest in production (sha256:...). Overrides tag when set.
+  digest: ""
+  pullPolicy: IfNotPresent
+  # Command run in the container. The distroless image's binary path; the
+  # Alpine image (repository root Dockerfile) has the same path, so this also
+  # skips its root-only entrypoint script.
+  command: ["/usr/local/bin/ligus-relay"]
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# auto:   split when a database is configured, single otherwise.
+# split:  relay-sync (every route except /v1/tunnel/*, tunnel off, 1..N
+#         replicas) and relay-tunnel (/v1/tunnel/*, exactly one replica,
+#         Recreate). Requires Postgres, since both read and write the same
+#         store.
+# single: one Deployment serving every route, exactly one replica, Recreate.
+#         The only topology that works with the in-memory store.
+topology: auto
+
+tunnel:
+  # off | open | allowlist (LIGUS_RELAY_TUNNEL). "off" in split topology
+  # renders no tunnel Deployment.
+  mode: open
+  # host ids allowed when mode=allowlist (LIGUS_RELAY_TUNNEL_HOSTS).
+  allowedHosts: []
+  # Built-in APNs push sender (tunnel pod only). Off unless existingSecret is
+  # set; the Secret must hold the .p8 key under `keyFileKey`.
+  apns:
+    existingSecret: ""
+    keyFileKey: AuthKey.p8
+    keyId: ""
+    teamId: ""
+    topic: ""
+    # auto | sandbox | production
+    env: auto
+
+sync:
+  replicas: 1
+  # Pairing codes, SSE fan-out and rate limits are per process today: keep
+  # one replica until pairing codes live in the store (README, "Scaling").
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: false
+    minAvailable: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
+tunnelPod:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
+# Used when topology=single.
+singlePod:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
+# Store. Exactly one of: postgres.enabled (in-chart, for kind/k3d and tests
+# only), externalDatabase (managed Postgres, recommended), or neither (memory
+# store, topology=single only, optionally snapshotted to a PVC).
+externalDatabase:
+  # Full DATABASE_URL. Prefer existingSecret.
+  url: ""
+  existingSecret: ""
+  existingSecretKey: DATABASE_URL
+
+postgres:
+  # A single-pod Postgres for development and CI. Not for production: no
+  # backups, no HA, no TLS. Use a managed database or an operator instead.
+  enabled: false
+  image:
+    repository: docker.io/library/postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  database: relay
+  username: relay
+  # Generated once and kept across upgrades when empty.
+  password: ""
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+# Refuse to start without DATABASE_URL (LIGUS_RELAY_REQUIRE_DB). Defaults to
+# true whenever a database is configured.
+requireDatabase: null
+
+# Memory-store snapshot (topology=single, no database). For kind/k3d only.
+persistence:
+  enabled: false
+  size: 256Mi
+  storageClass: ""
+  mountPath: /data
+
+# Access control and other settings. Secret-valued settings go through
+# existingSecret; each key of that Secret becomes an environment variable
+# (for example LIGUS_RELAY_TOKEN_PUBKEY, LIGUS_RELAY_METRICS_TOKEN).
+config:
+  # Extra plain environment variables (LIGUS_RELAY_MEMBERSHIP, ...).
+  env: {}
+  existingSecret: ""
+
+service:
+  type: ClusterIP
+  port: 8443
+
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+    # Set when LIGUS_RELAY_METRICS_TOKEN is set: Secret name and key holding it.
+    bearerTokenSecret:
+      name: ""
+      key: ""
+
+# Clients require https://. Terminate TLS at the Ingress or Gateway; its idle
+# timeout must exceed 60 s for the tunnel WebSockets.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: relay.example.com
+  tls:
+    secretName: ""
+
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+  # Sources allowed to reach the relay port; empty = any source (clients come
+  # through an ingress controller or from workspace namespaces).
+  ingressFrom: []
+  # Default-deny egress except DNS, the in-chart Postgres and what is listed
+  # in extraEgress (an external database, APNs on 443, ...).
+  restrictEgress: true
+  extraEgress: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+terminationGracePeriodSeconds: 20

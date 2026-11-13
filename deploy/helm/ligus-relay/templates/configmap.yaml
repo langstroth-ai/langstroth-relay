@@ -1,0 +1,17 @@
+{{- include "ligus-relay.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ligus-relay.fullname" . }}
+  labels:
+    {{- include "ligus-relay.labels" . | nindent 4 }}
+data:
+  LIGUS_RELAY_ADDR: "0.0.0.0:8443"
+  {{- $require := .Values.requireDatabase }}
+  {{- if kindIs "invalid" $require }}{{ $require = (include "ligus-relay.hasDatabase" . | eq "true") }}{{ end }}
+  {{- if $require }}
+  LIGUS_RELAY_REQUIRE_DB: "1"
+  {{- end }}
+  {{- range $k, $val := .Values.config.env }}
+  {{ $k }}: {{ $val | quote }}
+  {{- end }}

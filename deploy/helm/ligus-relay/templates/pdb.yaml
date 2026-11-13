@@ -1,0 +1,13 @@
+{{- if and (eq (include "ligus-relay.topology" .) "split") .Values.sync.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ligus-relay.fullname" . }}-sync
+  labels:
+    {{- include "ligus-relay.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.sync.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ligus-relay.selectorLabels" (dict "root" . "component" "sync") | nindent 6 }}
+{{- end }}

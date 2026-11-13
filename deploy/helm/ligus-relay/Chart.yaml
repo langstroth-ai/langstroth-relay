@@ -1,0 +1,14 @@
+apiVersion: v2
+name: ligus-relay
+description: Content-blind, end-to-end-encrypted sync relay for Ligus, with the tunnel split onto its own single-replica Deployment.
+type: application
+version: 0.1.0
+appVersion: "0.2.0"
+home: https://github.com/ligus-ai/relay
+sources:
+  - https://github.com/ligus-ai/relay
+keywords:
+  - ligus
+  - relay
+  - e2ee
+kubeVersion: ">=1.27.0-0"

@@ -1,0 +1,5 @@
+.git
+.github
+deploy/helm
+testdata
+*.md

@@ -1,0 +1,86 @@
+name: kind-e2e
+
+# Builds the non-root relay image, installs the Helm chart on kind in both
+# topologies (split with Postgres, single with the memory store) under Pod
+# Security "restricted", and runs the chart's tests.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kind-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - run: helm lint --strict deploy/helm/ligus-relay
+      - name: render every documented combination
+        run: |
+          set -e
+          c=deploy/helm/ligus-relay
+          helm template t $c >/dev/null
+          helm template t $c -f $c/ci/split-postgres-values.yaml >/dev/null
+          helm template t $c -f $c/ci/single-memory-values.yaml >/dev/null
+          helm template t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true --set metrics.serviceMonitor.enabled=true --set sync.autoscaling.enabled=true --set sync.pdb.enabled=true >/dev/null
+          # Must refuse: split topology without a database.
+          ! helm template t $c --set topology=split 2>/dev/null
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        values: [split-postgres-values.yaml, single-memory-values.yaml]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/container/Dockerfile
+          tags: ligus-relay:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: image runs as non-root
+        run: test "$(docker inspect -f '{{.Config.User}}' ligus-relay:ci)" = "65532:65532"
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: relay-e2e
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: load image
+        run: kind load docker-image ligus-relay:ci --name relay-e2e
+      - name: install
+        run: |
+          kubectl create namespace ligus-relay
+          kubectl label namespace ligus-relay pod-security.kubernetes.io/enforce=restricted
+          helm install ligus-relay deploy/helm/ligus-relay -n ligus-relay \
+            -f deploy/helm/ligus-relay/ci/${{ matrix.values }} --wait --timeout 5m
+      - name: helm test
+        run: helm test ligus-relay -n ligus-relay --logs
+      - name: metrics and health through the Service
+        run: |
+          svc=$(kubectl -n ligus-relay get svc -l app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
+          kubectl -n ligus-relay port-forward svc/$svc 8443:8443 &
+          for i in $(seq 30); do curl -fsS http://127.0.0.1:8443/v1/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8443/metrics | grep -q relay_requests_total
+      - name: diagnostics
+        if: failure()
+        run: |
+          kubectl -n ligus-relay get all,pvc,networkpolicy
+          kubectl -n ligus-relay describe pods
+          kubectl -n ligus-relay logs -l app.kubernetes.io/name=ligus-relay --all-containers --tail=200

@@ -1,0 +1,7 @@
+# CI: single pod, memory store snapshotted to a PVC.
+image:
+  repository: ligus-relay
+  tag: ci
+topology: single
+persistence:
+  enabled: true
