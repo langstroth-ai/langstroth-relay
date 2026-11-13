@@ -18,9 +18,9 @@ fi
 
 # Drop to `hive`. Prefer su-exec (alpine), then setpriv (util-linux), then su.
 if command -v su-exec >/dev/null 2>&1; then
-  exec su-exec hive:hive /usr/local/bin/hive-relay "$@"
+  exec su-exec hive:hive /usr/local/bin/ligus-relay "$@"
 elif command -v setpriv >/dev/null 2>&1; then
-  exec setpriv --reuid=hive --regid=hive --init-groups /usr/local/bin/hive-relay "$@"
+  exec setpriv --reuid=hive --regid=hive --init-groups /usr/local/bin/ligus-relay "$@"
 else
-  exec su hive -c "/usr/local/bin/hive-relay $*"
+  exec su hive -c "/usr/local/bin/ligus-relay $*"
 fi

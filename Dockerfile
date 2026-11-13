@@ -1,14 +1,21 @@
-# hive-relay — build from this repo root: docker build -t hive-relay .
+# Ligus relay (ligus-relay) — build from this repo root: docker build -t ligus-relay .
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/hive-relay ./cmd/hive-relay
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ligus-relay ./cmd/ligus-relay
 
 FROM alpine:3.20
 RUN apk add --no-cache su-exec && adduser -D -H hive
-COPY --from=build /out/hive-relay /usr/local/bin/hive-relay
+LABEL org.opencontainers.image.title="Ligus Relay" \
+      org.opencontainers.image.description="Content-blind, end-to-end-encrypted sync relay for Ligus (formerly Hive)" \
+      org.opencontainers.image.source="https://github.com/ligus-ai/relay" \
+      org.opencontainers.image.licenses="MIT"
+COPY --from=build /out/ligus-relay /usr/local/bin/ligus-relay
+# Former binary name, kept as an alias through v2.1 for custom entrypoints and
+# scripts that exec hive-relay directly.
+RUN ln -s ligus-relay /usr/local/bin/hive-relay
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 # Listens on 0.0.0.0:8443 unless $PORT or LIGUS_RELAY_ADDR (legacy

@@ -142,12 +142,12 @@ func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {
 func pushSenderFromEnv() PushSender {
 	s, err := APNsPushSenderFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hive-relay: %v; tunnel push stays off\n", err)
+		fmt.Fprintf(os.Stderr, "ligus-relay: %v; tunnel push stays off\n", err)
 		return nil
 	}
 	if s == nil {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "hive-relay: tunnel push via APNs (topic %s, env %s)\n", s.Client.Topic, s.Env)
+	fmt.Fprintf(os.Stderr, "ligus-relay: tunnel push via APNs (topic %s, env %s)\n", s.Client.Topic, s.Env)
 	return s
 }

@@ -21,14 +21,14 @@ import (
 // HIVE_RELAY_TOKEN_PUBKEY.
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `hive-relay — hosted rendezvous + forwarding relay
+	fmt.Fprint(os.Stderr, `ligus-relay — hosted rendezvous + forwarding relay
 
-Run the server (default):   hive-relay
-Generate an issuer keypair: hive-relay keygen
-Mint an entitlement token:  hive-relay issue --key <priv-hex> --sub <id> \
+Run the server (default):   ligus-relay
+Generate an issuer keypair: ligus-relay keygen
+Mint an entitlement token:  ligus-relay issue --key <priv-hex> --sub <id> \
                               [--plan team] [--exp-days 365] [--max-members 50] \
                               [--turn] [--cap remove_member --cap rotate_key]
-Bootstrap a remote agent:   hive-relay bootstrap-agent --key <priv-hex> \
+Bootstrap a remote agent:   ligus-relay bootstrap-agent --key <priv-hex> \
                               --relay <url> --room <room> --ws-key <passphrase> \
                               --sub github:<agent-id> --admin-sub github:<owner-id> \
                               [--role contributor] [--label agent] [--exp-days 365]
@@ -93,7 +93,7 @@ func cmdIssue(args []string) error {
 		case "--cap":
 			claims.Caps = append(claims.Caps, next())
 		default:
-			return fmt.Errorf("unknown flag %s (try `hive-relay help`)", args[i])
+			return fmt.Errorf("unknown flag %s (try `ligus-relay help`)", args[i])
 		}
 	}
 
@@ -114,8 +114,8 @@ func cmdIssue(args []string) error {
 // cmdBootstrapAgent generates a single copy-paste command that stands up a
 // headless agent on a remote box. It mints the agent's identity token, best-
 // effort enrolls it in the workspace roster (with --admin-sub), and assembles
-// the `hivews1:` connection invite — then prints one `brew … && hive enroll …
-// && hive worker …` line the developer runs verbatim. The issuer private key
+// the `hivews1:` connection invite — then prints one `brew … && ligus enroll …
+// && ligus worker …` line the developer runs verbatim. The issuer private key
 // stays here (the issuer backend); only the minted agent token leaves.
 func cmdBootstrapAgent(args []string) error {
 	var keyHex, relay, room, wsKey, sub, adminSub, label string
@@ -149,7 +149,7 @@ func cmdBootstrapAgent(args []string) error {
 		case "--exp-days":
 			expDays, _ = strconv.ParseInt(next(), 10, 64)
 		default:
-			return fmt.Errorf("unknown flag %s (try `hive-relay help`)", args[i])
+			return fmt.Errorf("unknown flag %s (try `ligus-relay help`)", args[i])
 		}
 	}
 	priv, ok := parseSigningKey(keyHex)
@@ -196,15 +196,15 @@ func cmdBootstrapAgent(args []string) error {
 
 	// The one line the developer pastes on the remote box.
 	fmt.Println("# Run on the remote agent box:")
-	fmt.Printf("brew install honeyhive-ai/hive/hive-cli && \\\n")
-	fmt.Printf("  hive enroll %q --token %q && \\\n", invite, tok)
-	fmt.Printf("  hive worker --label %s\n", label)
+	fmt.Printf("brew install ligus-ai/ligus/ligus && \\\n")
+	fmt.Printf("  ligus enroll %q --token %q && \\\n", invite, tok)
+	fmt.Printf("  ligus worker --label %s\n", label)
 
 	switch {
 	case adminSub != "" && enrolled:
 		fmt.Fprintf(os.Stderr, "\n# Enrolled %s as %s in %s.\n", sub, role, room)
 	case adminSub != "":
-		fmt.Fprintf(os.Stderr, "\n# NOTE: roster enrollment failed — is --admin-sub an owner/admin and the workspace claimed? Add %s via the People pane, or run `hive join <code>` on the box.\n", sub)
+		fmt.Fprintf(os.Stderr, "\n# NOTE: roster enrollment failed — is --admin-sub an owner/admin and the workspace claimed? Add %s via the People pane, or run `ligus join <code>` on the box.\n", sub)
 	default:
 		fmt.Fprintf(os.Stderr, "\n# NOTE: pass --admin-sub <owner-id> to auto-enroll, or add %s via the People pane. Without roster membership, writes to a claimed workspace are refused.\n", sub)
 	}

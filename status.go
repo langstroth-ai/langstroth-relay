@@ -18,7 +18,7 @@ const statusHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hive relay</title>
+<title>Ligus relay</title>
 <style>
   :root {
     --bg: #f7f7f6; --panel: #ffffff; --ink: #1a1a1a; --mist: #f0f0ef;
@@ -63,17 +63,17 @@ const statusHTML = `<!doctype html>
   <main class="card">
     <div class="row">
       <span class="dot" aria-hidden="true"></span>
-      <h1>Hive relay</h1>
+      <h1>Ligus relay</h1>
       <span class="status">online</span>
     </div>
     <p>
       This is a <strong>content-blind sync relay</strong> for
-      <a href="https://github.com/honeyhive-ai/hive">Hive</a> — an API endpoint,
+      <a href="https://github.com/ligus-ai/ligus">Ligus</a> (formerly Hive) — an API endpoint,
       not a website to log into. It forwards end-to-end-encrypted traffic between
       devices and never sees plaintext.
     </p>
     <div class="note">
-      Point Hive at this URL under <strong>Settings → Team</strong> and paste an
+      Point Ligus at this URL under <strong>Settings → Team</strong> and paste an
       access token issued by your relay admin. Browsing here directly needs no
       token; everything else does.
     </div>

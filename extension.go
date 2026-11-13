@@ -9,7 +9,7 @@ import (
 
 // Extension lets a downstream binary run the standard relay with extra pieces
 // (MainWith). It can't change what the open relay does: storage, env, the
-// entitlement gate and every open route stay exactly as in cmd/hive-relay. It
+// entitlement gate and every open route stay exactly as in cmd/ligus-relay. It
 // can only
 //
 //   - set the tunnel seams (TunnelPolicy, PushSender, billing label), which

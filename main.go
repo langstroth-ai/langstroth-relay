@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// hive-relay — the rendezvous + envelope-forwarding server.
+// ligus-relay — the rendezvous + envelope-forwarding server.
 //
 // Address resolution (cloud-friendly), most specific first:
 //  1. $PORT (set by Fly / Cloud Run / Railway / Heroku) → 0.0.0.0:$PORT
@@ -26,7 +26,7 @@ import (
 //
 // $HIVE_RELAY_FRIEND_CAP (optional) caps accepted friends per account.
 
-// Main runs the open relay binary (cmd/hive-relay).
+// Main runs the open relay binary (cmd/ligus-relay).
 func Main() { MainWith(Extension{}) }
 
 // MainWith runs the relay binary with a downstream Extension. Everything the
@@ -108,9 +108,9 @@ func MainWith(ext Extension) {
 	httpServer.RegisterOnShutdown(a.Server.ShutdownTunnels)
 
 	go func() {
-		fmt.Printf("hive-relay listening on %s\n", addr)
+		fmt.Printf("ligus-relay listening on %s\n", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "hive-relay: serve error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "ligus-relay: serve error: %v\n", err)
 			stop()
 		}
 	}()
@@ -125,7 +125,7 @@ func MainWith(ext Extension) {
 
 	// Final flush on the way out so a planned redeploy never loses state.
 	if err := store.Flush(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "hive-relay: final flush failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ligus-relay: final flush failed: %v\n", err)
 	}
 }
 
@@ -178,7 +178,7 @@ func flushLoop(store Store, stop <-chan struct{}) {
 			return
 		case <-tick.C:
 			if err := store.Flush(context.Background()); err != nil {
-				fmt.Fprintf(os.Stderr, "hive-relay: snapshot flush failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "ligus-relay: snapshot flush failed: %v\n", err)
 			}
 		}
 	}
@@ -245,7 +245,7 @@ func daysEnv(name string, def int) time.Duration {
 
 func fatalIf(err error) {
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hive-relay: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ligus-relay: %v\n", err)
 		os.Exit(1)
 	}
 }

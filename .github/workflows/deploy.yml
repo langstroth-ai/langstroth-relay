@@ -1,14 +1,15 @@
 # Continuous deploy to Fly.io. After `ci` passes on a push to main, deploy the
-# OPEN relay binary (cmd/hive-relay) to the hive-relay-enterprise Fly app — which
+# OPEN relay binary (cmd/ligus-relay) to the hive-relay-enterprise Fly app — which
 # hosts the PUBLIC open relay and must only ever be deployed from this OSS repo.
 #
 # Requires the FLY_API_TOKEN repo secret (a deploy token):
 #   fly tokens create deploy -x 999999h
-#   -> honeyhive-ai/relay -> Settings -> Secrets and variables -> Actions -> FLY_API_TOKEN
+#   -> ligus-ai/relay -> Settings -> Secrets and variables -> Actions -> FLY_API_TOKEN
 # Until that secret exists the deploy step skips cleanly (no failed run).
 #
 # Gated on `ci` (workflow_run) so a red build never deploys. `deploy/fly.toml`
-# names a placeholder app, so `--app hive-relay-enterprise` targets the real one;
+# names a placeholder app, so `--app hive-relay-enterprise` targets the real one
+# (the Fly app keeps its pre-rename name: its hostname is baked into clients);
 # the app's DATABASE_URL secret takes precedence over the volume, so the Postgres
 # store is used.
 name: deploy

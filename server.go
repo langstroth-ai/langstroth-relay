@@ -1267,7 +1267,7 @@ func (s *Server) verifyGitHub(ctx context.Context, token string) (*githubUser, e
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "hive-relay")
+	req.Header.Set("User-Agent", "ligus-relay")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err

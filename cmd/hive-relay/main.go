@@ -1,11 +1,6 @@
-// Command hive-relay is the open-source Hive relay binary: a content-blind
-// rendezvous + envelope-forwarding server. It wires the default (open) behavior
-// of the relay library; a downstream binary can import the same
-// library and inject custom seams (see seams.go).
-//
-// Run the server (default):   hive-relay
-// Generate an issuer keypair: hive-relay keygen
-// Mint an entitlement token:  hive-relay issue --key <priv-hex> --sub <id> [...]
+// Command hive-relay is the former name of ligus-relay, kept so existing
+// "go install .../cmd/hive-relay" and service definitions keep working through
+// v2.1. It is the same open relay; prefer cmd/ligus-relay.
 package main
 
 import "github.com/honeyhive-ai/relay"

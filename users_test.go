@@ -152,8 +152,8 @@ func TestStatusPageIsPublic(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("expected html, got %q", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "Hive relay") {
-		t.Fatal("status page should mention Hive relay")
+	if !strings.Contains(rec.Body.String(), "Ligus relay") {
+		t.Fatal("status page should mention Ligus relay")
 	}
 	// A gated API path with no token still 401s (page didn't open a hole).
 	rec2 := httptest.NewRecorder()

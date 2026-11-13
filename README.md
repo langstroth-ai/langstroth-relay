@@ -1,62 +1,71 @@
-# hive-relay
+# Ligus Relay
 
-> **Moving to `github.com/ligus-ai/relay`.** Hive is becoming Ligus (short for
-> *ligustica*, as in *Apis mellifera ligustica*, the Italian honeybee). The Go
-> module `github.com/honeyhive-ai/relay` is deprecated as of v0.1.1; from v0.2.0
-> import `github.com/ligus-ai/relay` instead. The `/v1` API and `hrt1` tokens do
-> not change. Settings may already use the new `LIGUS_RELAY_*` names; every
-> `HIVE_RELAY_*` name below still works (the new name wins if both are set, and
-> the relay logs a one-time deprecation warning per legacy name).
+A small, **content-blind** rendezvous + envelope-forwarding server for
+[Ligus](https://github.com/ligus-ai/ligus). Ligus (LEE-gus) is short for
+*ligustica*, as in *Apis mellifera ligustica*, the Italian honeybee; the project
+was called Hive until v2.0, and this relay was `hive-relay`.
 
-A small, **content-blind** rendezvous + envelope-forwarding server for Hive.
 Clients post opaque (end-to-end encrypted) event envelopes keyed by workspace
 and fetch everything after a cursor; the relay also brokers short pairing codes,
 an identity directory, a poll-based account inbox, the friend graph, and
 presence. **It never sees plaintext.**
 
+> **Renamed from Hive.** The Go module is now `github.com/ligus-ai/relay`
+> (v0.2.0+; `github.com/honeyhive-ai/relay` v0.1.x is deprecated), the binary is
+> `ligus-relay` (the container image keeps a `hive-relay` alias, and
+> `cmd/hive-relay` still builds, through v2.1), and settings are named
+> `LIGUS_RELAY_*`. Every legacy `LIGUS_RELAY_*` name still works: the new name
+> wins if both are set, and the relay logs a one-time deprecation warning per
+> legacy name. Wire formats do not change: the `/v1` API, `hrt1` tokens,
+> `X-Hive-*` headers, the `hive-tunnel.1` subprotocol and the `hive_relay_*`
+> metric names are protocol identifiers from the project's former name.
+
 This is the production relay (Go). It speaks the same JSON `/v1` contract and
 `hrt1` entitlement-token format as the original Rust reference relay
 (`crates/hive-relay`), which is now kept only as an in-process test fixture for
-the Rust client.
+the Rust client (in the Ligus app repo).
 
 ## Run
 
 ```sh
-go run ./cmd/hive-relay            # serves on :8443 (in-memory)
+go run ./cmd/ligus-relay            # serves on :8443 (in-memory)
 # or build:
-go build -o hive-relay ./cmd/hive-relay && ./hive-relay
+go build -o ligus-relay ./cmd/ligus-relay && ./ligus-relay
 ```
 
 Operator commands (mint/verify signed entitlement tokens — the serving relay
 only ever *verifies*):
 
 ```sh
-hive-relay keygen                  # prints an Ed25519 issuer keypair
-hive-relay issue --key <priv-hex> --sub <id> --plan team --exp-days 365 \
+ligus-relay keygen                  # prints an Ed25519 issuer keypair
+ligus-relay issue --key <priv-hex> --sub <id> --plan team --exp-days 365 \
   --max-members 50 --turn --cap remove_member
 ```
 
 ## Configuration (env)
 
+Each `LIGUS_RELAY_*` setting below is also read under its legacy
+`HIVE_RELAY_*` name.
+
 | Var | Meaning |
 |---|---|
-| `PORT` / `HIVE_RELAY_ADDR` | bind address (`$PORT` wins; default `0.0.0.0:8443`) |
+| `PORT` / `LIGUS_RELAY_ADDR` | bind address (`$PORT` wins; default `0.0.0.0:8443`) |
 | `DATABASE_URL` | shared **Postgres** store → horizontal scaling / HA (no data migration) |
-| `HIVE_RELAY_DATA_DIR` | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
-| `HIVE_RELAY_TOKEN_PUBKEY` | Ed25519 public key → require **signed** entitlement tokens |
-| `HIVE_RELAY_ACCESS_TOKENS` | comma-separated static allowlist (coarse gate) |
-| `HIVE_RELAY_FRIEND_CAP` | max accepted friends per account |
-| `HIVE_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap for the memory store (default `50000`; `0` = unbounded) |
-| `HIVE_RELAY_RETENTION_DAYS` | prune memory-store envelopes older than N days (default `0` = age pruning off) |
-| `HIVE_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
-| `HIVE_RELAY_TUNNEL` | relay tunnel (phone ↔ home host): `off` (**default**, `/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `HIVE_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
-| `HIVE_RELAY_TUNNEL_HOSTS` | comma-separated `host_id`s admitted when `HIVE_RELAY_TUNNEL=allowlist` |
-| `HIVE_RELAY_APNS_KEY_FILE` | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `HIVE_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
-| `HIVE_RELAY_APNS_KEY_ID` / `HIVE_RELAY_APNS_TEAM_ID` | the key's Key ID and your Apple developer Team ID |
-| `HIVE_RELAY_APNS_TOPIC` | bundle id of the iPhone app build you publish (the APNs topic) |
-| `HIVE_RELAY_APNS_ENV` | `auto` (**default**: the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
+| `LIGUS_RELAY_DATA_DIR` | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
+| `LIGUS_RELAY_TOKEN_PUBKEY` | Ed25519 public key → require **signed** entitlement tokens |
+| `LIGUS_RELAY_ACCESS_TOKENS` | comma-separated static allowlist (coarse gate) |
+| `LIGUS_RELAY_FRIEND_CAP` | max accepted friends per account |
+| `LIGUS_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap for the memory store (default `50000`; `0` = unbounded) |
+| `LIGUS_RELAY_RETENTION_DAYS` | prune memory-store envelopes older than N days (default `0` = age pruning off) |
+| `LIGUS_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
+| `LIGUS_RELAY_TUNNEL` | relay tunnel (phone ↔ home host): `off` (**default**, `/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LIGUS_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
+| `LIGUS_RELAY_TUNNEL_HOSTS` | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
+| `LIGUS_RELAY_APNS_KEY_FILE` | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
+| `LIGUS_RELAY_APNS_KEY_ID` / `LIGUS_RELAY_APNS_TEAM_ID` | the key's Key ID and your Apple developer Team ID |
+| `LIGUS_RELAY_APNS_TOPIC` | bundle id of the iPhone app build you publish (the APNs topic) |
+| `LIGUS_RELAY_APNS_ENV` | `auto` (**default**: the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
 
-Storage selection: `DATABASE_URL` → Postgres; else `HIVE_RELAY_DATA_DIR` →
+Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
 memory+snapshot; else in-memory only.
 
 ## Test
@@ -75,22 +84,23 @@ proxy.
 ### Docker (anywhere)
 
 ```sh
-docker build -t hive-relay .            # or straight from GitHub:
-# docker build -t hive-relay https://github.com/honeyhive-ai/relay.git
-docker run -d -p 8443:8443 -v hive-data:/data -e HIVE_RELAY_DATA_DIR=/data hive-relay
+docker build -t ligus-relay .            # or straight from GitHub:
+# docker build -t ligus-relay https://github.com/ligus-ai/relay.git
+docker run -d -p 8443:8443 -v ligus-data:/data -e LIGUS_RELAY_DATA_DIR=/data ligus-relay
 curl localhost:8443/v1/health           # → ok
 ```
 
 ### Managed platforms
 
 No lock-in — it's a standard container. The binary honors `$PORT` (else
-`$HIVE_RELAY_ADDR`, else `0.0.0.0:8443`), so most PaaS work with zero config:
+`$LIGUS_RELAY_ADDR`, else `0.0.0.0:8443`), so most PaaS work with zero config:
 point Render / Railway / Cloud Run / Kubernetes / a VM at the image (or the
-Dockerfile), attach a disk at `/data`, and set `HIVE_RELAY_DATA_DIR=/data`.
+Dockerfile), attach a disk at `/data`, and set `LIGUS_RELAY_DATA_DIR=/data`.
 
 A sample **`deploy/fly.toml`** is included as one worked example (`fly launch
 --copy-config --no-deploy` → `fly volumes create hive_data …` → `fly deploy`) —
-adapt it, or use your platform's equivalent.
+adapt it, or use your platform's equivalent. (The example volume keeps its
+pre-rename name so existing deployments of the file keep their data.)
 
 ### TLS
 
@@ -105,7 +115,7 @@ relay.example.com {
 
 ### Persistence & scaling
 
-- **Single instance:** mount a volume at `/data` and set `HIVE_RELAY_DATA_DIR=/data`
+- **Single instance:** mount a volume at `/data` and set `LIGUS_RELAY_DATA_DIR=/data`
   (JSON snapshot store; survives restarts). Nothing to back up but that volume.
 - **HA / multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
   precedence over the snapshot dir, so every instance shares state (no migration).
@@ -114,8 +124,8 @@ relay.example.com {
 
 The in-memory / snapshot store bounds how many envelopes it keeps per workspace
 so a long-running self-host doesn't grow without limit and eventually OOM. By
-default each workspace retains its newest `HIVE_RELAY_MAX_ENVELOPES` (50 000)
-envelopes; set `HIVE_RELAY_RETENTION_DAYS` to also drop envelopes older than N
+default each workspace retains its newest `LIGUS_RELAY_MAX_ENVELOPES` (50 000)
+envelopes; set `LIGUS_RELAY_RETENTION_DAYS` to also drop envelopes older than N
 days. Set either to `0` to disable that bound (`0` for both = unbounded, the old
 behavior).
 
@@ -162,9 +172,9 @@ the `?after=` poll as the backstop.
 
 Open by default (self-host — the URL isn't a secret). To gate:
 
-- **Allowlist:** `HIVE_RELAY_ACCESS_TOKENS=tokA,tokB` (opaque bearer tokens).
-- **Signed tokens:** set `HIVE_RELAY_TOKEN_PUBKEY=<hex>` and mint per-subject
-  tokens with `hive-relay keygen` / `hive-relay issue` — keep the issuer private
+- **Allowlist:** `LIGUS_RELAY_ACCESS_TOKENS=tokA,tokB` (opaque bearer tokens).
+- **Signed tokens:** set `LIGUS_RELAY_TOKEN_PUBKEY=<hex>` and mint per-subject
+  tokens with `ligus-relay keygen` / `ligus-relay issue` — keep the issuer private
   key off the relay host (the relay only ever verifies).
 - **Durable users + tokens:** manage per-person access over the admin API
   (below) instead of an env list — no redeploy, survives restarts, instant
@@ -206,7 +216,7 @@ once at creation.
 
 ### Status page
 
-`GET /` serves a small public HTML status page ("Hive relay · online") so a
+`GET /` serves a small public HTML status page ("Ligus relay · online") so a
 human who opens the URL sees an intentional page rather than a `401`. `GET
 /v1/health` round-trips the store and returns `200 ok`, or `503` if the backend
 is unreachable — wire it to your orchestrator's liveness/readiness probe.
@@ -214,19 +224,19 @@ Everything else is token-gated.
 
 ### Relay tunnel (`hive-tunnel/1`)
 
-Lets the Hive iPhone app reach a `hive serve` home host through the relay —
+Lets the Ligus iPhone app reach a `ligus serve` home host through the relay —
 no VPN, no inbound port on the host. The relay checks **who may connect** and
 then forwards opaque bytes: phone and host run a Noise IK session end to end
 through it, so the relay can't read, alter or forge traffic, and can't
-impersonate either side. The protocol is open; the spec lives in the Hive repo
+impersonate either side. The protocol is open; the spec lives in the Ligus repo
 (`docs/relay-tunnel.md`, with golden vectors in `docs/relay-tunnel/`).
 
 **Off by default.** A relay upgraded to this version does not become a public
-tunnel provider. Enable it with `HIVE_RELAY_TUNNEL=open` (any host may
-register) or `HIVE_RELAY_TUNNEL=allowlist` + `HIVE_RELAY_TUNNEL_HOSTS=<host_id>,…`.
-When the relay's entitlement gate is configured (`HIVE_RELAY_TOKEN_PUBKEY` /
-`HIVE_RELAY_ACCESS_TOKENS`), a host's first registration must also present a
-token that passes it (`hive remote enable --reg-token …`).
+tunnel provider. Enable it with `LIGUS_RELAY_TUNNEL=open` (any host may
+register) or `LIGUS_RELAY_TUNNEL=allowlist` + `LIGUS_RELAY_TUNNEL_HOSTS=<host_id>,…`.
+When the relay's entitlement gate is configured (`LIGUS_RELAY_TOKEN_PUBKEY` /
+`LIGUS_RELAY_ACCESS_TOKENS`), a host's first registration must also present a
+token that passes it (`ligus remote enable --reg-token …`).
 
 Endpoints (WebSockets require the subprotocol `hive-tunnel.1`, else `426`;
 they authenticate themselves, so they bypass the bearer-token gate):
@@ -257,17 +267,17 @@ tunnel socket is closed with `4011 shutting_down` (wired via
 single relay instance for the tunnel, or route `/v1/tunnel/connect?host=H` and
 `/v1/tunnel/accept` to the instance holding H's control connection.
 
-**Self-hosting the tunnel.** `HIVE_RELAY_TUNNEL=open` gives your own relay the
+**Self-hosting the tunnel.** `LIGUS_RELAY_TUNNEL=open` gives your own relay the
 same remote access the paid hosted relay offers, for free: every registered
 host is `active`. `GET /v1/tunnel/info` then reports `"billing":"none"`, and
-the Hive app uses that to skip its subscription paywall (it shows "ask the
+the Ligus app uses that to skip its subscription paywall (it shows "ask the
 relay operator" on `4006` instead). Only the hosted build reports
 `"billing":"appstore"`.
 
 **Push on a self-hosted relay.** Without a `PushSender` host pushes are acked
-`push_unavailable`, and `hive serve` falls back to ntfy when it's configured.
+`push_unavailable`, and `ligus serve` falls back to ntfy when it's configured.
 APNs only accepts a push signed with a key from the Apple developer team that
-publishes the app, so a relay can push only to builds of the Hive app its
+publishes the app, so a relay can push only to builds of the Ligus app its
 operator publishes (see below). It can't push to someone else's App Store
 build. Proposed (not built): an optional push gateway run by the app's
 publisher that accepts the same end-to-end encrypted `ct` from a self-hosted
@@ -286,12 +296,12 @@ your relay can push to it with the built-in APNs sender:
 2. Run the relay with the tunnel on and the key configured:
 
    ```sh
-   HIVE_RELAY_TUNNEL=open \
-   HIVE_RELAY_APNS_KEY_FILE=/secrets/AuthKey_ABC123DEFG.p8 \
-   HIVE_RELAY_APNS_KEY_ID=ABC123DEFG \
-   HIVE_RELAY_APNS_TEAM_ID=<your team id> \
-   HIVE_RELAY_APNS_TOPIC=<your app's bundle id> \
-   hive-relay
+   LIGUS_RELAY_TUNNEL=open \
+   LIGUS_RELAY_APNS_KEY_FILE=/secrets/AuthKey_ABC123DEFG.p8 \
+   LIGUS_RELAY_APNS_KEY_ID=ABC123DEFG \
+   LIGUS_RELAY_APNS_TEAM_ID=<your team id> \
+   LIGUS_RELAY_APNS_TOPIC=<your app's bundle id> \
+   ligus-relay
    ```
 
    The relay logs `tunnel push via APNs (topic …, env auto)`, and
@@ -308,8 +318,8 @@ with `apns-push-type: alert`, priority 10 (`high`) or 5 (`normal`),
 a device token is dead (`410 Unregistered`, `BadDeviceToken`,
 `DeviceTokenNotForTopic`) the relay forgets it; the phone sends a fresh one
 on its next connect. One relay serves one topic, so point
-`HIVE_RELAY_APNS_TOPIC` at the build you use (a dev build and an App Store
-build have different bundle ids). With `HIVE_RELAY_APNS_ENV=auto` a debug
+`LIGUS_RELAY_APNS_TOPIC` at the build you use (a dev build and an App Store
+build have different bundle ids). With `LIGUS_RELAY_APNS_ENV=auto` a debug
 build from Xcode (sandbox token) and a TestFlight/App Store build
 (production token) both work.
 
@@ -323,7 +333,7 @@ This package is a complete relay on its own. It also exposes extension points
 (see `seams.go`) so a downstream build can add custom behavior via
 `New(Options{...})` without forking.
 
-A downstream binary that must behave exactly like `cmd/hive-relay` plus a few
+A downstream binary that must behave exactly like `cmd/ligus-relay` plus a few
 additions (for example a hosted build that shares an app with the open relay)
 calls `relay.MainWith(relay.Extension{...})` instead of `relay.Main()`.
 Storage, env, the entitlement gate, every open route, subcommands and shutdown
@@ -344,10 +354,10 @@ Seams:
 - **`Hooks`** — optional lifecycle observers (e.g. audit / accounting; no-op by
   default).
 - **`TunnelPolicy`** / **`PushSender`** — relay-tunnel host admission and
-  entitlement (`nil` = `HIVE_RELAY_TUNNEL` env policy), and end-to-end
+  entitlement (`nil` = `LIGUS_RELAY_TUNNEL` env policy), and end-to-end
   encrypted push delivery (`nil` = the built-in APNs sender when
-  `HIVE_RELAY_APNS_*` is set, else unavailable). The sender itself is the
-  importable `github.com/honeyhive-ai/relay/apns` package; a sender that wraps
+  `LIGUS_RELAY_APNS_*` is set, else unavailable). The sender itself is the
+  importable `github.com/ligus-ai/relay/apns` package; a sender that wraps
   `relay.ErrPushTokenGone` makes the relay forget that phone's token. A `Store` that also implements
   `TunnelStore` keeps tunnel state durable (both built-in backends do).
 

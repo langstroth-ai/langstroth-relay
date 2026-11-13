@@ -1,10 +1,10 @@
-# Fly.io config for a self-hosted hive-relay. Deploy from this repo root:
+# Fly.io config for a self-hosted Ligus relay (ligus-relay). Deploy from this repo root:
 #   fly launch --copy-config --no-deploy   # pick app name / region
 #   fly deploy
 # Fly terminates TLS at its edge and forwards 443 → internal_port (8443), giving
 # you an https://<app>.fly.dev URL to point the client at.
 
-app = "hive-relay"          # `fly launch` offers to pick a unique name
+app = "ligus-relay"         # example name; `fly launch` offers to pick a unique name
 primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
 
 [build]
@@ -17,10 +17,12 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # DATABASE_URL to a shared Postgres as a secret (`fly secrets set DATABASE_URL=…`)
   # and remove this + the mount — DATABASE_URL takes precedence, and you can then
   # raise min_machines_running.
-  HIVE_RELAY_DATA_DIR = "/data"
+  LIGUS_RELAY_DATA_DIR = "/data"
 
 # Persistent volume for the snapshot store. Create once before first deploy:
 #   fly volumes create hive_data --size 1 --region <primary_region>
+# (The volume keeps its pre-rename name: existing deployments of this config
+# already have a volume called hive_data, and Fly cannot rename a volume.)
 [[mounts]]
   source = "hive_data"
   destination = "/data"
@@ -34,7 +36,7 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
 
   # Per-machine connection concurrency limits: shed load (and trigger autoscaling
   # where configured) before a single machine is buried. Generous for a poll/SSE
-  # relay; long-lived SSE streams are additionally capped in-process (HIVE_RELAY_MAX_SSE).
+  # relay; long-lived SSE streams are additionally capped in-process (LIGUS_RELAY_MAX_SSE).
   [http_service.concurrency]
     type = "requests"
     soft_limit = 400
@@ -51,6 +53,6 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   size = "shared-cpu-1x"
   # 512MB headroom: the snapshot / in-memory store holds recent E2EE traffic + the
   # social graph in RAM. The public prod app runs on Postgres (DATABASE_URL secret)
-  # and sets HIVE_RELAY_REQUIRE_DB=1 so it never silently falls back to the
+  # and sets HIVE_RELAY_REQUIRE_DB=1 (LIGUS_RELAY_REQUIRE_DB also accepted) so it never silently falls back to the
   # ephemeral in-memory store (see buildStore / deploy.yml).
   memory = "512mb"
