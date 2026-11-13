@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/honeyhive-ai/relay/apns"
+	"github.com/ligus-ai/relay/apns"
 )
 
 // Built-in APNs PushSender (spec §14) for a relay run by the app's publisher.

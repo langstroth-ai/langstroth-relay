@@ -8,6 +8,6 @@
 // Mint an entitlement token:  ligus-relay issue --key <priv-hex> --sub <id> [...]
 package main
 
-import "github.com/honeyhive-ai/relay"
+import "github.com/ligus-ai/relay"
 
 func main() { relay.Main() }

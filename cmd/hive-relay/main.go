@@ -3,6 +3,6 @@
 // v2.1. It is the same open relay; prefer cmd/ligus-relay.
 package main
 
-import "github.com/honeyhive-ai/relay"
+import "github.com/ligus-ai/relay"
 
 func main() { relay.Main() }
