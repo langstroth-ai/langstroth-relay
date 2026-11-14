@@ -56,6 +56,15 @@ const (
 	// the prune loop (P2-13); pending ones already expire via requestTTLSecs.
 	defaultFriendReqMaxAgeDays = 30
 
+	// Workspace reads (envelopes / keyring / presence / candidates / members /
+	// SSE connects) share one per-client bucket. Generous, since clients behind
+	// an ingress without LIGUS_RELAY_TRUSTED_PROXIES share one address.
+	defaultReadRate  = 100.0
+	defaultReadBurst = 400.0
+	// Concurrent SSE streams per client (entitlement subject, else address);
+	// LIGUS_RELAY_MAX_SSE still caps the instance.
+	defaultMaxSSEPerClient = 100
+
 	// /v1/health caches its store Ping result for this long so a flood of probes
 	// can't hammer the backend (P3-15).
 	healthPingCacheTTL = time.Second

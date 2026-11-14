@@ -296,7 +296,7 @@ func (s *Server) membershipClaim(w http.ResponseWriter, r *http.Request) {
 		Login string `json:"login"`
 	}
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)).Decode(&body)
 	}
 	claimed, err := s.store.ClaimWorkspace(r.Context(), ws, caller, body.Login, nowUnix())
 	if storeErr(w, err) {

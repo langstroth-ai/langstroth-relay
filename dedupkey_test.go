@@ -31,10 +31,16 @@ func TestDedupKeyBounded(t *testing.T) {
 			t.Fatalf("%s: different long keys must not collide", h)
 		}
 	}
-	// Short keys are unchanged.
+	// Short keys map to the same fixed-length, writer-scoped form.
 	r := httptest.NewRequest("POST", "/", nil)
 	r.Header.Set("X-Hive-Event-Id", "0192f6a0-0000-7000-8000-000000000001")
-	if got := dedupKeyFor(r, nil); got != "0192f6a0-0000-7000-8000-000000000001" {
-		t.Fatalf("short key changed: %q", got)
+	got := dedupKeyFor(r, nil)
+	if len(got) > maxDedupKeyLen || got == "0192f6a0-0000-7000-8000-000000000001" {
+		t.Fatalf("short key not scoped: %q", got)
+	}
+	r2 := httptest.NewRequest("POST", "/", nil)
+	r2.Header.Set("Idempotency-Key", "0192f6a0-0000-7000-8000-000000000001")
+	if dedupKeyFor(r2, nil) != got {
+		t.Fatal("the same key from the same writer must map to the same stored key")
 	}
 }

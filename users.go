@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -151,19 +153,22 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createUserReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+	if !readAdminJSON(w, r, &req, false) {
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
 	now := nowUnix()
 	user, err := s.store.CreateUser(r.Context(), strings.TrimSpace(req.Name), strings.TrimSpace(req.Login), now)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		adminStoreErr(w, err)
 		return
 	}
 	raw, tok, err := s.issueToken(r.Context(), user.ID, req.Label, now)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		adminStoreErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, issuedTokenResp{User: user, Token: tok, Raw: raw})
@@ -181,12 +186,12 @@ func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		adminStoreErr(w, err)
 		return
 	}
 	tokens, err := s.store.ListTokens(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		adminStoreErr(w, err)
 		return
 	}
 	byUser := map[string][]TokenRecord{}
@@ -206,10 +211,12 @@ func (s *Server) adminIssueToken(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := r.PathValue("id")
 	var req createUserReq
-	_ = json.NewDecoder(r.Body).Decode(&req) // label is optional
+	if !readAdminJSON(w, r, &req, true) { // label is optional
+		return
+	}
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		adminStoreErr(w, err)
 		return
 	}
 	var user *UserRecord
@@ -225,7 +232,7 @@ func (s *Server) adminIssueToken(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, tok, err := s.issueToken(r.Context(), userID, req.Label, nowUnix())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		adminStoreErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, issuedTokenResp{User: *user, Token: tok, Raw: raw})
@@ -240,8 +247,7 @@ func (s *Server) adminSetDisabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req setDisabledReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+	if !readAdminJSON(w, r, &req, false) {
 		return
 	}
 	if err := s.store.SetUserDisabled(r.Context(), r.PathValue("id"), req.Disabled); err != nil {
@@ -249,7 +255,11 @@ func (s *Server) adminSetDisabled(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrUserNotFound) {
 			status = http.StatusNotFound
 		}
-		http.Error(w, err.Error(), status)
+		if status == http.StatusNotFound {
+			http.Error(w, "not found", status)
+		} else {
+			adminStoreErr(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, okResp())
@@ -264,7 +274,11 @@ func (s *Server) adminRevokeToken(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrTokenNotFound) {
 			status = http.StatusNotFound
 		}
-		http.Error(w, err.Error(), status)
+		if status == http.StatusNotFound {
+			http.Error(w, "not found", status)
+		} else {
+			adminStoreErr(w, err)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -282,4 +296,33 @@ func (s *Server) issueToken(ctx context.Context, userID, label string, now int64
 		return "", TokenRecord{}, err
 	}
 	return raw, tok, nil
+}
+
+// maxAdminBodyBytes bounds an admin request body (a name, login and label).
+const maxAdminBodyBytes = 16 << 10
+
+// readAdminJSON decodes a bounded admin request body. optional tolerates an
+// empty body. Writes 413 or 400 and returns false on failure.
+func readAdminJSON(w http.ResponseWriter, r *http.Request, v any, optional bool) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)
+	err := json.NewDecoder(r.Body).Decode(v)
+	var tooLarge *http.MaxBytesError
+	switch {
+	case err == nil:
+		return true
+	case errors.As(err, &tooLarge):
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return false
+	case optional && errors.Is(err, io.EOF):
+		return true
+	}
+	http.Error(w, "invalid body", http.StatusBadRequest)
+	return false
+}
+
+// adminStoreErr logs a store error and answers a generic 500: store errors can
+// carry driver messages, table names and connection details.
+func adminStoreErr(w http.ResponseWriter, err error) {
+	slog.Error("admin store error", "error", err)
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }

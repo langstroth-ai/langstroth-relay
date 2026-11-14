@@ -103,14 +103,16 @@ type Server struct {
 	maxPairings  int                     // cap on live pairing codes (0 = unlimited)
 	pairSweptAt  time.Time               // last sweep of pairings/pairAttempts (≤ 1/s)
 
-	pushLimiter    *ipRateLimiter      // per-IP write rate limit (all unauth writes)
-	sseLimiter     *concurrencyLimiter // cap on concurrent SSE streams
-	wsWriterLimit  *ipRateLimiter      // per-(workspace,writer) envelope-append rate
-	ghLimiter      *ipRateLimiter      // per-IP rate on GitHub-authenticated routes
-	inviteLimiter  *ipRateLimiter      // per-(sender,recipient) account-invite rate
-	ghCache        *identityCache      // token-hash → identity, short TTL
-	metricsToken   string              // ops credential for /metrics (env; "" = open)
-	metricsTokHash string              // sha256 of metricsToken for constant-time compare
+	pushLimiter    *ipRateLimiter           // per-IP write rate limit (all unauth writes)
+	sseLimiter     *concurrencyLimiter      // cap on concurrent SSE streams
+	sseClient      *keyedConcurrencyLimiter // per-client cap on concurrent SSE streams
+	readLimiter    *ipRateLimiter           // per-client rate on workspace reads
+	wsWriterLimit  *ipRateLimiter           // per-(workspace,writer) envelope-append rate
+	ghLimiter      *ipRateLimiter           // per-IP rate on GitHub-authenticated routes
+	inviteLimiter  *ipRateLimiter           // per-(sender,recipient) account-invite rate
+	ghCache        *identityCache           // token-hash → identity, short TTL
+	metricsToken   string                   // ops credential for /metrics (env; "" = open)
+	metricsTokHash string                   // sha256 of metricsToken for constant-time compare
 
 	tunnel *tunnelHub // nil = tunnel off
 
@@ -159,6 +161,8 @@ func New(o Options) *Server {
 		maxPairings:      int(envInt64("HIVE_RELAY_MAX_PAIRINGS", defaultMaxLivePairings)),
 		pushLimiter:      newIPRateLimiter(envFloat("HIVE_RELAY_PUSH_RATE", 100), envFloat("HIVE_RELAY_PUSH_BURST", 300)),
 		sseLimiter:       newConcurrencyLimiter(envInt64("HIVE_RELAY_MAX_SSE", 2000)),
+		sseClient:        newKeyedConcurrencyLimiter(envInt64("HIVE_RELAY_MAX_SSE_PER_CLIENT", defaultMaxSSEPerClient)),
+		readLimiter:      newIPRateLimiter(envFloat("HIVE_RELAY_READ_RATE", defaultReadRate), envFloat("HIVE_RELAY_READ_BURST", defaultReadBurst)),
 		wsWriterLimit:    newIPRateLimiter(envFloat("HIVE_RELAY_WS_WRITER_RATE", defaultWSWriterRate), envFloat("HIVE_RELAY_WS_WRITER_BURST", defaultWSWriterBurst)),
 		ghLimiter:        newIPRateLimiter(envFloat("HIVE_RELAY_GITHUB_RATE", defaultGitHubAuthRate), envFloat("HIVE_RELAY_GITHUB_BURST", defaultGitHubAuthBurst)),
 		inviteLimiter:    newIPRateLimiter(envFloat("HIVE_RELAY_INVITE_RATE", defaultInviteRate), envFloat("HIVE_RELAY_INVITE_BURST", defaultInviteBurst)),
@@ -377,6 +381,12 @@ func (s *Server) enforceWrite(w http.ResponseWriter, r *http.Request, workspace 
 // might move a read off the gate. Returns false (after writing 401) when the
 // entitlement is missing or invalid.
 func (s *Server) enforceRead(w http.ResponseWriter, r *http.Request, workspace string) bool {
+	// Per-client read rate (keyed like the write limiter), so one client can't
+	// loop the list routes and keep the store busy for everyone else.
+	if !s.readLimiter.allow(clientKey(r)) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return false
+	}
 	if _, ok := s.entitlement.Allow(bearerToken(r), nowUnix()); !ok {
 		http.Error(w, "relay requires a valid access token", http.StatusUnauthorized)
 		return false
@@ -496,7 +506,10 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 // blind (never inspects plaintext) and backward-compatible with existing clients:
 //
 //   - An explicit client-supplied id wins (Idempotency-Key, or the hive-native
-//     X-Hive-Event-Id), letting a client name the event directly.
+//     X-Hive-Event-Id), letting a client name the event directly. It is scoped
+//     to the writer (entitlement subject, else client address), so one writer
+//     can't claim another's key and turn that writer's push into a silent
+//     duplicate.
 //   - Absent a header, we hash the opaque sealed body (sha256). A re-push resends
 //     byte-identical ciphertext, so the hash dedups it with no client change. Two
 //     genuinely-distinct events can't collide in practice: every sealed body
@@ -505,26 +518,24 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 //
 // The result is opaque to the store — a hash or an id, never event content.
 func dedupKeyFor(r *http.Request, body json.RawMessage) string {
-	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" {
-		return boundDedupKey(k)
+	k := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if k == "" {
+		k = strings.TrimSpace(r.Header.Get("X-Hive-Event-Id"))
 	}
-	if k := strings.TrimSpace(r.Header.Get("X-Hive-Event-Id")); k != "" {
-		return boundDedupKey(k)
+	if k != "" {
+		return scopedDedupKey(writerTag(r.Context(), clientKey(r)), k)
 	}
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// maxDedupKeyLen bounds a stored client-chosen idempotency key. A longer key
-// is stored as its SHA-256 (same dedup behavior), so a header can't attach up
-// to the 1 MB header limit to every envelope outside the body cap.
+// maxDedupKeyLen bounds a stored client-chosen idempotency key. The stored
+// form is a fixed-length hash of (writer, key), so a header can't attach up to
+// the 1 MB header limit to every envelope outside the body cap.
 const maxDedupKeyLen = 128
 
-func boundDedupKey(k string) string {
-	if len(k) <= maxDedupKeyLen {
-		return k
-	}
-	return "key-sha256:" + sha256hex(k)
+func scopedDedupKey(writer, k string) string {
+	return "wk-sha256:" + sha256hex(writer+"\x00"+k)
 }
 
 func (s *Server) listEnvelopes(w http.ResponseWriter, r *http.Request) {
@@ -574,6 +585,14 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	// And per client (the entitlement subject when there is one, else the
+	// client address), so one client can't hold every slot.
+	releaseClient, ok := s.sseClient.acquire(writerTag(r.Context(), clientKey(r)))
+	if !ok {
+		http.Error(w, "too many concurrent streams from this client", http.StatusTooManyRequests)
+		return
+	}
+	defer releaseClient()
 
 	// CRITICAL: the global http.Server.WriteTimeout (30s) would sever this
 	// long-lived stream mid-flight. Clear the per-connection write (and read)
@@ -1431,6 +1450,13 @@ func friendErr(w http.ResponseWriter, err error) bool {
 		status = http.StatusForbidden
 	case errors.Is(err, ErrTooManyPending):
 		status = http.StatusTooManyRequests
+	}
+	if status == http.StatusInternalServerError {
+		// Not one of the friend graph's own refusals: a store error, which may
+		// carry driver or connection details. Log it; don't echo it.
+		slog.Error("friend store error", "error", err)
+		http.Error(w, "internal error", status)
+		return true
 	}
 	http.Error(w, err.Error(), status)
 	return true

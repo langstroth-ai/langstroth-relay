@@ -107,3 +107,48 @@ func envInt64(name string, def int64) int64 {
 	}
 	return def
 }
+
+// keyedConcurrencyLimiter caps concurrent long-lived handlers per key (per
+// client for SSE streams), so one client can't take every slot of the
+// instance-wide concurrencyLimiter. Keys with no open slot are dropped, so the
+// map holds only clients with a live stream.
+type keyedConcurrencyLimiter struct {
+	max int64
+	mu  sync.Mutex
+	cur map[string]int64
+}
+
+func newKeyedConcurrencyLimiter(max int64) *keyedConcurrencyLimiter {
+	return &keyedConcurrencyLimiter{max: max, cur: map[string]int64{}}
+}
+
+// acquire reserves a slot for key; ok=false means key is at its cap. The
+// returned release is idempotent.
+func (c *keyedConcurrencyLimiter) acquire(key string) (release func(), ok bool) {
+	if c == nil || c.max <= 0 {
+		return func() {}, true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cur[key] >= c.max {
+		return func() {}, false
+	}
+	c.cur[key]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.cur[key]--; c.cur[key] <= 0 {
+				delete(c.cur, key)
+			}
+		})
+	}, true
+}
+
+// size reports how many keys hold a slot (tests).
+func (c *keyedConcurrencyLimiter) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.cur)
+}
