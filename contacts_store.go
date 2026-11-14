@@ -94,6 +94,7 @@ type ContactStore interface {
 type memContacts struct {
 	cmu      sync.Mutex
 	contacts map[string]*memContact
+	held     int // stripped (reclaim hold) entries in contacts
 	// reserve charges bytes against the owning store's byte budget (nil = no
 	// budget). Called with cmu held; must not take cmu.
 	reserve func(n int64) bool
@@ -107,6 +108,7 @@ type memContact struct {
 	drops     []ContactDrop
 	dropBytes int
 	nextSeq   uint64
+	stripped  bool // expired and emptied: a reclaim hold tombstone
 }
 
 // contactSeqBase is the drop-box seq a box created at now starts after. A box
@@ -158,17 +160,21 @@ func (m *memContacts) liveLocked(cid string, now int64) *memContact {
 // stripLocked empties an expired record down to its key hash and seq counter
 // (a reclaim hold tombstone; PruneContacts removes it after the hold).
 func (m *memContacts) stripLocked(c *memContact) {
-	freed := len(c.record) + c.dropBytes
-	if freed == 0 && len(c.drops) == 0 {
+	if c.stripped {
 		return
 	}
-	c.record, c.drops, c.dropBytes = nil, nil, 0
+	freed := len(c.record) + c.dropBytes
+	c.record, c.drops, c.dropBytes, c.stripped = nil, nil, 0, true
+	m.held++
 	m.charge(-int64(freed))
 }
 
 func (m *memContacts) removeLocked(cid string) {
 	if c := m.contacts[cid]; c != nil {
 		m.charge(-c.bytes())
+		if c.stripped {
+			m.held--
+		}
 		delete(m.contacts, cid)
 	}
 }
@@ -198,12 +204,15 @@ func (m *memContacts) PutContact(_ context.Context, cid, keyHash string, record 
 			if !m.charge(int64(len(rec))) {
 				return false, ErrStoreFull
 			}
-			old.record, old.updatedAt, old.expiresAt = rec, now, expiresAt
+			old.record, old.updatedAt, old.expiresAt, old.stripped = rec, now, expiresAt, false
+			m.held--
 			old.nextSeq = max(old.nextSeq, contactSeqBase(now))
 			return true, nil
 		}
 	}
-	if lim.MaxContacts > 0 && len(m.contacts) >= lim.MaxContacts {
+	// Tombstones hold no record or drops (their bytes still count toward the
+	// store budget), so the cap counts the other entries only.
+	if lim.MaxContacts > 0 && len(m.contacts)-m.held >= lim.MaxContacts {
 		return false, ErrContactsFull
 	}
 	c := &memContact{keyHash: keyHash, record: rec, updatedAt: now, expiresAt: expiresAt, nextSeq: contactSeqBase(now)}
@@ -371,6 +380,7 @@ type contactSnap struct {
 	ExpiresAt int64             `json:"expiresAt"`
 	Drops     []contactDropSnap `json:"drops,omitempty"`
 	NextSeq   uint64            `json:"nextSeq"`
+	Stripped  bool              `json:"stripped,omitempty"`
 }
 
 type contactDropSnap struct {
@@ -388,7 +398,7 @@ func (m *memContacts) toContactSnap() map[string]contactSnap {
 	out := make(map[string]contactSnap, len(m.contacts))
 	for cid, c := range m.contacts {
 		cs := contactSnap{KeyHash: c.keyHash, Record: string(c.record), UpdatedAt: c.updatedAt,
-			ExpiresAt: c.expiresAt, NextSeq: c.nextSeq}
+			ExpiresAt: c.expiresAt, NextSeq: c.nextSeq, Stripped: c.stripped}
 		for _, d := range c.drops {
 			cs.Drops = append(cs.Drops, contactDropSnap{Seq: d.Seq, Blob: string(d.Blob), CreatedAt: d.CreatedAt})
 		}
@@ -403,6 +413,7 @@ func (m *memContacts) restoreContacts(snap map[string]contactSnap) int64 {
 	m.cmu.Lock()
 	defer m.cmu.Unlock()
 	m.contacts = map[string]*memContact{}
+	m.held = 0
 	var total int64
 	for cid, s := range snap {
 		c := &memContact{keyHash: s.KeyHash, record: json.RawMessage(s.Record), updatedAt: s.UpdatedAt,
@@ -410,6 +421,10 @@ func (m *memContacts) restoreContacts(snap map[string]contactSnap) int64 {
 		for _, d := range s.Drops {
 			c.drops = append(c.drops, ContactDrop{Seq: d.Seq, Blob: json.RawMessage(d.Blob), CreatedAt: d.CreatedAt})
 			c.dropBytes += len(d.Blob)
+		}
+		if s.Stripped {
+			c.stripped = true
+			m.held++
 		}
 		m.contacts[cid] = c
 		total += c.bytes()

@@ -764,3 +764,38 @@ func TestContactCreateLimitedPerIPv6Slash48(t *testing.T) {
 		t.Fatalf("ipv4 client: %d", st)
 	}
 }
+
+// Reclaim-hold tombstones (an expired record's key hash) don't count toward
+// LIGUS_RELAY_MAX_CONTACTS: they hold no record or drops, and counting them
+// would cut the store's capacity to live records by every record that expired
+// in the last hold period.
+func TestContactTombstonesOutsideMaxContacts(t *testing.T) {
+	ms := newMemoryStore()
+	ctx := context.Background()
+	hold := 1000 * time.Second
+	lim := ContactLimits{MaxContacts: 2, ReclaimHold: hold}
+	kh := sha256hex(newWriteKey())
+	a, b := newCID(), newCID()
+	ms.PutContact(ctx, a, kh, raw(`{}`), 0, 50, lim)
+	ms.PutContact(ctx, b, kh, raw(`{}`), 0, 50, lim)
+	if _, err := ms.PutContact(ctx, newCID(), kh, raw(`{}`), 10, 500, lim); err != ErrContactsFull {
+		t.Fatalf("cap with two live records: %v", err)
+	}
+	if _, err := ms.PruneContacts(ctx, 100, 0, hold); err != nil {
+		t.Fatal(err)
+	}
+	if ms.contactCount() != 2 {
+		t.Fatalf("tombstones: %d, want 2", ms.contactCount())
+	}
+	c := newCID()
+	if _, err := ms.PutContact(ctx, c, kh, raw(`{}`), 101, 500, lim); err != nil {
+		t.Fatalf("create with only tombstones held: %v", err)
+	}
+	// The owner reclaiming a tombstone makes it live again and counts.
+	if _, err := ms.PutContact(ctx, a, kh, raw(`{}`), 102, 500, lim); err != nil {
+		t.Fatalf("owner reclaim: %v", err)
+	}
+	if _, err := ms.PutContact(ctx, newCID(), kh, raw(`{}`), 103, 500, lim); err != ErrContactsFull {
+		t.Fatalf("cap after reclaim: %v", err)
+	}
+}
