@@ -19,9 +19,8 @@
 # when that is set to a writable volume (give the pod an fsGroup so the
 # volume is writable by 65532).
 
-ARG GO_VERSION=1.25
-
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
+# Base images are pinned by tag and index digest; bump both together.
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
@@ -33,7 +32,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/ligus-relay ./cmd/ligus-relay
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 LABEL org.opencontainers.image.title="Ligus Relay" \
       org.opencontainers.image.description="Content-blind, end-to-end-encrypted sync relay for Ligus (non-root, distroless)" \
       org.opencontainers.image.source="https://github.com/ligus-ai/relay" \

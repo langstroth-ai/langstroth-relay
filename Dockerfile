@@ -1,12 +1,12 @@
 # Ligus relay (ligus-relay) — build from this repo root: docker build -t ligus-relay .
-FROM golang:1.25-alpine AS build
+FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ligus-relay ./cmd/ligus-relay
 
-FROM alpine:3.20
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 RUN apk add --no-cache su-exec && adduser -D -H hive
 LABEL org.opencontainers.image.title="Ligus Relay" \
       org.opencontainers.image.description="Content-blind, end-to-end-encrypted sync relay for Ligus (formerly Hive)" \
