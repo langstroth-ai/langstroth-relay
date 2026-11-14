@@ -58,6 +58,7 @@ Each `LIGUS_RELAY_*` setting below is also read under its legacy
 | `LIGUS_RELAY_FRIEND_CAP` | max accepted friends per account |
 | `LIGUS_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap for the memory store (default `50000`; `0` = unbounded) |
 | `LIGUS_RELAY_RETENTION_DAYS` | prune memory-store envelopes older than N days (default `0` = age pruning off) |
+| `LIGUS_RELAY_MAX_STORE_BYTES` | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs). Writes past it answer `507`. Default `0` = unbounded; set it below your memory limit on any relay reachable by untrusted clients, since per-workspace caps multiply by an unbounded number of workspace ids |
 | `LIGUS_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
 | `LIGUS_RELAY_TRUSTED_PROXIES` | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (default empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used, as before |
 | `LIGUS_RELAY_CLIENT_IP_HEADER` | header read from a trusted proxy: `X-Forwarded-For` (default; walked right to left past trusted hops) or a single-address header such as `X-Real-IP` |

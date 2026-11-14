@@ -104,6 +104,13 @@ postgres:
 # true whenever a database is configured.
 requireDatabase: null
 
+# Memory store only (no database): cap on workspace bytes held in the heap
+# (LIGUS_RELAY_MAX_STORE_BYTES). Writes past it get 507 instead of the pod
+# being OOM-killed (and, with a snapshot, reloading the same data on restart).
+# Keep it well under singlePod.resources.limits.memory. 0 = unbounded.
+memoryStore:
+  maxBytes: 100000000
+
 # Memory-store snapshot (topology=single, no database). For kind/k3d only.
 persistence:
   enabled: false

@@ -65,6 +65,13 @@ type memoryStore struct {
 	maxKeyringPerWS     int
 	maxDeviceBlobsPerWS int
 
+	// maxStoreBytes caps the bytes of workspace blobs held (envelope bodies,
+	// keyring rows, candidate and presence blobs) across all workspaces
+	// (HIVE_RELAY_MAX_STORE_BYTES; 0 = unbounded, the default). storeBytes is
+	// the running total. A write past the cap fails with ErrStoreFull (507).
+	maxStoreBytes int64
+	storeBytes    int64
+
 	// notify wakes SSE subscribers of this workspace on a genuinely new append
 	// (in-process; see wsNotifier).
 	notify *wsNotifier
@@ -135,6 +142,7 @@ func newMemoryStore() *memoryStore {
 		inboxMaxRows:          int(envInt64("HIVE_RELAY_INBOX_MAX_ROWS", defaultInboxMaxRows)),
 		maxKeyringPerWS:       int(envInt64("HIVE_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
 		maxDeviceBlobsPerWS:   int(envInt64("HIVE_RELAY_MAX_DEVICE_BLOBS_PER_WS", defaultMaxDeviceBlobsPerWS)),
+		maxStoreBytes:         max(envInt64("HIVE_RELAY_MAX_STORE_BYTES", 0), 0),
 		notify:                newWSNotifier(),
 		memTunnel:             newMemTunnel(),
 	}
@@ -213,6 +221,9 @@ func (s *memoryStore) AppendEnvelope(_ context.Context, workspace string, body j
 			return seq, nil // already stored — idempotent no-op
 		}
 	}
+	if !s.reserveLocked(int64(len(body))) {
+		return 0, ErrStoreFull
+	}
 	w.nextSeq++
 	seq := w.nextSeq
 	w.envelopes = append(w.envelopes, Envelope{Seq: seq, Body: body})
@@ -258,6 +269,9 @@ func (s *memoryStore) pruneEnvelopesLocked(w *memWorkspace, now int64) {
 		if k := w.envKey[i]; k != "" {
 			delete(w.dedup, k)
 		}
+	}
+	for i := 0; i < drop && i < len(w.envelopes); i++ {
+		s.storeBytes -= int64(len(w.envelopes[i].Body))
 	}
 	if drop >= len(w.envelopes) {
 		w.envelopes = nil
@@ -308,27 +322,52 @@ func (s *memoryStore) EnvelopesPage(_ context.Context, workspace string, after u
 func (s *memoryStore) PutCandidate(_ context.Context, workspace, deviceID string, candidate json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.workspace(workspace).candidates
-	capDeviceBlobs(m, deviceID, s.maxDeviceBlobsPerWS)
-	m[deviceID] = candidate
+	return s.putDeviceBlobLocked(s.workspace(workspace).candidates, deviceID, candidate)
+}
+
+// putDeviceBlobLocked stores a candidate/presence blob under the per-workspace
+// device cap and the store byte budget. Caller holds s.mu.
+func (s *memoryStore) putDeviceBlobLocked(m map[string]json.RawMessage, deviceID string, blob json.RawMessage) error {
+	old, exists := m[deviceID]
+	if !s.reserveLocked(int64(len(blob)) - int64(len(old))) {
+		return ErrStoreFull
+	}
+	if !exists {
+		if evicted, ok := capDeviceBlobs(m, deviceID, s.maxDeviceBlobsPerWS); ok {
+			s.storeBytes -= int64(len(evicted))
+		}
+	}
+	m[deviceID] = blob
 	return nil
+}
+
+// reserveLocked accounts n more bytes (negative frees) against the store
+// budget; false (and nothing accounted) when that would exceed it. Caller
+// holds s.mu.
+func (s *memoryStore) reserveLocked(n int64) bool {
+	if n > 0 && s.maxStoreBytes > 0 && s.storeBytes+n > s.maxStoreBytes {
+		return false
+	}
+	s.storeBytes += n
+	return true
 }
 
 // capDeviceBlobs bounds a per-workspace device-blob map so an attacker can't grow
 // it without limit by spraying distinct device ids (P2-12). If the map is at the
 // cap and deviceID is new, it evicts one existing entry first (blobs are
 // ephemeral rendezvous state — a live device simply re-publishes).
-func capDeviceBlobs(m map[string]json.RawMessage, deviceID string, limit int) {
+func capDeviceBlobs(m map[string]json.RawMessage, deviceID string, limit int) (evicted json.RawMessage, ok bool) {
 	if limit <= 0 {
-		return
+		return nil, false
 	}
 	if _, exists := m[deviceID]; exists || len(m) < limit {
-		return
+		return nil, false
 	}
-	for k := range m { // drop one arbitrary entry to make room
+	for k, v := range m { // drop one arbitrary entry to make room
 		delete(m, k)
-		break
+		return v, true
 	}
+	return nil, false
 }
 
 func (s *memoryStore) Candidates(_ context.Context, workspace string) (map[string]json.RawMessage, error) {
@@ -346,10 +385,7 @@ func (s *memoryStore) Candidates(_ context.Context, workspace string) (map[strin
 func (s *memoryStore) PutPresence(_ context.Context, workspace, deviceID string, presence json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.workspace(workspace).presence
-	capDeviceBlobs(m, deviceID, s.maxDeviceBlobsPerWS)
-	m[deviceID] = presence
-	return nil
+	return s.putDeviceBlobLocked(s.workspace(workspace).presence, deviceID, presence)
 }
 
 func (s *memoryStore) PresenceBlobs(_ context.Context, workspace string) (map[string]json.RawMessage, error) {
@@ -368,10 +404,16 @@ func (s *memoryStore) AppendKeyRotation(_ context.Context, workspace string, blo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w := s.workspace(workspace)
+	if !s.reserveLocked(int64(len(blob))) {
+		return ErrStoreFull
+	}
 	w.keyring = append(w.keyring, blob)
 	// Bound key-rotation growth per workspace (P2-12): keep only the most-recent
 	// rows past the cap.
 	if s.maxKeyringPerWS > 0 && len(w.keyring) > s.maxKeyringPerWS {
+		for _, old := range w.keyring[:len(w.keyring)-s.maxKeyringPerWS] {
+			s.storeBytes -= int64(len(old))
+		}
 		w.keyring = append([]json.RawMessage(nil), w.keyring[len(w.keyring)-s.maxKeyringPerWS:]...)
 	}
 	return nil

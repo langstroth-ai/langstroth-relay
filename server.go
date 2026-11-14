@@ -1336,6 +1336,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // storeErr writes 500 and returns true if a backend error occurred.
 func storeErr(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, ErrStoreFull) {
+		http.Error(w, "relay storage is full", http.StatusInsufficientStorage)
+		return true
+	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return true

@@ -63,6 +63,7 @@ of silently serving from memory.
 | `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | See Scaling |
 | `postgres.enabled` | `false` | Development Postgres in the release |
 | `externalDatabase.url` / `existingSecret` | empty | Managed Postgres |
+| `memoryStore.maxBytes` | `100000000` | Memory store only: heap budget for workspace data (`LIGUS_RELAY_MAX_STORE_BYTES`); writes past it get 507 |
 | `persistence.enabled` | `false` | Memory-store snapshot PVC (`single` only) |
 | `config.env` | `{}` | Plain `LIGUS_RELAY_*` settings (membership mode, retention, ...) |
 | `config.existingSecret` | empty | Secret whose keys become env (`LIGUS_RELAY_TOKEN_PUBKEY`, `LIGUS_RELAY_METRICS_TOKEN`, ...) |

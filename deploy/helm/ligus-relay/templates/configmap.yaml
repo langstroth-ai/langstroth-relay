@@ -12,6 +12,9 @@ data:
   {{- if $require }}
   LIGUS_RELAY_REQUIRE_DB: "1"
   {{- end }}
+  {{- if and (not (include "ligus-relay.hasDatabase" .)) .Values.memoryStore.maxBytes }}
+  LIGUS_RELAY_MAX_STORE_BYTES: {{ .Values.memoryStore.maxBytes | int64 | quote }}
+  {{- end }}
   {{- with .Values.clientIP.trustedProxies }}
   LIGUS_RELAY_TRUSTED_PROXIES: {{ join "," . | quote }}
   {{- end }}

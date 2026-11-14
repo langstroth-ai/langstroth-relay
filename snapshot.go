@@ -171,6 +171,7 @@ func (s *memoryStore) restore(snap snapshot) {
 		s.pruneEnvelopesLocked(ws, time.Now().Unix())
 		s.workspaces[id] = ws
 	}
+	s.recountStoreBytesLocked()
 
 	s.directory = map[string]*DirAccount{}
 	for k, d := range snap.Directory {
@@ -310,4 +311,25 @@ func (s *memoryStore) flushSnapshot() error {
 		return err
 	}
 	return os.Rename(tmp, s.persistPath)
+}
+
+// recountStoreBytesLocked recomputes the store byte total from the workspaces
+// (after a restore). Caller holds s.mu.
+func (s *memoryStore) recountStoreBytesLocked() {
+	var n int64
+	for _, w := range s.workspaces {
+		for _, e := range w.envelopes {
+			n += int64(len(e.Body))
+		}
+		for _, k := range w.keyring {
+			n += int64(len(k))
+		}
+		for _, b := range w.candidates {
+			n += int64(len(b))
+		}
+		for _, b := range w.presence {
+			n += int64(len(b))
+		}
+	}
+	s.storeBytes = n
 }
