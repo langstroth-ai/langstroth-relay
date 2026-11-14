@@ -502,13 +502,25 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 // The result is opaque to the store — a hash or an id, never event content.
 func dedupKeyFor(r *http.Request, body json.RawMessage) string {
 	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" {
-		return k
+		return boundDedupKey(k)
 	}
 	if k := strings.TrimSpace(r.Header.Get("X-Hive-Event-Id")); k != "" {
-		return k
+		return boundDedupKey(k)
 	}
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// maxDedupKeyLen bounds a stored client-chosen idempotency key. A longer key
+// is stored as its SHA-256 (same dedup behavior), so a header can't attach up
+// to the 1 MB header limit to every envelope outside the body cap.
+const maxDedupKeyLen = 128
+
+func boundDedupKey(k string) string {
+	if len(k) <= maxDedupKeyLen {
+		return k
+	}
+	return "key-sha256:" + sha256hex(k)
 }
 
 func (s *Server) listEnvelopes(w http.ResponseWriter, r *http.Request) {
