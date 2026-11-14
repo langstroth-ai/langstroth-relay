@@ -92,7 +92,9 @@ postgres:
   enabled: false
   image:
     repository: docker.io/library/postgres
-    tag: 16-alpine
+    # Pinned by tag and digest. Stays on Postgres 16: a major bump needs a
+    # pg_upgrade of the existing data volume.
+    tag: 16.16-alpine3.24@sha256:0adbf25a9e96d38823bb813f3ac0ed41fadb665c88f1df7fe6dbfb060cbdc106
     pullPolicy: IfNotPresent
   database: relay
   username: relay
