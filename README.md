@@ -61,6 +61,7 @@ Each `LIGUS_RELAY_*` setting below is also read under its legacy
 | `LIGUS_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
 | `LIGUS_RELAY_TRUSTED_PROXIES` | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (default empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used, as before |
 | `LIGUS_RELAY_CLIENT_IP_HEADER` | header read from a trusted proxy: `X-Forwarded-For` (default; walked right to left past trusted hops) or a single-address header such as `X-Real-IP` |
+| `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` (**default**), `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
 | `LIGUS_RELAY_TUNNEL` | relay tunnel (phone ↔ home host): `off` (**default**, `/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LIGUS_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
 | `LIGUS_RELAY_TUNNEL_HOSTS` | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
 | `LIGUS_RELAY_APNS_KEY_FILE` | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
@@ -193,12 +194,22 @@ presented entitlement, never the body — so workspace ciphertext + keyring are 
 longer readable by anyone who merely learns a workspace id. Clients already send
 their access token on every request, so no client change is needed.
 
-**Deferred (known, needs a product decision — not implemented here):**
+**Per-workspace token scope (opt-in, `LIGUS_RELAY_WORKSPACE_SCOPE`).** The
+token gate is coarse: any entitled caller may read and write any workspace.
+Signed tokens can carry an optional `workspaces` claim (`ligus-relay issue …
+--workspace <id> [--workspace <id>]`, `*` = any). With
+`LIGUS_RELAY_WORKSPACE_SCOPE=claims` a token that carries the claim is confined
+to those ids on every `/v1/workspaces/{id}/…` route (envelopes, events,
+keyring, presence, candidates, and the membership routes); tokens without it
+keep coarse access. `strict` requires the claim on every workspace route (so
+it needs signed tokens; the open policy and static allowlist get `403`). `off`
+(default) ignores the claim. The claim lives inside the signed claims JSON, so
+the `hrt1` format is unchanged, but a relay that doesn't enforce it (older, or
+`off`) ignores it: a scoped token is only confined where the operator turns
+this on. Relay-managed membership (`LIGUS_RELAY_MEMBERSHIP=1`) is the
+alternative when the roster, not the issuer, should decide.
 
-- *Per-member read authorization.* The token gate is coarse: any entitled caller
-  may read any workspace. Restricting *which member* may read *which workspace*
-  needs the enterprise membership seam (the read-side analogue of `WriteGuard`)
-  and is out of scope for the coarse gate.
+**Deferred (known, needs a product decision — not implemented here):**
 - *High-entropy workspace ids.* Clients today derive a workspace id from a
   possibly-guessable room *name*. Making ids high-entropy (so an id can't be
   guessed at all) is a client-side + invite-model change, not a relay change.

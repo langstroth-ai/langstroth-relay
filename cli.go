@@ -28,6 +28,7 @@ Generate an issuer keypair: ligus-relay keygen
 Mint an entitlement token:  ligus-relay issue --key <priv-hex> --sub <id> \
                               [--plan team] [--exp-days 365] [--max-members 50] \
                               [--turn] [--cap remove_member --cap rotate_key]
+                              [--workspace <id> ...]  (scope; see LIGUS_RELAY_WORKSPACE_SCOPE)
 Bootstrap a remote agent:   ligus-relay bootstrap-agent --key <priv-hex> \
                               --relay <url> --room <room> --ws-key <passphrase> \
                               --sub github:<agent-id> --admin-sub github:<owner-id> \
@@ -92,6 +93,8 @@ func cmdIssue(args []string) error {
 			claims.Turn = true
 		case "--cap":
 			claims.Caps = append(claims.Caps, next())
+		case "--workspace":
+			claims.Workspaces = append(claims.Workspaces, next())
 		default:
 			return fmt.Errorf("unknown flag %s (try `ligus-relay help`)", args[i])
 		}

@@ -113,6 +113,8 @@ type Server struct {
 
 	tunnel *tunnelHub // nil = tunnel off
 
+	wsScope string // LIGUS_RELAY_WORKSPACE_SCOPE: off | claims | strict (scope.go)
+
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
 	healthErr     error
 	healthChecked time.Time
@@ -157,6 +159,7 @@ func New(o Options) *Server {
 		inviteLimiter: newIPRateLimiter(envFloat("HIVE_RELAY_INVITE_RATE", defaultInviteRate), envFloat("HIVE_RELAY_INVITE_BURST", defaultInviteBurst)),
 		ghCache:       newIdentityCache(ghIdentityTTL, ghNegativeTTL),
 		metricsToken:  metricsToken,
+		wsScope:       workspaceScopeFromEnv(),
 	}
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
@@ -222,27 +225,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/health", s.health)
 	mux.HandleFunc("GET /metrics", s.guardMetrics(m.handler))
 
-	mux.HandleFunc("POST /v1/workspaces/{id}/envelopes", s.postEnvelope)
-	mux.HandleFunc("GET /v1/workspaces/{id}/envelopes", s.listEnvelopes)
-	mux.HandleFunc("GET /v1/workspaces/{id}/events", s.streamEvents)
-	mux.HandleFunc("POST /v1/workspaces/{id}/candidates", s.publishCandidates)
-	mux.HandleFunc("GET /v1/workspaces/{id}/candidates", s.listCandidates)
-	mux.HandleFunc("POST /v1/workspaces/{id}/presence", s.publishPresence)
-	mux.HandleFunc("GET /v1/workspaces/{id}/presence", s.listPresence)
-	mux.HandleFunc("POST /v1/workspaces/{id}/keyring", s.publishKeyring)
-	mux.HandleFunc("GET /v1/workspaces/{id}/keyring", s.listKeyring)
+	mux.HandleFunc("POST /v1/workspaces/{id}/envelopes", s.scoped(s.postEnvelope))
+	mux.HandleFunc("GET /v1/workspaces/{id}/envelopes", s.scoped(s.listEnvelopes))
+	mux.HandleFunc("GET /v1/workspaces/{id}/events", s.scoped(s.streamEvents))
+	mux.HandleFunc("POST /v1/workspaces/{id}/candidates", s.scoped(s.publishCandidates))
+	mux.HandleFunc("GET /v1/workspaces/{id}/candidates", s.scoped(s.listCandidates))
+	mux.HandleFunc("POST /v1/workspaces/{id}/presence", s.scoped(s.publishPresence))
+	mux.HandleFunc("GET /v1/workspaces/{id}/presence", s.scoped(s.listPresence))
+	mux.HandleFunc("POST /v1/workspaces/{id}/keyring", s.scoped(s.publishKeyring))
+	mux.HandleFunc("GET /v1/workspaces/{id}/keyring", s.scoped(s.listKeyring))
 
 	// Relay-managed team membership (opt-in: Options.Membership / env). Off →
 	// these routes are unregistered (404), matching the plain content-blind relay.
 	if s.membership {
-		mux.HandleFunc("GET /v1/workspaces/{id}/members", s.membersList)
-		mux.HandleFunc("POST /v1/workspaces/{id}/members", s.memberUpsert)
-		mux.HandleFunc("DELETE /v1/workspaces/{id}/members/{account}", s.memberRemove)
-		mux.HandleFunc("POST /v1/workspaces/{id}/members/claim", s.membershipClaim)
-		mux.HandleFunc("POST /v1/workspaces/{id}/invites", s.inviteCreate)
-		mux.HandleFunc("GET /v1/workspaces/{id}/invites", s.invitesList)
-		mux.HandleFunc("DELETE /v1/workspaces/{id}/invites/{inviteId}", s.inviteRevoke)
-		mux.HandleFunc("POST /v1/workspaces/{id}/join", s.workspaceJoin)
+		mux.HandleFunc("GET /v1/workspaces/{id}/members", s.scoped(s.membersList))
+		mux.HandleFunc("POST /v1/workspaces/{id}/members", s.scoped(s.memberUpsert))
+		mux.HandleFunc("DELETE /v1/workspaces/{id}/members/{account}", s.scoped(s.memberRemove))
+		mux.HandleFunc("POST /v1/workspaces/{id}/members/claim", s.scoped(s.membershipClaim))
+		mux.HandleFunc("POST /v1/workspaces/{id}/invites", s.scoped(s.inviteCreate))
+		mux.HandleFunc("GET /v1/workspaces/{id}/invites", s.scoped(s.invitesList))
+		mux.HandleFunc("DELETE /v1/workspaces/{id}/invites/{inviteId}", s.scoped(s.inviteRevoke))
+		mux.HandleFunc("POST /v1/workspaces/{id}/join", s.scoped(s.workspaceJoin))
 	}
 
 	mux.HandleFunc("POST /v1/pair", s.createPairing)

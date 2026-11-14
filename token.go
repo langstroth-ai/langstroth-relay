@@ -28,6 +28,11 @@ type TokenClaims struct {
 	RetentionDays *uint32  `json:"retention_days"`
 	Turn          bool     `json:"turn"`
 	Caps          []string `json:"caps"`
+	// Workspaces optionally confines the token to these workspace ids ("*" =
+	// any). Enforced only when LIGUS_RELAY_WORKSPACE_SCOPE is claims or strict
+	// (scope.go); omitted from the JSON when empty, so tokens minted without it
+	// are byte-identical to before.
+	Workspaces []string `json:"workspaces,omitempty"`
 }
 
 // IsExpired reports whether Exp is set and now-or-past.
