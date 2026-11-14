@@ -1,0 +1,476 @@
+[
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/health"
+    },
+    "status": 200,
+    "contentType": "text/plain",
+    "body": "ok"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/envelopes",
+      "body": "{\"ct\":\"AAAA\",\"writer\":\"d1\"}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"seq\":1}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/envelopes",
+      "body": "{\"ct\":\"BBBB\",\"writer\":\"d1\"}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"seq\":2}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/envelopes",
+      "body": "{\"ct\":\"AAAA\",\"writer\":\"d1\"}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"seq\":1}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/envelopes"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "paging": "2",
+    "body": "[{\"seq\":1,\"body\":{\"ct\":\"AAAA\",\"writer\":\"d1\"}},{\"seq\":2,\"body\":{\"ct\":\"BBBB\",\"writer\":\"d1\"}}]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/envelopes?after=1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "paging": "2",
+    "body": "[{\"seq\":2,\"body\":{\"ct\":\"BBBB\",\"writer\":\"d1\"}}]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/envelopes?after=x"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "paging": "2",
+    "body": "[{\"seq\":1,\"body\":{\"ct\":\"AAAA\",\"writer\":\"d1\"}},{\"seq\":2,\"body\":{\"ct\":\"BBBB\",\"writer\":\"d1\"}}]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/envelopes?after=0\u0026limit=1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "paging": "1|true",
+    "body": "[{\"seq\":1,\"body\":{\"ct\":\"AAAA\",\"writer\":\"d1\"}}]"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/envelopes",
+      "body": "{not json"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "invalid JSON body\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/keyring",
+      "body": "{\"epoch\":1,\"wrapped\":\"x\"}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/keyring"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[{\"epoch\":1,\"wrapped\":\"x\"}]"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/candidates",
+      "body": "{\"device_id\":\"d1\",\"data\":{\"addrs\":[\"192.0.2.1:1\"]}}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/candidates"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"d1\":{\"addrs\":[\"192.0.2.1:1\"]}}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/workspaces/ws1/presence",
+      "body": "{\"device_id\":\"d1\",\"data\":{\"s\":\"on\"}}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/presence"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"d1\":{\"s\":\"on\"}}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/nope/envelopes"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "paging": "0",
+    "body": "[]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/workspaces/ws1/members"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "404 page not found\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/pair",
+      "body": "{\"payload\":\"\"}"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "empty payload\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/pair/ZZZZZZ"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "not found\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/admin/users"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "admin API not enabled\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/nonexistent"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "404 page not found\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/directory/alice"
+    },
+    "status": 401,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "unauthorized\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/directory/register",
+      "body": "{\"device_id\":\"d1\",\"ka_public\":\"KA1\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"githubId\":1,\"login\":\"alice\"}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/directory/alice",
+      "github": "tok:bob:2"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"devices\":[{\"deviceId\":\"d1\",\"kaPublic\":\"KA1\"}],\"githubId\":1,\"login\":\"alice\",\"name\":null}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/directory/@ALICE",
+      "github": "tok:bob:2"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"devices\":[{\"deviceId\":\"d1\",\"kaPublic\":\"KA1\"}],\"githubId\":1,\"login\":\"alice\",\"name\":null}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/directory/nobody",
+      "github": "tok:bob:2"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "not found\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/register",
+      "body": "{\"deviceId\":\"d1\",\"nodeId\":\"n1\",\"label\":\"laptop\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"accountId\":\"github:1\",\"githubId\":1,\"login\":\"alice\"}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/register",
+      "body": "{\"deviceId\":\"d2\"}",
+      "github": "tok:bob:2"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"accountId\":\"github:2\",\"githubId\":2,\"login\":\"bob\"}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/register",
+      "body": "{\"deviceId\":\"\"}",
+      "github": "tok:bob:2"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "device_id required\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/heartbeat",
+      "body": "{\"deviceId\":\"d1\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/heartbeat",
+      "body": "{\"deviceId\":\"zz\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":false}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/account/devices",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[{\"deviceId\":\"d1\",\"nodeId\":\"n1\",\"label\":\"laptop\",\"lastSeen\":\u003cTS\u003e}]"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/visibility",
+      "body": "{\"appearOffline\":true}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"appearOffline\":true}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/visibility",
+      "body": "{\"appearOffline\":false}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"appearOffline\":false}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/friends/requests",
+      "body": "{\"toLogin\":\"@bob\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"requestId\":\"fr\u003cID\u003e\",\"state\":\"pending\"}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/friends/requests",
+      "body": "{\"toLogin\":\"ghost\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "user hasn't joined Hive\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/friends/requests",
+      "body": "{\"toLogin\":\"alice\"}",
+      "github": "tok:alice:1"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "cannot friend yourself\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/friends/requests",
+      "github": "tok:bob:2"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[{\"createdAt\":\u003cTS\u003e,\"fromAccount\":\"github:1\",\"fromLogin\":\"alice\",\"requestId\":\"fr\u003cID\u003e\"}]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/account/inbox",
+      "github": "tok:bob:2"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[{\"seq\":1,\"body\":{\"createdAt\":\u003cTS\u003e,\"fromAccount\":\"github:1\",\"fromLogin\":\"alice\",\"kind\":\"friendRequest\",\"requestId\":\"fr\u003cID\u003e\"}}]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/account/inbox?after=1",
+      "github": "tok:bob:2"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[]"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/friends/requests/frnope/accept",
+      "github": "tok:bob:2"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "request not found\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/friends",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/friends/presence",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "[]"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/friends/github:2/devices",
+      "github": "tok:alice:1"
+    },
+    "status": 403,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "forbidden\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/invites",
+      "body": "{\"toLogin\":\"bob\",\"invite\":{\"sealed\":\"x\"}}",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"state\":\"delivered\"}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/account/invites",
+      "body": "{\"toLogin\":\"\",\"invite\":null}",
+      "github": "tok:alice:1"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "toLogin and invite are required\n"
+  },
+  {
+    "req": {
+      "method": "DELETE",
+      "path": "/v1/friends/github:2",
+      "github": "tok:alice:1"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":false}"
+  }
+]
