@@ -195,6 +195,23 @@ func (s *memoryStore) workspace(id string) *memWorkspace {
 	return w
 }
 
+// wsOverheadBytes is what the byte budget charges for each workspace it holds
+// (its maps and slices), plus the id itself, so fresh workspace ids with tiny
+// writes can't grow the heap past the budget.
+const wsOverheadBytes = 1024
+
+// workspaceForWrite returns the workspace for a write, charging a new one's
+// overhead to the byte budget. Caller holds s.mu.
+func (s *memoryStore) workspaceForWrite(id string) (*memWorkspace, error) {
+	if w := s.workspaces[id]; w != nil {
+		return w, nil
+	}
+	if !s.reserveLocked(int64(wsOverheadBytes + len(id))) {
+		return nil, ErrStoreFull
+	}
+	return s.workspace(id), nil
+}
+
 func (s *memoryStore) account(key string) *memAccount {
 	a := s.accounts[key]
 	if a == nil {
@@ -209,7 +226,10 @@ func (s *memoryStore) account(key string) *memAccount {
 func (s *memoryStore) AppendEnvelope(_ context.Context, workspace string, body json.RawMessage, dedupKey string) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w := s.workspace(workspace)
+	w, err := s.workspaceForWrite(workspace)
+	if err != nil {
+		return 0, err
+	}
 	// Realign envKey with envelopes in case envelopes were populated directly
 	// (older snapshots without keys, or tests): pad the older prefix with empty
 	// keys so the append below stays index-aligned.
@@ -322,7 +342,11 @@ func (s *memoryStore) EnvelopesPage(_ context.Context, workspace string, after u
 func (s *memoryStore) PutCandidate(_ context.Context, workspace, deviceID string, candidate json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.putDeviceBlobLocked(s.workspace(workspace).candidates, deviceID, candidate)
+	w, err := s.workspaceForWrite(workspace)
+	if err != nil {
+		return err
+	}
+	return s.putDeviceBlobLocked(w.candidates, deviceID, candidate)
 }
 
 // putDeviceBlobLocked stores a candidate/presence blob under the per-workspace
@@ -385,7 +409,11 @@ func (s *memoryStore) Candidates(_ context.Context, workspace string) (map[strin
 func (s *memoryStore) PutPresence(_ context.Context, workspace, deviceID string, presence json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.putDeviceBlobLocked(s.workspace(workspace).presence, deviceID, presence)
+	w, err := s.workspaceForWrite(workspace)
+	if err != nil {
+		return err
+	}
+	return s.putDeviceBlobLocked(w.presence, deviceID, presence)
 }
 
 func (s *memoryStore) PresenceBlobs(_ context.Context, workspace string) (map[string]json.RawMessage, error) {
@@ -403,7 +431,10 @@ func (s *memoryStore) PresenceBlobs(_ context.Context, workspace string) (map[st
 func (s *memoryStore) AppendKeyRotation(_ context.Context, workspace string, blob json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w := s.workspace(workspace)
+	w, err := s.workspaceForWrite(workspace)
+	if err != nil {
+		return err
+	}
 	if !s.reserveLocked(int64(len(blob))) {
 		return ErrStoreFull
 	}

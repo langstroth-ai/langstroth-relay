@@ -323,7 +323,8 @@ func (s *memoryStore) flushSnapshot() error {
 // (after a restore). Caller holds s.mu.
 func (s *memoryStore) recountStoreBytesLocked() {
 	var n int64
-	for _, w := range s.workspaces {
+	for id, w := range s.workspaces {
+		n += int64(wsOverheadBytes + len(id))
 		for _, e := range w.envelopes {
 			n += int64(len(e.Body))
 		}

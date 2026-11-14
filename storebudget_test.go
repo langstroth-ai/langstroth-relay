@@ -67,7 +67,7 @@ func TestMemoryStoreBytesAccounting(t *testing.T) {
 	_ = s.PutPresence(ctx, "w", "d1", []byte(blob(50)))
 	_ = s.PutPresence(ctx, "w", "d1", []byte(blob(10)))
 	_ = s.PutPresence(ctx, "w", "d2", []byte(blob(10))) // evicts d1
-	want := int64(2*(100+2) + (10 + 2))
+	want := int64(wsOverheadBytes+len("w")) + int64(2*(100+2)+(10+2))
 	if got := s.storeBytes; got != want {
 		t.Fatalf("storeBytes = %d, want %d", got, want)
 	}
@@ -78,5 +78,24 @@ func TestMemoryStoreBudgetOffByDefault(t *testing.T) {
 	t.Setenv("LIGUS_RELAY_MAX_STORE_BYTES", "")
 	if s := newMemoryStore(); s.maxStoreBytes != 0 {
 		t.Fatalf("default budget = %d, want 0 (off)", s.maxStoreBytes)
+	}
+}
+
+// F-06b: each new workspace costs heap (its maps and slices) that the byte
+// budget didn't count, so tiny writes to fresh workspace ids still grew the
+// heap without bound under LIGUS_RELAY_MAX_STORE_BYTES.
+func TestMemoryStoreBudgetCountsWorkspaces(t *testing.T) {
+	t.Setenv("LIGUS_RELAY_MAX_STORE_BYTES", "20000")
+	s := newMemoryStore()
+	ctx := t.Context()
+	full := false
+	for i := 0; i < 1000; i++ {
+		if _, err := s.AppendEnvelope(ctx, fmt.Sprintf("w%d", i), []byte(`1`), ""); err == ErrStoreFull {
+			full = true
+			break
+		}
+	}
+	if !full {
+		t.Fatal("1000 fresh workspaces fit in a 20000-byte budget")
 	}
 }
