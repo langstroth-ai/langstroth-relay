@@ -1,7 +1,9 @@
 package ligusauth
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strings"
@@ -406,5 +408,50 @@ func TestMetadata(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatal("unknown tenant must 404")
+	}
+}
+
+func TestRevokeEndsTheSession(t *testing.T) {
+	h, _ := homeHarness(t)
+	d := newDevice("d1")
+	h.loginTokens("home", d)
+	grantJIT(t, h, "home")
+	tr := h.loginTokens("home", d)
+	other := h.loginTokens("home", d) // a second, independent session
+	// Revoking at another tenant's endpoint does nothing.
+	resp, _ := http.PostForm(h.url("nope", "/revoke"), url.Values{"token": {tr.Refresh}})
+	resp.Body.Close()
+	resp, _ = http.PostForm(h.url("home", "/revoke"), url.Values{"token": {tr.Refresh}, "token_type_hint": {"refresh_token"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoke: %d", resp.StatusCode)
+	}
+	if r := h.refresh("home", tr.Refresh, tr.Nonce, d); r.Error != "invalid_grant" {
+		t.Fatalf("refresh after revoke: %s", fmtStatus(r))
+	}
+	if r := h.refresh("home", other.Refresh, other.Nonce, d); r.status != 200 {
+		t.Fatalf("the other session must survive: %s", fmtStatus(r))
+	}
+	resp, _ = http.PostForm(h.url("home", "/revoke"), url.Values{"token": {"unknown"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("unknown tokens answer 200 too")
+	}
+}
+
+// Cross-language vector shared with the Ligus client
+// (crates/hive-runtime/src/ligus_auth.rs, device_proof_matches_ligus_auth).
+func TestDeviceProofVectorFrozen(t *testing.T) {
+	m := DeviceProofMessage("home", "refresh_token", "bm9uY2U", "5d0b7c1e-2f43-4a8e-9a51-0c6f3d2e1b07", "rt-123")
+	const wantMsg = "6c696775732d617574682d6465766963652d70726f6f662d763100686f6d6500726566726573685f746f6b656e00626d39755932550035643062376331652d326634332d346138652d396135312d3063366633643265316230370032383165366439643761623363653837376635653361633862343334363461316130353564323533313564623364313839313466666334333133303736396539"
+	if hex.EncodeToString(m) != wantMsg {
+		t.Fatalf("device proof bytes drifted: %x", m)
+	}
+	k := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
+	if got := hex.EncodeToString(ed25519.Sign(k, m)); got != "fa484b92be85148eda71fa2535fa96ec6455f6ea271a802639c134a2600100dcf7191b061e7a28aff546558d293e24a6906b4d25c7dc713d7a155f00d50a830c" {
+		t.Fatalf("signature drifted: %s", got)
+	}
+	if hex.EncodeToString([]byte(DeviceProofContext)) != "6c696775732d617574682d6465766963652d70726f6f662d763100" {
+		t.Fatal("context drifted")
 	}
 }

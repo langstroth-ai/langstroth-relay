@@ -965,6 +965,25 @@ func (s *Server) issue(w http.ResponseWriter, r *http.Request, t *TenantConfig, 
 	})
 }
 
+// handleRevoke implements RFC 7009 for refresh tokens (sign-out). Holding
+// the refresh token is enough to revoke its whole session; the answer is
+// 200 whether or not the token was known, so it reveals nothing.
+func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request, t *TenantConfig) {
+	if !parseForm(w, r) {
+		return
+	}
+	if raw := r.PostForm.Get("token"); raw != "" {
+		if rt, err := s.store.GetRefresh(r.Context(), sha256Hex(raw)); err == nil && rt.Tenant == t.ID {
+			if err := s.store.RevokeFamily(r.Context(), t.ID, rt.FamilyID); err != nil {
+				oauthErr(w, http.StatusServiceUnavailable, "temporarily_unavailable", "")
+				return
+			}
+			s.audit.event("session_revoked", t.ID, "user", rt.UserID, "did", rt.DeviceID)
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 func parseForm(w http.ResponseWriter, r *http.Request) bool {

@@ -128,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /t/{tenant}/device", t(s.limited(s.handleDeviceSubmit)))
 	mux.HandleFunc("POST /t/{tenant}/device/confirm", t(s.limited(s.handleDeviceConfirm)))
 	mux.HandleFunc("POST /t/{tenant}/token", t(s.limited(s.handleToken)))
+	mux.HandleFunc("POST /t/{tenant}/revoke", t(s.limited(s.handleRevoke)))
 	mux.HandleFunc("/t/{tenant}/scim/v2/{rest...}", t(s.handleSCIM))
 	return securityHeaders(mux)
 }
@@ -184,6 +185,7 @@ func (s *Server) handleMetadata(w http.ResponseWriter, _ *http.Request, t *Tenan
 		"access_ttl":                    int(s.cfg.AccessTTL.D().Seconds()),
 		"code_challenge_methods":        []string{"S256"},
 		"device_proof":                  "ed25519",
+		"revocation_endpoint":           base + "/revoke",
 	})
 }
 
