@@ -46,30 +46,69 @@ ligus-relay issue --key <priv-hex> --sub <id> --plan team --exp-days 365 \
 ## Configuration (env)
 
 Each `LIGUS_RELAY_*` setting below is also read under its legacy
-`HIVE_RELAY_*` name.
+`HIVE_RELAY_*` name (the new name wins if both are set). Rates are tokens per
+second per client; a client is the TCP peer, or the address a trusted proxy
+names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 
-| Var | Meaning |
-|---|---|
-| `PORT` / `LIGUS_RELAY_ADDR` | bind address (`$PORT` wins; default `0.0.0.0:8443`) |
-| `DATABASE_URL` | shared **Postgres** store → horizontal scaling / HA (no data migration) |
-| `LIGUS_RELAY_DATA_DIR` | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
-| `LIGUS_RELAY_TOKEN_PUBKEY` | Ed25519 public key → require **signed** entitlement tokens |
-| `LIGUS_RELAY_ACCESS_TOKENS` | comma-separated static allowlist (coarse gate) |
-| `LIGUS_RELAY_FRIEND_CAP` | max accepted friends per account |
-| `LIGUS_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap (default `50000`; `0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly |
-| `LIGUS_RELAY_RETENTION_DAYS` | prune envelopes older than N days (default `0` = age pruning off); both stores |
-| `LIGUS_RELAY_MAX_STORE_BYTES` | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs). Writes past it answer `507`. Default `0` = unbounded; set it below your memory limit on any relay reachable by untrusted clients, since per-workspace caps multiply by an unbounded number of workspace ids |
-| `LIGUS_RELAY_MAX_LIST_BYTES` | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (default `16777216` = 16 MiB; `0` = unbounded). The keyring keeps its newest rows; at least one row is always returned |
-| `LIGUS_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
-| `LIGUS_RELAY_TRUSTED_PROXIES` | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (default empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used, as before |
-| `LIGUS_RELAY_CLIENT_IP_HEADER` | header read from a trusted proxy: `X-Forwarded-For` (default; walked right to left past trusted hops) or a single-address header such as `X-Real-IP` |
-| `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` (**default**), `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
-| `LIGUS_RELAY_TUNNEL` | relay tunnel (phone ↔ home host): `off` (**default**, `/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LIGUS_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
-| `LIGUS_RELAY_TUNNEL_HOSTS` | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
-| `LIGUS_RELAY_APNS_KEY_FILE` | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
-| `LIGUS_RELAY_APNS_KEY_ID` / `LIGUS_RELAY_APNS_TEAM_ID` | the key's Key ID and your Apple developer Team ID |
-| `LIGUS_RELAY_APNS_TOPIC` | bundle id of the iPhone app build you publish (the APNs topic) |
-| `LIGUS_RELAY_APNS_ENV` | `auto` (**default**: the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
+**Core and access**
+
+| Var | Default | Meaning |
+|---|---|---|
+| `PORT` / `LIGUS_RELAY_ADDR` | `0.0.0.0:8443` | bind address (`$PORT` wins) |
+| `DATABASE_URL` | empty | shared **Postgres** store → horizontal scaling / HA (no data migration) |
+| `LIGUS_RELAY_DATA_DIR` | empty | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
+| `LIGUS_RELAY_REQUIRE_DB` | off | `1`: refuse to start without `DATABASE_URL` instead of falling back to memory |
+| `LIGUS_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** entitlement tokens. A key that doesn't parse denies every token |
+| `LIGUS_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
+| `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
+| `LIGUS_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
+| `LIGUS_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
+| `LIGUS_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
+| `LIGUS_RELAY_FRIEND_CAP` | none | max accepted friends per account |
+| `LIGUS_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends |
+| `LIGUS_RELAY_TRUSTED_PROXIES` | empty | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used |
+| `LIGUS_RELAY_CLIENT_IP_HEADER` | `X-Forwarded-For` | header read from a trusted proxy (walked right to left past trusted hops), or a single-address header such as `X-Real-IP` |
+
+**Storage, retention and size bounds**
+
+| Var | Default | Meaning |
+|---|---|---|
+| `LIGUS_RELAY_MAX_ENVELOPES` | `50000` | per-workspace retained-envelope cap (`0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly |
+| `LIGUS_RELAY_RETENTION_DAYS` | `0` (off) | prune envelopes older than N days; both stores |
+| `LIGUS_RELAY_MAX_STORE_BYTES` | `0` (unbounded) | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs, per-workspace overhead). Writes past it answer `507`. Set it below your memory limit on any relay reachable by untrusted clients |
+| `LIGUS_RELAY_MAX_BODY_BYTES` | `4194304` (4 MiB) | max JSON request-body size |
+| `LIGUS_RELAY_MAX_LIST_BYTES` | `16777216` (16 MiB) | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (`0` = unbounded). At least one row is always returned |
+| `LIGUS_RELAY_MAX_KEYRING_PER_WS` | `2000` | key rotations stored per workspace. Past it a new rotation gets `507`; stored rotations are never evicted |
+| `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS` | `16777216` (16 MiB) | stored keyring bytes per workspace; `507` past it. Keep it at or below `LIGUS_RELAY_MAX_LIST_BYTES` so `GET …/keyring` always returns the whole keyring |
+| `LIGUS_RELAY_MAX_ROTATION_BYTES` | `262144` (256 KiB) | one key rotation's size; `413` past it (`0` = only the body cap) |
+| `LIGUS_RELAY_MAX_DEVICE_BLOBS_PER_WS` | `1000` | candidate and presence device entries per workspace |
+| `LIGUS_RELAY_MAX_PAIRINGS` | `50000` | live pairing codes per instance (`503` past it) |
+| `LIGUS_RELAY_INBOX_MAX_ROWS` | `5000` | account-inbox rows per recipient (oldest evicted) |
+| `LIGUS_RELAY_INBOX_RETENTION_DAYS` | `30` | Postgres: prune inbox rows older than N days (`0` = off) |
+| `LIGUS_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
+
+**Rate and concurrency limits** (a rate of `0` disables that limit)
+
+| Var | Default | Meaning |
+|---|---|---|
+| `LIGUS_RELAY_PUSH_RATE` / `_BURST` | `100` / `300` | every unauthenticated write (envelopes, keyring, presence, candidates, pairing) per client |
+| `LIGUS_RELAY_WS_WRITER_RATE` / `_BURST` | `20` / `200` | envelope appends per (workspace, writer) |
+| `LIGUS_RELAY_READ_RATE` / `_BURST` | `100` / `400` | workspace reads (envelopes, keyring, presence, candidates, members, SSE connects) per client; `429` past it |
+| `LIGUS_RELAY_MAX_SSE` | `2000` | concurrent SSE streams per instance (`503` past it; `0` = unlimited) |
+| `LIGUS_RELAY_MAX_SSE_PER_CLIENT` | `100` | concurrent SSE streams per client (token subject, else address; `429` past it; `0` = unlimited) |
+| `LIGUS_RELAY_GITHUB_RATE` / `_BURST` | `30` / `120` | GitHub-backed routes (directory, account, friends) per client |
+| `LIGUS_RELAY_INVITE_RATE` / `_BURST` | `0.05` / `10` | account invites per (sender, recipient) |
+
+**Relay tunnel and push**
+
+| Var | Default | Meaning |
+|---|---|---|
+| `LIGUS_RELAY_TUNNEL` | `off` | relay tunnel (phone ↔ home host): `off` (`/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LIGUS_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
+| `LIGUS_RELAY_TUNNEL_HOSTS` | empty | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
+| `LIGUS_RELAY_APNS_KEY_FILE` | empty | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
+| `LIGUS_RELAY_APNS_KEY_ID` / `LIGUS_RELAY_APNS_TEAM_ID` | empty | the key's Key ID and your Apple developer Team ID |
+| `LIGUS_RELAY_APNS_TOPIC` | empty | bundle id of the iPhone app build you publish (the APNs topic) |
+| `LIGUS_RELAY_APNS_ENV` | `auto` | `auto` (the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
 
 Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
 memory+snapshot; else in-memory only.
@@ -77,9 +116,15 @@ memory+snapshot; else in-memory only.
 ## Test
 
 ```sh
-go test ./...                                  # unit + HTTP + snapshot + seams
+go test -race ./...                            # unit + HTTP + snapshot + seams (+ chart render tests when helm is installed)
 TEST_DATABASE_URL=postgres://… go test ./...   # also runs Postgres integration
+helm lint deploy/helm/ligus-relay              # the Kubernetes chart
 ```
+
+## Upgrading
+
+See [CHANGELOG.md](CHANGELOG.md) for each release's behavior changes and
+upgrade notes for self-hosters.
 
 ## Deploy
 
@@ -162,6 +207,14 @@ A client loops `after = X-Hive-Next-After` until `X-Hive-More` is absent. A clie
 that ignores the headers still converges: it sets its cursor to the highest seq it
 received and its next poll continues from there.
 
+### Idempotent push
+
+`POST /v1/workspaces/{id}/envelopes` drops a re-push instead of appending it
+twice and answers with the original `seq`. A re-push is recognized by the
+client's `Idempotency-Key` (or `X-Hive-Event-Id`) header, scoped to the writer
+(the token subject, else the client address), so one writer can't claim a key
+another writer will use; without a header, by the SHA-256 of the sealed body.
+
 ### Live push (Server-Sent Events)
 
 `GET /v1/workspaces/{id}/events` (`Content-Type: text/event-stream`) lets a
@@ -173,10 +226,49 @@ content-blind **nudge** channel — never envelope bodies:
   the client pulls with its own `?after=` cursor over `GET /envelopes`;
 - every ~25s idle: a `: keep-alive` comment to survive proxy idle timeouts.
 
-Read-authorized exactly like the other workspace reads (`enforceRead`). Fan-out
+Read-authorized exactly like the other workspace reads (`enforceRead`), and
+counted against the read rate. Each client may hold at most
+`LIGUS_RELAY_MAX_SSE_PER_CLIENT` streams (`429` past it), and the instance at
+most `LIGUS_RELAY_MAX_SSE` (`503`). Fan-out
 is **single-instance / in-process** today; cross-instance push (Postgres
 `LISTEN/NOTIFY`) is tracked as a follow-up, and multi-instance deployments keep
 the `?after=` poll as the backstop.
+
+### Pairing codes
+
+`POST /v1/pair` `{payload, ttl_secs?}` stores a payload behind a short code
+(`ttl_secs` 30–3600, default 600) and `GET /v1/pair/{code}` returns it. The
+broker keeps payloads in cleartext in the relay's memory, so it takes only
+payloads that are safe for the relay operator to read:
+
+- a public peer friend code: `hive_` + base64url of a 32-byte public key, or
+  the legacy `hivepeer1:` + 64 hex characters;
+- a sealed payload: `sealed1:` + base64url of at least 32 bytes of ciphertext.
+  The relay can't check that it is really encrypted; the prefix is the
+  client's statement that it is.
+
+Anything else gets `422`, including `hivews1:` / `ligusws1:` workspace
+invites, which carry the workspace's end-to-end key: share those over a
+channel you trust. A code is **single-use**: the first successful resolve
+consumes it, and a second resolve gets `404`. Unresolved codes still expire at
+their TTL. Failed resolves are capped per client (10 per minute, then `429`),
+so the code space can't be enumerated.
+
+### GitHub-backed routes
+
+The identity directory, account and friends routes
+(`/v1/directory/*`, `/v1/account/*`, `/v1/friends/*`) identify the caller by a
+GitHub token, sent in `X-Hive-Github-Token` (or `X-Ligus-Github-Token`). The
+relay verifies it against `api.github.com/user` and caches the result briefly
+by the token's hash. Only that header is used: the `Authorization` bearer
+carries the relay access token and is never sent to GitHub, so a request with
+only a bearer gets `401`.
+
+**Residual:** the relay operator can see the GitHub tokens clients send to
+these routes, since the relay itself has to present them to GitHub. Use these
+routes only with a relay you trust, and give the client a GitHub token with
+the least scope it needs. Replacing the raw token with a proof the relay can
+check without holding the token is a pending client change.
 
 ### Optional access gating
 
@@ -190,6 +282,12 @@ Open by default (self-host — the URL isn't a secret). To gate:
   (below) instead of an env list — no redeploy, survives restarts, instant
   revocation. Pair it with `StoreEntitlementVerifier` to make the store the
   access gate.
+
+Workspace keyrings are bounded by refusal, not eviction: past
+`LIGUS_RELAY_MAX_KEYRING_PER_WS` rotations or `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS`
+bytes, a new rotation gets `507` and the stored ones stay, so a flood of junk
+rotations can't push a workspace's real rotations out. One rotation is capped at
+`LIGUS_RELAY_MAX_ROTATION_BYTES`.
 
 Gating applies symmetrically to **reads and writes**: both `GET`
 (envelopes / keyring / presence / candidates) and `POST` on a workspace require
@@ -234,6 +332,9 @@ once at creation.
 - `POST /v1/admin/users/{id}/tokens` `{label?}` → another token (raw once)
 - `POST /v1/admin/users/{id}/disabled` `{disabled}` → enable/disable a user
 - `DELETE /v1/admin/tokens/{id}` → revoke a token
+
+Admin request bodies are capped at 16 KiB (`413`). Store errors are logged, not
+returned: a failing store answers `500 internal error`.
 
 ### Status page
 

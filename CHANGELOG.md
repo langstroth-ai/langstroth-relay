@@ -1,0 +1,177 @@
+# Changelog
+
+## v0.2.0
+
+Ligus Relay is the relay formerly called `hive-relay`. Ligus (LEE-gus) is short
+for *ligustica*, the Italian honeybee. The `/v1` API, `hrt1` tokens, `X-Hive-*`
+headers, the `hive-tunnel.1` subprotocol and the `hive_relay_*` metric names are
+unchanged: existing clients keep working against this relay, except where the
+security changes below say otherwise.
+
+### Renamed
+
+- **Module path** is `github.com/ligus-ai/relay`. `github.com/honeyhive-ai/relay`
+  (v0.1.x) is deprecated; update imports and `go.mod`.
+- **Binary** is `ligus-relay` (`cmd/ligus-relay`). `cmd/hive-relay` still
+  builds, and the repository-root (Alpine) image keeps a `hive-relay` symlink,
+  until Ligus v3.0. The distroless image (`deploy/container/Dockerfile`) ships
+  only `ligus-relay`.
+- **Settings** are named `LIGUS_RELAY_*`. Every `HIVE_RELAY_*` name still
+  works: if both are set the new name wins, and the relay logs a one-time
+  warning per legacy name in use.
+
+### Security changes that affect clients
+
+- **GitHub-backed routes no longer read the `Authorization` bearer.** The
+  directory, account and friends routes used to fall back to the bearer when
+  no GitHub token header was sent, and verified it against `api.github.com`,
+  so a relay access token could reach GitHub. Only `X-Hive-Github-Token` (or
+  the new `X-Ligus-Github-Token`) is used now; a request with only a bearer
+  gets `401`. Ligus 2.0 clients already send `X-Hive-Github-Token`.
+  *Residual:* the relay operator can still see the GitHub tokens sent to these
+  routes; a client change to stop sending the raw token is pending.
+- **Pairing payloads are restricted.** `POST /v1/pair` takes only a peer
+  friend code (`hive_` + base64url of 32 bytes, or `hivepeer1:` + 64 hex) or a
+  sealed payload (`sealed1:` + base64url, at least 32 bytes). `hivews1:` and
+  `ligusws1:` workspace invites, which carry the workspace key in cleartext,
+  and anything else get `422`. Ligus 2.0 clients publish only friend codes
+  here and already refuse to broker workspace invites; Hive 1.x clients that
+  published `hivews1:` codes through the relay can no longer do so.
+- **Pairing codes are single-use.** The first successful resolve consumes the
+  code; a second resolve gets `404`. The TTL (default 600 s, 30–3600 s) is
+  unchanged.
+- **Keyring rotations past the caps are refused, not evicted.** Both stores
+  used to keep only the newest rotations past the per-workspace cap (and
+  Postgres pruned the same way hourly), so junk rotations could push a
+  workspace's real rotations out. Past `LIGUS_RELAY_MAX_KEYRING_PER_WS`
+  (2000) rotations or `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS` (16 MiB) a new
+  rotation gets `507` and the keyring is unchanged. A single rotation over
+  `LIGUS_RELAY_MAX_ROTATION_BYTES` (256 KiB) gets `413`. The wire format is
+  unchanged.
+- **Workspace reads are rate limited per client** (`LIGUS_RELAY_READ_RATE`
+  100/s, `LIGUS_RELAY_READ_BURST` 400; `429` past it), and **SSE streams are
+  capped per client** (`LIGUS_RELAY_MAX_SSE_PER_CLIENT`, 100; `429`).
+- **Idempotency keys are scoped to the writer.** A client-chosen
+  `Idempotency-Key` or `X-Hive-Event-Id` is stored as a hash of (writer, key),
+  so one writer can't claim another's key and turn that writer's push into a
+  silent duplicate. Body-hash dedup (no header) is unchanged. Ligus 2.0 clients
+  send neither header.
+
+### Other security fixes
+
+- Admin request bodies are capped at 16 KiB, and admin and friend handlers log
+  store errors instead of returning them. The membership claim body is bounded.
+- Rate limits and abuse blocks key IPv6 clients on their /64. A client-supplied
+  `Fly-Client-IP` is ignored off Fly.io; `LIGUS_RELAY_TRUSTED_PROXIES` and
+  `LIGUS_RELAY_CLIENT_IP_HEADER` name the proxies whose forwarding header is
+  trusted.
+- Membership roles can't be raised above the caller's own or used against
+  higher ranks, and a claimed workspace's roster is readable by its members
+  only.
+- Opt-in per-workspace token scope from a signed `workspaces` claim
+  (`LIGUS_RELAY_WORKSPACE_SCOPE`).
+- Optional heap budget for the memory store (`LIGUS_RELAY_MAX_STORE_BYTES`),
+  charged with each workspace's overhead.
+- Bounded workspace and device id lengths, stored idempotency keys, and
+  keyring, candidate and presence list responses (`LIGUS_RELAY_MAX_LIST_BYTES`).
+- The memory-store snapshot is written owner-only.
+- A malformed `LIGUS_RELAY_TOKEN_PUBKEY` fails closed (denies every token).
+- Pairing-code sweeps run at most once a second, and the per-client resolve
+  block is checked first.
+
+### Added since v0.1.0
+
+- Relay tunnel (`hive-tunnel/1`) for phone ↔ home host remote access, off by
+  default, with an optional built-in APNs push sender.
+- `MainWith` / `Assemble` extension point, so a downstream binary is a strict
+  superset of the open relay; `Server.RefreshTunnelStatus`.
+- Relay-managed team membership (roster, claim, invites, join) behind
+  `LIGUS_RELAY_MEMBERSHIP`, with a membership identity key
+  (`LIGUS_RELAY_MEMBERSHIP_PUBKEY`) independent of the entitlement gate.
+- `ligus-relay bootstrap-agent` to stand up a remote agent with one line.
+- Durable users and tokens with an admin API (disabled unless a downstream
+  build supplies an `AdminAuthorizer`), and a public status page at `/`.
+- Bounded envelope pages (`X-Hive-Next-After` / `X-Hive-More`).
+- SSE push (`GET /v1/workspaces/{id}/events`), idempotent envelope push,
+  structured request logs and `/metrics`.
+- Workspace reads require the same entitlement as writes.
+- Postgres: retention, pooler-safe statements, primary pinning, text-bound
+  blobs.
+- Helm chart (`deploy/helm/ligus-relay`, chart version 0.2.0) and a non-root
+  distroless image. Defaults: tunnel off; liveness doesn't depend on the
+  database; the APNs key reaches only the tunnel pod, from a Secret of its own
+  (the chart refuses `config.existingSecret` for it and `*_RELAY_APNS_*` keys
+  in `config.env`); DNS egress only to the cluster resolver
+  (`networkPolicy.dns.*`, default `kube-system` pods labeled
+  `k8s-app: kube-dns`).
+
+### New settings
+
+All are also read under their `HIVE_RELAY_*` names. See the README's
+configuration tables for every setting.
+
+| Setting | Default |
+|---|---|
+| `LIGUS_RELAY_READ_RATE` / `LIGUS_RELAY_READ_BURST` | `100` / `400` |
+| `LIGUS_RELAY_MAX_SSE_PER_CLIENT` | `100` |
+| `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS` | `16777216` |
+| `LIGUS_RELAY_MAX_ROTATION_BYTES` | `262144` |
+| `LIGUS_RELAY_MAX_KEYRING_PER_WS` | `2000` (now refuses instead of evicting) |
+| `LIGUS_RELAY_MAX_LIST_BYTES` | `16777216` |
+| `LIGUS_RELAY_MAX_STORE_BYTES` | `0` (unbounded) |
+| `LIGUS_RELAY_MAX_BODY_BYTES` | `4194304` |
+| `LIGUS_RELAY_MAX_ENVELOPES` / `LIGUS_RELAY_RETENTION_DAYS` | `50000` / `0` |
+| `LIGUS_RELAY_MAX_DEVICE_BLOBS_PER_WS` | `1000` |
+| `LIGUS_RELAY_MAX_PAIRINGS` | `50000` |
+| `LIGUS_RELAY_MAX_SSE` | `2000` |
+| `LIGUS_RELAY_PUSH_RATE` / `_BURST` | `100` / `300` |
+| `LIGUS_RELAY_WS_WRITER_RATE` / `_BURST` | `20` / `200` |
+| `LIGUS_RELAY_GITHUB_RATE` / `_BURST` | `30` / `120` |
+| `LIGUS_RELAY_INVITE_RATE` / `_BURST` | `0.05` / `10` |
+| `LIGUS_RELAY_INVITE_REQUIRE_FRIEND` | off |
+| `LIGUS_RELAY_INBOX_MAX_ROWS` | `5000` |
+| `LIGUS_RELAY_INBOX_RETENTION_DAYS` / `LIGUS_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` / `30` |
+| `LIGUS_RELAY_TRUSTED_PROXIES` / `LIGUS_RELAY_CLIENT_IP_HEADER` | empty / `X-Forwarded-For` |
+| `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` |
+| `LIGUS_RELAY_MEMBERSHIP` / `LIGUS_RELAY_MEMBERSHIP_PUBKEY` | off / empty |
+| `LIGUS_RELAY_METRICS_TOKEN` | empty (open) |
+| `LIGUS_RELAY_REQUIRE_DB` | off |
+| `LIGUS_RELAY_TUNNEL` / `LIGUS_RELAY_TUNNEL_HOSTS` | `off` / empty |
+| `LIGUS_RELAY_APNS_KEY_FILE`, `_KEY`, `_KEY_ID`, `_TEAM_ID`, `_TOPIC`, `_ENV` | empty, `ENV` = `auto` |
+
+### Upgrade notes for self-hosters
+
+1. **Names.** Nothing breaks if you keep `HIVE_RELAY_*`, the `hive-relay`
+   binary name or the old module path for now, but rename them: the relay logs
+   a warning per legacy setting, and the aliases go away in Ligus v3.0. If you
+   build from source, change imports to `github.com/ligus-ai/relay`.
+2. **Behind a reverse proxy or ingress, set `LIGUS_RELAY_TRUSTED_PROXIES`.**
+   Without it every client shares the proxy's address, and so shares one
+   bucket for the new read limit (100/s) and one SSE allowance (100 streams),
+   as well as the existing write limits. Raise `LIGUS_RELAY_READ_RATE` and
+   `LIGUS_RELAY_MAX_SSE_PER_CLIENT` if you can't.
+3. **Pairing.** Codes created before the upgrade live in memory and are gone
+   after the restart anyway. Hive 1.x clients that shared workspaces through
+   short codes must share the `hivews1:` invite directly (Ligus 2.0 already
+   does).
+4. **Keyring.** A workspace already over 2000 rotations or 16 MiB keeps what it
+   has, but new rotations get `507` until you raise
+   `LIGUS_RELAY_MAX_KEYRING_PER_WS` / `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS`.
+   Postgres no longer prunes the keyring hourly. If you raise the byte cap,
+   raise `LIGUS_RELAY_MAX_LIST_BYTES` to match.
+5. **Idempotency keys.** Stored keys change form, so a re-push with a header
+   of an envelope pushed before the upgrade is appended once more. Clients
+   dedupe events by id, so this is harmless.
+6. **GitHub routes.** A client that sent its GitHub token only as the
+   `Authorization` bearer must send `X-Hive-Github-Token` instead.
+7. **Helm.** If your APNs key was in `config.existingSecret` or in
+   `config.env`, move it to a Secret of its own and set
+   `tunnel.apns.existingSecret`. If your cluster's resolver pods aren't
+   labeled `k8s-app: kube-dns` in `kube-system`, set
+   `networkPolicy.dns.namespaceSelector` / `podSelector`, or DNS stops
+   resolving with `networkPolicy.restrictEgress` on.
+
+## v0.1.0
+
+First release of the Go relay at `github.com/honeyhive-ai/relay`, at parity
+with the Rust reference relay's `/v1` API and `hrt1` tokens.
