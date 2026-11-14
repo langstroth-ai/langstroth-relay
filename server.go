@@ -115,6 +115,8 @@ type Server struct {
 
 	wsScope string // LIGUS_RELAY_WORKSPACE_SCOPE: off | claims | strict (scope.go)
 
+	maxListBytes int // LIGUS_RELAY_MAX_LIST_BYTES: keyring/candidates/presence response bound (listcap.go)
+
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
 	healthErr     error
 	healthChecked time.Time
@@ -160,6 +162,7 @@ func New(o Options) *Server {
 		ghCache:       newIdentityCache(ghIdentityTTL, ghNegativeTTL),
 		metricsToken:  metricsToken,
 		wsScope:       workspaceScopeFromEnv(),
+		maxListBytes:  listCapFromEnv(),
 	}
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
@@ -646,7 +649,7 @@ func (s *Server) listCandidates(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRead(w, r, r.PathValue("id")) {
 		return
 	}
-	m, err := s.store.Candidates(r.Context(), r.PathValue("id"))
+	m, err := s.candidates(r.Context(), r.PathValue("id"))
 	if storeErr(w, err) {
 		return
 	}
@@ -675,7 +678,7 @@ func (s *Server) listPresence(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRead(w, r, r.PathValue("id")) {
 		return
 	}
-	m, err := s.store.PresenceBlobs(r.Context(), r.PathValue("id"))
+	m, err := s.presenceBlobs(r.Context(), r.PathValue("id"))
 	if storeErr(w, err) {
 		return
 	}
@@ -705,7 +708,7 @@ func (s *Server) listKeyring(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRead(w, r, r.PathValue("id")) {
 		return
 	}
-	rows, err := s.store.KeyRotations(r.Context(), r.PathValue("id"))
+	rows, err := s.keyRotations(r.Context(), r.PathValue("id"))
 	if storeErr(w, err) {
 		return
 	}
