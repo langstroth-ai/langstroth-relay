@@ -91,6 +91,14 @@ DATABASE_URL
 {{- if and .Values.persistence.enabled (include "ligus-relay.hasDatabase" .) -}}
 {{- fail "persistence is the memory-store snapshot; it is not used with a database" -}}
 {{- end -}}
+{{- if and .Values.tunnel.apns.existingSecret (eq .Values.tunnel.apns.existingSecret .Values.config.existingSecret) -}}
+{{- fail "tunnel.apns.existingSecret must not be config.existingSecret: that Secret is loaded into every pod, relay-sync included. Put the APNs key in a Secret of its own." -}}
+{{- end -}}
+{{- range $k, $_ := .Values.config.env -}}
+{{- if regexMatch "^(LIGUS|HIVE)_RELAY_APNS_" $k -}}
+{{- fail (printf "config.env.%s: APNs settings reach every pod through config.env; use tunnel.apns.* (the key from tunnel.apns.existingSecret)" $k) -}}
+{{- end -}}
+{{- end -}}
 {{- if and .Values.persistence.enabled (eq (include "ligus-relay.topology" .) "split") -}}
 {{- fail "persistence (memory-store snapshot) only works with topology=single" -}}
 {{- end -}}

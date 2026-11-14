@@ -29,7 +29,14 @@ spec:
       {{- end }}
   {{- if .Values.networkPolicy.restrictEgress }}
   egress:
-    - ports:
+    # DNS to the cluster resolver only, so the pod can't reach an arbitrary
+    # resolver (or tunnel data out over port 53).
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
+      ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
     {{- if .Values.postgres.enabled }}

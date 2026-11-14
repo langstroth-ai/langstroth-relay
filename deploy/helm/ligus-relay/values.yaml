@@ -38,7 +38,9 @@ tunnel:
   # host ids allowed when mode=allowlist (LIGUS_RELAY_TUNNEL_HOSTS).
   allowedHosts: []
   # Built-in APNs push sender (tunnel pod only). Off unless existingSecret is
-  # set; the Secret must hold the .p8 key under `keyFileKey`.
+  # set; the Secret must hold the .p8 key under `keyFileKey`. It must be its
+  # own Secret: config.existingSecret and config.env reach relay-sync pods
+  # too, so the chart refuses APNs settings there.
   apns:
     existingSecret: ""
     keyFileKey: AuthKey.p8
@@ -179,6 +181,16 @@ networkPolicy:
   # in extraEgress (an external database, APNs on 443, ...).
   restrictEgress: true
   extraEgress: []
+  # Where DNS egress may go: the cluster resolver's pods. The defaults match
+  # kube-dns/CoreDNS on most clusters; change them if yours differs (for
+  # example k8s-app: coredns, or a node-local DNS cache).
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
 
 serviceAccount:
   create: true

@@ -103,3 +103,61 @@ func TestChartAPNsKeyOnlyOnTunnelPod(t *testing.T) {
 		t.Fatal("the tunnel pod should get the APNs key file")
 	}
 }
+
+// renderChartErr runs helm template and returns its error output (or "" when
+// it rendered).
+func renderChartErr(t *testing.T, args ...string) string {
+	t.Helper()
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed")
+	}
+	cmd := exec.Command(helm, append([]string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return ""
+	}
+	return string(out)
+}
+
+// The APNs key must come only from the tunnel-only Secret: config.existingSecret
+// and config.env reach every pod, relay-sync included.
+func TestChartAPNsKeyNotThroughSharedConfig(t *testing.T) {
+	base := []string{"--set", "postgres.enabled=true", "--set", "tunnel.mode=open"}
+	if msg := renderChartErr(t, append(base, "--set", "config.existingSecret=shared", "--set", "tunnel.apns.existingSecret=shared")...); !strings.Contains(msg, "tunnel.apns.existingSecret") {
+		t.Fatalf("sharing config.existingSecret with the APNs Secret must fail, got %q", msg)
+	}
+	for _, k := range []string{"LIGUS_RELAY_APNS_KEY", "HIVE_RELAY_APNS_KEY_FILE", "LIGUS_RELAY_APNS_TOPIC"} {
+		if msg := renderChartErr(t, append(base, "--set", "config.env."+k+"=x")...); !strings.Contains(msg, "APNs") {
+			t.Fatalf("config.env.%s must fail, got %q", k, msg)
+		}
+	}
+	if msg := renderChartErr(t, append(base, "--set", "config.existingSecret=shared", "--set", "tunnel.apns.existingSecret=apns")...); msg != "" {
+		t.Fatalf("separate Secrets must render: %s", msg)
+	}
+}
+
+// Egress DNS was open to port 53 anywhere, so a compromised relay pod could
+// tunnel data out over DNS to any resolver. It is limited to kube-dns.
+func TestChartDNSEgressOnlyToKubeDNS(t *testing.T) {
+	np := docOfKind(renderChart(t), "NetworkPolicy", "")
+	i := strings.Index(np, "egress:")
+	if i < 0 {
+		t.Fatal("no egress rules")
+	}
+	egress := np[i:]
+	j := strings.Index(egress, "port: 53")
+	if j < 0 {
+		t.Fatal("no DNS egress rule")
+	}
+	rule := egress[:j]
+	for _, want := range []string{"namespaceSelector:", "kubernetes.io/metadata.name: kube-system", "podSelector:", "k8s-app: kube-dns"} {
+		if !strings.Contains(rule, want) {
+			t.Fatalf("DNS egress rule lacks %q:\n%s", want, egress)
+		}
+	}
+	custom := docOfKind(renderChart(t, "--set", "networkPolicy.dns.podSelector.matchLabels.k8s-app=coredns"), "NetworkPolicy", "")
+	if !strings.Contains(custom, "k8s-app: coredns") {
+		t.Fatal("networkPolicy.dns.podSelector must be overridable")
+	}
+}

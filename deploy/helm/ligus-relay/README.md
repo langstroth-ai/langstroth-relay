@@ -59,7 +59,7 @@ of silently serving from memory.
 | `image.command` | `[/usr/local/bin/ligus-relay]` | Runs the binary directly as UID 65532; also skips the Alpine image's root-only entrypoint |
 | `topology` | `auto` | `split`, `single`, `auto` |
 | `tunnel.mode` | `off` | `off`, `open`, `allowlist` (`tunnel.allowedHosts`). `open` admits any host; pair it with a token gate |
-| `tunnel.apns.*` | off | Built-in push sender on the tunnel pod; key file from `existingSecret` |
+| `tunnel.apns.*` | off | Built-in push sender on the tunnel pod; key file from `existingSecret`, a Secret of its own (the chart refuses `config.existingSecret` or `LIGUS_RELAY_APNS_*` in `config.env`, which reach relay-sync too) |
 | `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | See Scaling |
 | `postgres.enabled` | `false` | Development Postgres in the release |
 | `externalDatabase.url` / `existingSecret` | empty | Managed Postgres |
@@ -72,9 +72,11 @@ of silently serving from memory.
 | `metrics.serviceMonitor.*` | off | Prometheus Operator; set `bearerTokenSecret` when a metrics token is configured |
 | `networkPolicy.enabled` | `true` | Ingress to 8443 from `ingressFrom` (empty = anywhere) |
 | `networkPolicy.restrictEgress` | `true` | Egress only to DNS, the in-chart Postgres and `extraEgress` (add your database and, for APNs, 443) |
+| `networkPolicy.dns.namespaceSelector` / `podSelector` | `kube-system`, `k8s-app: kube-dns` | Where DNS egress may go. Change them if your resolver pods are labeled differently, or DNS stops resolving |
 
 The chart refuses combinations that cannot work: `split` without a database,
-a snapshot PVC with a database or with `split`, `allowlist` without hosts.
+a snapshot PVC with a database or with `split`, `allowlist` without hosts. It
+also refuses APNs settings outside `tunnel.apns.*`.
 
 ## Security
 
