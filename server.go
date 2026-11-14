@@ -73,6 +73,10 @@ type Options struct {
 	// TunnelBilling is advertised by GET /v1/tunnel/info: "none" (default) or
 	// "appstore".
 	TunnelBilling string
+	// GitHubRoutes registers the deprecated GitHub social routes (directory,
+	// account, friends) for 1.x clients. Also enabled by env
+	// LIGUS_RELAY_GITHUB_ROUTES=on. Off (the v0.3 default) → 404. Removed in v0.4.
+	GitHubRoutes bool
 }
 
 // Server holds the durable Store plus the ephemeral, instance-local pieces
@@ -121,6 +125,12 @@ type Server struct {
 	maxListBytes int // LIGUS_RELAY_MAX_LIST_BYTES: keyring/candidates/presence response bound (listcap.go)
 
 	maxRotationBytes int // LIGUS_RELAY_MAX_ROTATION_BYTES: one key rotation's size (0 = body cap only)
+
+	githubRoutes bool // deprecated GitHub social routes registered (github_routes.go)
+
+	contacts   ContactStore // nil = /v1/contacts/ off (404)
+	contactCfg contactConfig
+	contactLim contactLimiters
 
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
 	healthErr     error
@@ -174,6 +184,16 @@ func New(o Options) *Server {
 	}
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
+	}
+	s.githubRoutes = o.GitHubRoutes || githubRoutesFromEnv()
+	s.contactCfg = contactConfigFromEnv()
+	s.contactLim = contactLimitersFromEnv()
+	if s.contactCfg.enabled {
+		if cs, ok := o.Store.(ContactStore); ok {
+			s.contacts = cs
+		} else {
+			slog.Warn("store does not implement ContactStore; /v1/contacts/ is off")
+		}
 	}
 	// A tenant-confined gate is always workspace-strict (see
 	// entitlementConfigError): tid alone would let one tenant's token reach
@@ -268,24 +288,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/pair", s.createPairing)
 	mux.HandleFunc("GET /v1/pair/{code}", s.resolvePairing)
 
-	mux.HandleFunc("POST /v1/directory/register", s.directoryRegister)
-	mux.HandleFunc("GET /v1/directory/{handle}", s.directoryLookup)
+	// Deprecated GitHub social routes (directory / account / friends): only
+	// with Options.GitHubRoutes or LIGUS_RELAY_GITHUB_ROUTES=on, else 404. Their
+	// prefixes stay reserved (relayPrefixes). Removed in v0.4.
+	s.registerGitHubRoutes(mux)
 
-	mux.HandleFunc("POST /v1/account/register", s.accountRegister)
-	mux.HandleFunc("POST /v1/account/heartbeat", s.accountHeartbeat)
-	mux.HandleFunc("GET /v1/account/inbox", s.accountInbox)
-	mux.HandleFunc("GET /v1/account/devices", s.accountDevices)
-	mux.HandleFunc("POST /v1/account/visibility", s.accountVisibility)
-	mux.HandleFunc("POST /v1/account/invites", s.accountInviteCreate)
-
-	mux.HandleFunc("GET /v1/friends", s.friendsList)
-	mux.HandleFunc("GET /v1/friends/presence", s.friendsPresence)
-	mux.HandleFunc("GET /v1/friends/{account}/devices", s.friendDevicesList)
-	mux.HandleFunc("DELETE /v1/friends/{account}", s.friendRemove)
-	mux.HandleFunc("POST /v1/friends/requests", s.friendRequestCreate)
-	mux.HandleFunc("GET /v1/friends/requests", s.friendRequestsList)
-	mux.HandleFunc("POST /v1/friends/requests/{id}/accept", s.friendRequestAccept)
-	mux.HandleFunc("POST /v1/friends/requests/{id}/reject", s.friendRequestReject)
+	// Contacts (v0.3): opaque signed records + sealed drop boxes.
+	s.registerContacts(mux)
 
 	// User/token management — gated by the AdminAuthorizer seam (not the relay
 	// entitlement token), so these bypass the entitlement gate below.

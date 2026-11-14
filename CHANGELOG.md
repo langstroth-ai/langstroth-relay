@@ -1,8 +1,47 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (unreleased)
+
+Additive for every existing `/v1` route and for `hrt1`: their requests and
+responses are byte-identical to v0.2.0 (checked by golden responses recorded
+against v0.2.0), and no crypto domain-separation string changed. The one
+behavior change is that the deprecated GitHub social routes are off by
+default.
 
 ### Added
+
+- **Contacts, `/v1/contacts/*`.** An opaque, client-signed contact record per
+  random contact id (16 bytes, base64url), owned by a 32-byte write-key
+  capability whose SHA-256 the relay stores, plus a sealed, append-only drop
+  box per contact that only the key holder reads or empties. The relay does no
+  cryptography on either. Size caps (64 KiB record and drop), a 30-day record
+  TTL refreshed on every write, per-box row (5000) and byte (4 MiB) caps with
+  oldest-first eviction, 30-day drop retention, and rate limits per sender and
+  box, per box, per record and per client. Stored in the memory store, its
+  snapshot and Postgres (`relay_contacts`, `relay_contact_drop`). Requests that
+  carry a forge token are refused. Settings: `LIGUS_RELAY_CONTACTS`,
+  `LIGUS_RELAY_CONTACT_*`, `LIGUS_RELAY_MAX_CONTACTS`; see README "Contacts".
+- `ContactStore`, an optional store interface (like `TunnelStore`): a
+  downstream `Store` without it keeps compiling and serves `404` on contacts.
+- `/v1/contacts/` joins the reserved extension prefixes.
+- Helm chart: `contacts.*` and `githubRoutes` values.
+
+### Deprecated, and off by default
+
+- **GitHub social routes** (`/v1/directory/*`, `/v1/account/*`,
+  `/v1/friends/*`). They need the relay to see users' GitHub tokens, and
+  Ligus 2.0 replaces them with contacts, invite links and QR codes. They are
+  now registered only with `LIGUS_RELAY_GITHUB_ROUTES=on` (also
+  `HIVE_RELAY_GITHUB_ROUTES`, or `LIGUS_RELAY_GITHUB_SOCIAL=1`); otherwise they
+  answer `404`. When on, responses carry `Deprecation` and `Link:
+  rel="deprecation"` headers. **They are removed in v0.4**, together with the
+  `relay_directory*`, `relay_account*`, `relay_login_index`, `relay_inbox` and
+  `relay_friend*` tables and the GitHub verifier.
+  *Upgrade:* a relay serving Hive/Ligus 1.x clients that use
+  invite-by-handle, friends or the account inbox must set
+  `LIGUS_RELAY_GITHUB_ROUTES=on` until those clients are gone.
+
+### Also in this release
 
 - **ligus-auth** (`cmd/ligus-auth`): optional OIDC sign-in service that mints
   short-lived `hrt1` relay tokens, with SCIM 2.0 deprovisioning, per-tenant

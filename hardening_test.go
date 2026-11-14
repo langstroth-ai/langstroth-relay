@@ -62,7 +62,7 @@ func TestPlausibleGitHubToken(t *testing.T) {
 }
 
 func TestVerifyCachedCollapsesAndScreens(t *testing.T) {
-	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
+	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}, GitHubRoutes: true})
 	var calls atomic.Int64
 	srv.verify = func(_ context.Context, token string) (*githubUser, error) {
 		calls.Add(1)

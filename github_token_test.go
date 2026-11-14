@@ -15,7 +15,7 @@ import (
 // token (hrt1 / access token), so every relay credential reached GitHub. Only
 // the explicit GitHub token header may be verified now.
 func TestGitHubRoutesNeverUseRelayBearer(t *testing.T) {
-	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
+	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}, GitHubRoutes: true})
 	var mu sync.Mutex
 	var seen []string
 	srv.verify = func(_ context.Context, token string) (*githubUser, error) {
@@ -56,7 +56,7 @@ func TestGitHubRoutesNeverUseRelayBearer(t *testing.T) {
 // The explicit header still works, and wins over (and never mixes with) the
 // relay bearer.
 func TestGitHubRoutesUseExplicitHeaderOnly(t *testing.T) {
-	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
+	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}, GitHubRoutes: true})
 	var seen []string
 	var mu sync.Mutex
 	srv.verify = func(_ context.Context, token string) (*githubUser, error) {
@@ -101,7 +101,7 @@ func TestVerifyGitHubSendsOnlyGivenToken(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":1,"login":"a"}`))
 	}))
 	defer gh.Close()
-	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
+	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}, GitHubRoutes: true})
 	srv.httpClient = gh.Client()
 	srv.httpClient.Transport = rewriteTo(gh.URL)
 	if _, err := srv.verifyGitHub(context.Background(), "gho_abc"); err != nil {

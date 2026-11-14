@@ -109,7 +109,10 @@ func (s *postgresStore) migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, schemaSQL); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, tunnelSchemaSQL)
+	if _, err := s.pool.Exec(ctx, tunnelSchemaSQL); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, contactsSchemaSQL)
 	return err
 }
 

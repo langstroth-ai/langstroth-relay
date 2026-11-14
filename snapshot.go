@@ -31,6 +31,8 @@ type snapshot struct {
 	NextIDSeq   uint64                   `json:"nextIdSeq,omitempty"`
 	// Relay tunnel hosts / revocations / push tokens; absent from older snapshots.
 	Tunnel *tunnelSnap `json:"tunnel,omitempty"`
+	// Contact records + drop boxes (relay v0.3); absent from older snapshots.
+	Contacts map[string]contactSnap `json:"contacts,omitempty"`
 }
 
 type tokenSnap struct {
@@ -115,6 +117,8 @@ func newMemoryStoreWithPersistence(dataDir string) *memoryStore {
 }
 
 func (s *memoryStore) restore(snap snapshot) {
+	// Contacts first, outside s.mu (lock order: cmu before mu).
+	contactBytes := s.memContacts.restoreContacts(snap.Contacts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -172,6 +176,7 @@ func (s *memoryStore) restore(snap snapshot) {
 		s.workspaces[id] = ws
 	}
 	s.recountStoreBytesLocked()
+	s.storeBytes += contactBytes
 
 	s.directory = map[string]*DirAccount{}
 	for k, d := range snap.Directory {
@@ -230,6 +235,8 @@ func (s *memoryStore) restore(snap snapshot) {
 }
 
 func (s *memoryStore) toSnapshot() snapshot {
+	// Contacts outside s.mu (lock order: cmu before mu).
+	contacts := s.memContacts.toContactSnap()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -244,6 +251,7 @@ func (s *memoryStore) toSnapshot() snapshot {
 		Tokens:      map[string]tokenSnap{},
 		NextIDSeq:   s.nextIDSeq,
 		Tunnel:      s.toTunnelSnap(),
+		Contacts:    contacts,
 	}
 	for id, u := range s.users {
 		snap.Users[id] = *u

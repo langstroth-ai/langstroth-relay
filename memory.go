@@ -81,6 +81,10 @@ type memoryStore struct {
 
 	// Relay tunnel state (hosts, revocations, push tokens); see tunnel_store.go.
 	*memTunnel
+
+	// Contact records and drop boxes; see contacts_store.go. Lock order: its
+	// cmu may be taken before s.mu (to charge the byte budget), never after.
+	*memContacts
 }
 
 type memToken struct {
@@ -130,7 +134,7 @@ type memAccount struct {
 
 func newMemoryStore() *memoryStore {
 	maxEnv, maxAge := retentionFromEnv()
-	return &memoryStore{
+	s := &memoryStore{
 		workspaces:            map[string]*memWorkspace{},
 		directory:             map[string]*DirAccount{},
 		accounts:              map[string]*memAccount{},
@@ -149,7 +153,14 @@ func newMemoryStore() *memoryStore {
 		maxStoreBytes:         max(envInt64("HIVE_RELAY_MAX_STORE_BYTES", 0), 0),
 		notify:                newWSNotifier(),
 		memTunnel:             newMemTunnel(),
+		memContacts:           newMemContacts(),
 	}
+	s.memContacts.reserve = func(n int64) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.reserveLocked(n)
+	}
+	return s
 }
 
 // subscribeWorkspace / latestSeq satisfy notifyStore, letting the SSE handler

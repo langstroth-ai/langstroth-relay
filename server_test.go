@@ -16,7 +16,7 @@ import (
 // testServer wires a server whose GitHub verification is stubbed: the token
 // "tok:<login>:<id>" resolves to that user; anything else is unauthorized.
 func testServer(policy entitlementPolicy, friendCap *int) *httptest.Server {
-	srv := New(Options{Store: newMemoryStore(), Entitlement: policy, FriendCap: friendCap})
+	srv := New(Options{Store: newMemoryStore(), Entitlement: policy, FriendCap: friendCap, GitHubRoutes: true})
 	srv.verify = func(_ context.Context, token string) (*githubUser, error) {
 		parts := strings.Split(token, ":")
 		if len(parts) != 3 || parts[0] != "tok" {

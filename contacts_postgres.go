@@ -1,0 +1,285 @@
+package relay
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// Postgres ContactStore (relay v0.3). Records and drops are TEXT so the relay
+// returns the exact bytes it received, like relay_envelopes. Drop-box
+// sequences use relay_seq with scope "cdrop:<cid>". The global record cap
+// (ContactLimits.MaxContacts) applies to the memory store only: a count per
+// create doesn't scale here, and the database's disk is the bound.
+
+const contactsSchemaSQL = `
+CREATE TABLE IF NOT EXISTS relay_contacts (
+  cid            TEXT PRIMARY KEY,
+  write_key_hash TEXT   NOT NULL,
+  record         TEXT   NOT NULL,
+  updated_at     BIGINT NOT NULL,
+  expires_at     BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS relay_contacts_expires ON relay_contacts (expires_at);
+CREATE TABLE IF NOT EXISTS relay_contact_drop (
+  cid        TEXT   NOT NULL,
+  seq        BIGINT NOT NULL,
+  blob       TEXT   NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (cid, seq)
+);
+CREATE INDEX IF NOT EXISTS relay_contact_drop_created ON relay_contact_drop (created_at);
+`
+
+func contactSeqScope(cid string) string { return "cdrop:" + cid }
+
+// wipeContactTx deletes a record, its drop box and its sequence counter.
+func wipeContactTx(ctx context.Context, tx pgx.Tx, cid string) error {
+	for _, q := range []string{
+		`DELETE FROM relay_contact_drop WHERE cid = $1`,
+		`DELETE FROM relay_seq WHERE scope = 'cdrop:' || $1`,
+		`DELETE FROM relay_contacts WHERE cid = $1`,
+	} {
+		if _, err := tx.Exec(ctx, q, cid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *postgresStore) PutContact(ctx context.Context, cid, keyHash string, record json.RawMessage, now, expiresAt int64, _ ContactLimits) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+INSERT INTO relay_contacts (cid, write_key_hash, record, updated_at, expires_at) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (cid) DO NOTHING`, cid, keyHash, string(record), now, expiresAt)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 1 {
+		// A fresh cid: clear any drop-box leftovers of a pruned predecessor.
+		if _, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1`, cid); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM relay_seq WHERE scope = $1`, contactSeqScope(cid)); err != nil {
+			return false, err
+		}
+		return true, tx.Commit(ctx)
+	}
+	var stored string
+	var exp int64
+	if err := tx.QueryRow(ctx, `SELECT write_key_hash, expires_at FROM relay_contacts WHERE cid = $1 FOR UPDATE`, cid).
+		Scan(&stored, &exp); err != nil {
+		return false, err
+	}
+	created := false
+	if exp <= now {
+		// Expired, not yet pruned: the cid is free again.
+		if err := wipeContactTx(ctx, tx, cid); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO relay_contacts (cid, write_key_hash, record, updated_at, expires_at) VALUES ($1, $2, $3, $4, $5)`,
+			cid, keyHash, string(record), now, expiresAt); err != nil {
+			return false, err
+		}
+		created = true
+	} else {
+		if !constantTimeEq(stored, keyHash) {
+			return false, ErrContactKey
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE relay_contacts SET record = $2, updated_at = $3, expires_at = $4 WHERE cid = $1`,
+			cid, string(record), now, expiresAt); err != nil {
+			return false, err
+		}
+	}
+	return created, tx.Commit(ctx)
+}
+
+func (s *postgresStore) GetContact(ctx context.Context, cid string, now int64) (*ContactRecord, error) {
+	var r ContactRecord
+	var rec string
+	err := s.pool.QueryRow(ctx,
+		`SELECT write_key_hash, record, updated_at, expires_at FROM relay_contacts WHERE cid = $1 AND expires_at > $2`,
+		cid, now).Scan(&r.WriteKeyHash, &rec, &r.UpdatedAt, &r.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.CID, r.Record = cid, json.RawMessage(rec)
+	return &r, nil
+}
+
+// ownedTx locks the live record and checks keyHash.
+func ownedContactTx(ctx context.Context, tx pgx.Tx, cid, keyHash string, now int64, lock string) error {
+	var stored string
+	err := tx.QueryRow(ctx,
+		`SELECT write_key_hash FROM relay_contacts WHERE cid = $1 AND expires_at > $2 `+lock, cid, now).Scan(&stored)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrContactNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !constantTimeEq(stored, keyHash) {
+		return ErrContactKey
+	}
+	return nil
+}
+
+func (s *postgresStore) DeleteContact(ctx context.Context, cid, keyHash string, now int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := ownedContactTx(ctx, tx, cid, keyHash, now, "FOR UPDATE"); err != nil {
+		return err
+	}
+	if err := wipeContactTx(ctx, tx, cid); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *postgresStore) AppendContactDrop(ctx context.Context, cid string, blob json.RawMessage, now int64, lim ContactLimits) (uint64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	var one int
+	err = tx.QueryRow(ctx, `SELECT 1 FROM relay_contacts WHERE cid = $1 AND expires_at > $2 FOR SHARE`, cid, now).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrContactNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	seq, err := s.nextSeqTx(ctx, tx, contactSeqScope(cid))
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO relay_contact_drop (cid, seq, blob, created_at) VALUES ($1, $2, $3, $4)`,
+		cid, seq, string(blob), now); err != nil {
+		return 0, err
+	}
+	if lim.DropMaxRows > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1 AND seq <= $2`,
+			cid, int64(seq)-int64(lim.DropMaxRows)); err != nil {
+			return 0, err
+		}
+	}
+	if lim.DropMaxBoxBytes > 0 {
+		// Evict the oldest until the box's blobs fit (the newest always stays).
+		if _, err := tx.Exec(ctx, `
+DELETE FROM relay_contact_drop WHERE cid = $1 AND seq < $3 AND seq IN (
+  SELECT seq FROM (
+    SELECT seq, SUM(octet_length(blob)) OVER (ORDER BY seq DESC) AS cum
+    FROM relay_contact_drop WHERE cid = $1
+  ) t WHERE cum > $2)`, cid, int64(lim.DropMaxBoxBytes), seq); err != nil {
+			return 0, err
+		}
+	}
+	return seq, tx.Commit(ctx)
+}
+
+func (s *postgresStore) ContactDropsAfter(ctx context.Context, cid, keyHash string, after uint64, limit, maxBytes int, now int64) ([]ContactDrop, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback(ctx)
+	if err := ownedContactTx(ctx, tx, cid, keyHash, now, ""); err != nil {
+		return nil, false, err
+	}
+	q := `SELECT seq, blob, created_at FROM relay_contact_drop WHERE cid = $1 AND seq > $2 ORDER BY seq`
+	args := []any{cid, int64(after)}
+	if limit > 0 {
+		q += ` LIMIT $3`
+		args = append(args, limit+1)
+	}
+	rows, err := tx.Query(ctx, q, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := []ContactDrop{}
+	size := 0
+	more := false
+	for rows.Next() {
+		var d ContactDrop
+		var blob string
+		if err := rows.Scan(&d.Seq, &blob, &d.CreatedAt); err != nil {
+			return nil, false, err
+		}
+		if len(out) > 0 && ((limit > 0 && len(out) >= limit) || (maxBytes > 0 && size+len(blob) > maxBytes)) {
+			more = true
+			break
+		}
+		d.Blob = json.RawMessage(blob)
+		out = append(out, d)
+		size += len(blob)
+	}
+	if err := rows.Err(); err != nil && !more {
+		return nil, false, err
+	}
+	return out, more, nil
+}
+
+func (s *postgresStore) AckContactDrops(ctx context.Context, cid, keyHash string, through uint64, now int64) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := ownedContactTx(ctx, tx, cid, keyHash, now, "FOR SHARE"); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1 AND seq <= $2`, cid, int64(min(through, 1<<63-1)))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}
+
+func (s *postgresStore) PruneContacts(ctx context.Context, now int64, dropMaxAge time.Duration) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	var n int64
+	expired := `SELECT cid FROM relay_contacts WHERE expires_at <= $1`
+	tag, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid IN (`+expired+`)`, now)
+	if err != nil {
+		return 0, err
+	}
+	n += tag.RowsAffected()
+	if _, err := tx.Exec(ctx, `DELETE FROM relay_seq WHERE scope IN (SELECT 'cdrop:' || cid FROM relay_contacts WHERE expires_at <= $1)`, now); err != nil {
+		return 0, err
+	}
+	tag, err = tx.Exec(ctx, `DELETE FROM relay_contacts WHERE expires_at <= $1`, now)
+	if err != nil {
+		return 0, err
+	}
+	n += tag.RowsAffected()
+	if dropMaxAge > 0 {
+		tag, err = tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE created_at < $1`, now-int64(dropMaxAge/time.Second))
+		if err != nil {
+			return 0, err
+		}
+		n += tag.RowsAffected()
+	}
+	return n, tx.Commit(ctx)
+}

@@ -1,0 +1,153 @@
+package relay
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+// contactStoreConformance checks ContactStore semantics; it runs against the
+// memory store always and against Postgres when TEST_DATABASE_URL is set.
+func contactStoreConformance(t *testing.T, cs ContactStore) {
+	ctx := context.Background()
+	kh, other := sha256hex(newWriteKey()), sha256hex(newWriteKey())
+	cid := newCID()
+	lim := ContactLimits{DropMaxRows: 3, DropMaxBoxBytes: 20}
+
+	if r, err := cs.GetContact(ctx, cid, 10); err != nil || r != nil {
+		t.Fatalf("get unknown: %v %v", r, err)
+	}
+	if created, err := cs.PutContact(ctx, cid, kh, raw(`{"a":  1}`), 10, 1000, lim); err != nil || !created {
+		t.Fatalf("create: %v %v", created, err)
+	}
+	if _, err := cs.PutContact(ctx, cid, other, raw(`{}`), 11, 1000, lim); err != ErrContactKey {
+		t.Fatalf("squat: %v", err)
+	}
+	if created, err := cs.PutContact(ctx, cid, kh, raw(`{"a":  2}`), 12, 1012, lim); err != nil || created {
+		t.Fatalf("update: %v %v", created, err)
+	}
+	r, err := cs.GetContact(ctx, cid, 13)
+	if err != nil || r == nil || string(r.Record) != `{"a":  2}` || r.UpdatedAt != 12 || r.ExpiresAt != 1012 || r.WriteKeyHash != kh {
+		t.Fatalf("get: %+v %v", r, err)
+	}
+
+	// Drops: row cap 3, byte cap 20 (blobs of 6 bytes → 3 fit).
+	for i := 0; i < 5; i++ {
+		seq, err := cs.AppendContactDrop(ctx, cid, raw(`"abcd"`), int64(20+i), lim)
+		if err != nil || seq != uint64(i+1) {
+			t.Fatalf("drop %d: %d %v", i, seq, err)
+		}
+	}
+	items, more, err := cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, 30)
+	if err != nil || more || len(items) != 3 || items[0].Seq != 3 || string(items[2].Blob) != `"abcd"` || items[2].CreatedAt != 24 {
+		t.Fatalf("drops after cap: %+v %v %v", items, more, err)
+	}
+	if _, err := cs.AppendContactDrop(ctx, cid, raw(`"0123456789012"`), 25, lim); err != nil { // 15 bytes
+		t.Fatal(err)
+	}
+	items, _, _ = cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, 30)
+	if len(items) != 1 || items[0].Seq != 6 {
+		t.Fatalf("byte cap: %+v", items)
+	}
+	cs.AppendContactDrop(ctx, cid, raw(`"x"`), 26, lim)
+	items, more, _ = cs.ContactDropsAfter(ctx, cid, kh, 0, 1, 0, 30)
+	if len(items) != 1 || !more {
+		t.Fatalf("paging: %+v %v", items, more)
+	}
+	if _, _, err := cs.ContactDropsAfter(ctx, cid, other, 0, 0, 0, 30); err != ErrContactKey {
+		t.Fatalf("read with another key: %v", err)
+	}
+	if _, err := cs.AckContactDrops(ctx, cid, other, 99, 30); err != ErrContactKey {
+		t.Fatalf("ack with another key: %v", err)
+	}
+	if n, err := cs.AckContactDrops(ctx, cid, kh, 6, 30); err != nil || n != 1 {
+		t.Fatalf("ack: %d %v", n, err)
+	}
+	items, _, _ = cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, 30)
+	if len(items) != 1 || items[0].Seq != 7 {
+		t.Fatalf("after ack: %+v", items)
+	}
+
+	// Delete needs the key and removes the box.
+	if err := cs.DeleteContact(ctx, cid, other, 30); err != ErrContactKey {
+		t.Fatalf("delete with another key: %v", err)
+	}
+	if err := cs.DeleteContact(ctx, cid, kh, 30); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.DeleteContact(ctx, cid, kh, 30); err != ErrContactNotFound {
+		t.Fatalf("second delete: %v", err)
+	}
+	if _, err := cs.AppendContactDrop(ctx, cid, raw(`1`), 31, lim); err != ErrContactNotFound {
+		t.Fatalf("drop after delete: %v", err)
+	}
+	cs.PutContact(ctx, cid, other, raw(`{}`), 32, 1000, lim)
+	if seq, _ := cs.AppendContactDrop(ctx, cid, raw(`1`), 33, lim); seq != 1 {
+		t.Fatalf("seq after recreate: %d", seq)
+	}
+
+	// Expiry frees the cid; prune removes expired records and old drops.
+	exp := newCID()
+	cs.PutContact(ctx, exp, kh, raw(`{}`), 0, 50, lim)
+	cs.AppendContactDrop(ctx, exp, raw(`1`), 1, lim)
+	if r, _ := cs.GetContact(ctx, exp, 50); r != nil {
+		t.Fatal("expired record served")
+	}
+	if created, err := cs.PutContact(ctx, exp, other, raw(`{}`), 60, 2000, lim); err != nil || !created {
+		t.Fatalf("reclaim expired: %v %v", created, err)
+	}
+	if items, _, _ := cs.ContactDropsAfter(ctx, exp, other, 0, 0, 0, 61); len(items) != 0 {
+		t.Fatalf("expired box survived: %+v", items)
+	}
+	gone := newCID()
+	cs.PutContact(ctx, gone, kh, raw(`{}`), 0, 70, lim)
+	n, err := cs.PruneContacts(ctx, 100, 0)
+	if err != nil || n < 1 {
+		t.Fatalf("prune: %d %v", n, err)
+	}
+	if r, _ := cs.GetContact(ctx, gone, 0); r != nil {
+		t.Fatal("pruned record still present")
+	}
+	// Age-based drop retention.
+	cs.AppendContactDrop(ctx, exp, raw(`"old"`), 100, lim)
+	cs.AppendContactDrop(ctx, exp, raw(`"new"`), 500, lim)
+	if _, err := cs.PruneContacts(ctx, 600, 200*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	items, _, _ = cs.ContactDropsAfter(ctx, exp, other, 0, 0, 0, 600)
+	if len(items) != 1 || string(items[0].Blob) != `"new"` {
+		t.Fatalf("age prune: %+v", items)
+	}
+}
+
+func TestContactStoreMemory(t *testing.T) { contactStoreConformance(t, newMemoryStore()) }
+
+func TestPG_ContactStore(t *testing.T) {
+	s := pgStore(t)
+	if _, err := s.pool.Exec(bg, `TRUNCATE relay_contacts, relay_contact_drop`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(bg, `DELETE FROM relay_seq WHERE scope LIKE 'cdrop:%'`); err != nil {
+		t.Fatal(err)
+	}
+	contactStoreConformance(t, s)
+}
+
+// Over HTTP on Postgres: records and blobs come back byte for byte.
+func TestPG_ContactRoutesByteExact(t *testing.T) {
+	s := pgStore(t)
+	ts := contactTestServer(t, Options{Store: s})
+	cid, key := newCID(), newWriteKey()
+	u := ts.URL + "/v1/contacts/" + cid
+	if st, _, body := creq(t, "PUT", u, putBody(`{"v": 1,  "s":"x"}`, key)); st != 200 {
+		t.Fatalf("put: %d %s", st, body)
+	}
+	if _, _, body := creq(t, "GET", u, ""); !strings.HasPrefix(body, `{"record":{"v": 1,  "s":"x"},"updatedAt":`) {
+		t.Fatalf("get: %s", body)
+	}
+	creq(t, "POST", u+"/drop", `{"blob":{"c": "t"}}`)
+	if _, _, body := creq(t, "GET", u+"/drop", "", keyHdr(key)); !strings.Contains(body, `"blob":{"c": "t"}`) {
+		t.Fatalf("drop list: %s", body)
+	}
+}

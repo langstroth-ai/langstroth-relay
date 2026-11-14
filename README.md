@@ -8,8 +8,11 @@ was called Hive until v2.0, and this relay was `hive-relay`.
 
 Clients post opaque (end-to-end encrypted) event envelopes keyed by workspace
 and fetch everything after a cursor; the relay also brokers short pairing codes,
-an identity directory, a poll-based account inbox, the friend graph, and
-presence. **It never sees plaintext.**
+presence, and [contacts](#contacts-v1contacts) (opaque client-signed contact
+records with sealed drop boxes). **It never sees plaintext, and never a forge
+(GitHub, GitLab, ...) token.** The GitHub-keyed directory, account inbox and
+friend graph of v0.2 are [deprecated](#github-social-routes-deprecated-off-by-default):
+off by default since v0.3, removed in v0.4.
 
 > **Renamed from Hive.** The Go module is now `github.com/ligus-ai/relay`
 > (v0.2.0+; `github.com/honeyhive-ai/relay` v0.1.x is deprecated), the binary is
@@ -66,8 +69,10 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
 | `LIGUS_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
 | `LIGUS_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
-| `LIGUS_RELAY_FRIEND_CAP` | none | max accepted friends per account |
-| `LIGUS_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends |
+| `LIGUS_RELAY_CONTACTS` | on | `off`: unregister `/v1/contacts/*` (404, as on a v0.2 relay). See [Contacts](#contacts-v1contacts) |
+| `LIGUS_RELAY_GITHUB_ROUTES` | off | **Deprecated, removed in v0.4.** `on`: register the GitHub social routes (directory, account, friends) for Ligus/Hive 1.x clients; every response then carries a `Deprecation` header. `LIGUS_RELAY_GITHUB_SOCIAL=1` is accepted too. See [GitHub social routes](#github-social-routes-deprecated-off-by-default) |
+| `LIGUS_RELAY_FRIEND_CAP` | none | max accepted friends per account (GitHub routes only) |
+| `LIGUS_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends (GitHub routes only) |
 | `LIGUS_RELAY_TRUSTED_PROXIES` | empty | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used |
 | `LIGUS_RELAY_CLIENT_IP_HEADER` | `X-Forwarded-For` | header read from a trusted proxy (walked right to left past trusted hops), or a single-address header such as `X-Real-IP` |
 
@@ -88,6 +93,13 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_INBOX_MAX_ROWS` | `5000` | account-inbox rows per recipient (oldest evicted) |
 | `LIGUS_RELAY_INBOX_RETENTION_DAYS` | `30` | Postgres: prune inbox rows older than N days (`0` = off) |
 | `LIGUS_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
+| `LIGUS_RELAY_CONTACT_MAX_RECORD_BYTES` | `65536` (64 KiB) | one contact record's size; `413` past it |
+| `LIGUS_RELAY_CONTACT_MAX_DROP_BYTES` | `65536` (64 KiB) | one sealed drop's size; `413` past it |
+| `LIGUS_RELAY_CONTACT_TTL_DAYS` | `30` | a record expires N days after its last write (clients re-publish on heartbeat); an expired record and its drop box are deleted and the cid is free again |
+| `LIGUS_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); oldest evicted |
+| `LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; oldest evicted |
+| `LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
+| `LIGUS_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LIGUS_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
 
 **Rate and concurrency limits** (a rate of `0` disables that limit)
 
@@ -100,6 +112,10 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_MAX_SSE_PER_CLIENT` | `100` | concurrent SSE streams per client (token subject, else address; `429` past it; `0` = unlimited) |
 | `LIGUS_RELAY_GITHUB_RATE` / `_BURST` | `30` / `120` | GitHub-backed routes (directory, account, friends) per client |
 | `LIGUS_RELAY_INVITE_RATE` / `_BURST` | `0.05` / `10` | account invites per (sender, recipient) |
+| `LIGUS_RELAY_CONTACT_DROP_RATE` / `_BURST` | `0.05` / `10` | contact drops per (sender, cid); the account-invite defaults |
+| `LIGUS_RELAY_CONTACT_DROP_CID_RATE` / `_BURST` | `1` / `60` | contact drops per cid, all senders together |
+| `LIGUS_RELAY_CONTACT_WRITE_RATE` / `_BURST` | `0.2` / `10` | contact record updates per cid (counted only after the key matches) |
+| `LIGUS_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address) |
 
 **Relay tunnel and push**
 
@@ -256,21 +272,72 @@ consumes it, and a second resolve gets `404`. Unresolved codes still expire at
 their TTL. Failed resolves are capped per client (10 per minute, then `429`),
 so the code space can't be enumerated.
 
-### GitHub-backed routes
+### Contacts (`/v1/contacts/*`)
 
-The identity directory, account and friends routes
-(`/v1/directory/*`, `/v1/account/*`, `/v1/friends/*`) identify the caller by a
-GitHub token, sent in `X-Hive-Github-Token` (or `X-Ligus-Github-Token`). The
-relay verifies it against `api.github.com/user` and caches the result briefly
-by the token's hash. Only that header is used: the `Authorization` bearer
-carries the relay access token and is never sent to GitHub, so a request with
-only a bearer gets `401`.
+A contact is an opaque, client-signed record stored under a random contact id
+(`cid`), plus a sealed drop box for that `cid`, so people can reach each other
+without a provider-keyed directory. The relay does **no cryptography** on
+contacts: it can't verify a record and doesn't try. Clients verify the record's
+signature chain against the account fingerprint they got out of band (invite
+link or QR code), and seal drops to the recipient's key-agreement keys.
 
-**Residual:** the relay operator can see the GitHub tokens clients send to
-these routes, since the relay itself has to present them to GitHub. Use these
-routes only with a relay you trust, and give the client a GitHub token with
-the least scope it needs. Replacing the raw token with a proof the relay can
-check without holding the token is a pending client change.
+Ownership is a capability: on the first write the client sends a `writeKey`
+(32 random bytes, base64url without padding); the relay stores only its
+SHA-256 and compares hashes. Whoever holds the key may update or delete the
+record and read or empty the drop box. Anyone who knows the `cid` may read the
+record and drop into the box. Every route goes through the entitlement gate.
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| `PUT` | `/v1/contacts/{cid}` | first write: `writeKey` in the body (or the header); later: `X-Ligus-Contact-Key` (or the same `writeKey` in the body) | `{"record": <JSON ≤ 64 KiB>, "writeKey": "<b64url 32 bytes>"}` | `200 {"created":bool,"updatedAt":<unix s>,"expiresAt":<unix s>}` |
+| `GET` | `/v1/contacts/{cid}` | gate only | | `200 {"record": <as published>, "updatedAt": <unix s>}` |
+| `DELETE` | `/v1/contacts/{cid}` | `X-Ligus-Contact-Key` | | `200 {"ok":true}`; the drop box goes too |
+| `POST` | `/v1/contacts/{cid}/drop` | gate only (rate-limited) | `{"blob": <JSON ≤ 64 KiB, sealed client-side>}` | `200 {"ok":true}` (no sequence, so senders can't measure the box) |
+| `GET` | `/v1/contacts/{cid}/drop?after=<seq>&limit=<n>` | `X-Ligus-Contact-Key` | | `200 {"items":[{"seq":n,"blob":<as sent>,"createdAt":<unix s>}],"more":bool}` |
+| `DELETE` | `/v1/contacts/{cid}/drop?through=<seq>` | `X-Ligus-Contact-Key` | | `200 {"ok":true,"deleted":n}` |
+
+- `cid` must be base64url (no padding) of exactly 16 bytes, and a write key of
+  exactly 32 bytes; anything else gets `400`.
+- Errors: `400` malformed (or header and body keys differ), `401` key missing,
+  `403` key doesn't match, `404` no live record (also for a drop to an unknown
+  `cid`), `413` too large, `429` rate-limited, `507` capacity.
+- Records and blobs are stored and returned byte for byte (any JSON value but
+  `null`), on every store, across snapshot restarts.
+- Reading the drop box doesn't delete anything, so each device of an account
+  can keep its own `after` cursor; the owner deletes what all its devices have
+  processed with `DELETE …/drop?through=<seq>`. Past the row or byte cap the
+  oldest drops are evicted. `limit` defaults to 100 (max 1000) and a page is
+  also bounded by `LIGUS_RELAY_MAX_LIST_BYTES`.
+- A request on these routes that carries a forge token (any
+  `X-*-Github-Token`, `X-*-Gitlab-Token`, `X-*-Forge-Token`, ... header, or a
+  `ghp_` / `github_pat_` / `glpat-` style bearer) is refused with `400`; the
+  token is never verified, logged or forwarded.
+- A relay without contacts (v0.2, or `LIGUS_RELAY_CONTACTS=off`) answers
+  `404`, and clients fall back to links and QR codes.
+
+**What the relay still sees:** which `cid`s exist, when records change, drop
+timing and sizes, and client addresses. It can withhold or replay an old
+record; clients reject a record older than the newest they've seen for that
+`cid`. The `/v1/contacts/` prefix is reserved: extensions can't register it.
+
+### GitHub social routes (deprecated, off by default)
+
+The identity directory, account and friends routes (`/v1/directory/*`,
+`/v1/account/*`, `/v1/friends/*`, keyed by `github:<id>`) need the relay to
+see each caller's GitHub token. Ligus 2.0 doesn't use them. Since v0.3 they are
+**not registered** (404) unless `LIGUS_RELAY_GITHUB_ROUTES=on`, which exists
+only for Ligus/Hive 1.x clients; when on, every response carries
+`Deprecation: @1794614400` and `Link: <…CHANGELOG.md>; rel="deprecation"`.
+**v0.4 removes them**, together with their tables and the GitHub verifier.
+Their path prefixes stay reserved, so no extension can reuse them.
+
+When enabled, they identify the caller by a GitHub token sent in
+`X-Hive-Github-Token` (or `X-Ligus-Github-Token`), verified against
+`api.github.com/user` and cached briefly by the token's hash. Only that header
+is used: the `Authorization` bearer carries the relay access token and is never
+sent to GitHub, so a request with only a bearer gets `401`. The relay operator
+can see the GitHub tokens sent to these routes; enable them only on a relay
+you trust.
 
 ### Optional access gating
 

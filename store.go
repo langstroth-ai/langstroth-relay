@@ -1,8 +1,9 @@
 // Package main — the Hive relay: a content-blind rendezvous + envelope-forwarding
 // server. Clients post opaque (end-to-end encrypted) event envelopes keyed by
 // workspace and fetch everything after a cursor; the relay also brokers short
-// pairing codes, an identity directory, a poll-based account inbox, the friend
-// graph, and presence. It never sees plaintext.
+// pairing codes, presence, and contacts (opaque signed records + sealed drop
+// boxes). The deprecated GitHub-keyed directory, account inbox and friend graph
+// are off by default since v0.3 (github_routes.go). It never sees plaintext.
 //
 // This is a Go port of the reference Rust relay (crates/hive-relay), preserving
 // the JSON /v1 wire contract and the hrt1 entitlement-token format byte-for-byte

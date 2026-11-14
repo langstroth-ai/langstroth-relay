@@ -91,6 +91,11 @@ func MainWith(ext Extension) {
 	if pruner, ok := store.(envelopePruner); ok {
 		go pruneLoop(pruner, stopFlush)
 	}
+	// Expired contact records and old drops, on every backend (the memory
+	// store also hides expired records on access).
+	if cs, ok := store.(ContactStore); ok {
+		go contactPruneLoop(cs, stopFlush)
+	}
 
 	addr := resolveAddr()
 	// Timeouts bound how long a single connection can tie up resources, which
@@ -216,6 +221,22 @@ func pruneLoop(pruner envelopePruner, stop <-chan struct{}) {
 			})
 			runPrune("friend_requests", func() (int64, error) {
 				return pruner.PruneFriendRequests(context.Background(), friendReqAge)
+			})
+		}
+	}
+}
+
+func contactPruneLoop(cs ContactStore, stop <-chan struct{}) {
+	dropAge := contactConfigFromEnv().dropMaxAge
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+			runPrune("contacts", func() (int64, error) {
+				return cs.PruneContacts(context.Background(), nowUnix(), dropAge)
 			})
 		}
 	}

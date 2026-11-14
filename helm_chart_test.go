@@ -161,3 +161,26 @@ func TestChartDNSEgressOnlyToKubeDNS(t *testing.T) {
 		t.Fatal("networkPolicy.dns.podSelector must be overridable")
 	}
 }
+
+// v0.3: contacts on and the deprecated GitHub routes off by default; the
+// contacts values render as their LIGUS_RELAY_* variables, integers intact.
+func TestChartContactsAndGitHubRoutes(t *testing.T) {
+	out := renderChart(t)
+	cm := docOfKind(out, "ConfigMap", "")
+	if strings.Contains(cm, "LIGUS_RELAY_CONTACT") || strings.Contains(cm, "LIGUS_RELAY_GITHUB_ROUTES") {
+		t.Fatalf("default install must keep the binary defaults:\n%s", cm)
+	}
+	out = renderChart(t, "--set", "contacts.enabled=false", "--set", "contacts.dropMaxBoxBytes=4194304",
+		"--set", "contacts.dropRate=0.5", "--set", "githubRoutes=true")
+	cm = docOfKind(out, "ConfigMap", "")
+	for _, want := range []string{
+		`LIGUS_RELAY_CONTACTS: "off"`,
+		`LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES: "4194304"`,
+		`LIGUS_RELAY_CONTACT_DROP_RATE: "0.5"`,
+		`LIGUS_RELAY_GITHUB_ROUTES: "on"`,
+	} {
+		if !strings.Contains(cm, want) {
+			t.Errorf("missing %s in:\n%s", want, cm)
+		}
+	}
+}

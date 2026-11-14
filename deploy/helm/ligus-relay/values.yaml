@@ -117,6 +117,33 @@ requireDatabase: null
 memoryStore:
   maxBytes: 100000000
 
+# Contacts (/v1/contacts/*, relay v0.3): opaque client-signed contact records
+# plus sealed drop boxes. Each value maps to a LIGUS_RELAY_CONTACT* variable;
+# null keeps the binary's default (shown). Rate limiters are per pod, so with
+# N sync replicas the effective rates are up to N times these.
+contacts:
+  enabled: true            # LIGUS_RELAY_CONTACTS (false → 404)
+  maxRecordBytes: null     # 65536   LIGUS_RELAY_CONTACT_MAX_RECORD_BYTES
+  maxDropBytes: null       # 65536   LIGUS_RELAY_CONTACT_MAX_DROP_BYTES
+  ttlDays: null            # 30      LIGUS_RELAY_CONTACT_TTL_DAYS
+  dropMaxRows: null        # 5000    LIGUS_RELAY_CONTACT_DROP_MAX_ROWS
+  dropMaxBoxBytes: null    # 4194304 LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES
+  dropRetentionDays: null  # 30      LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS
+  maxContacts: null        # 100000  LIGUS_RELAY_MAX_CONTACTS (memory store only)
+  dropRate: null           # 0.05    LIGUS_RELAY_CONTACT_DROP_RATE (per sender and cid)
+  dropBurst: null          # 10      LIGUS_RELAY_CONTACT_DROP_BURST
+  dropCidRate: null        # 1       LIGUS_RELAY_CONTACT_DROP_CID_RATE (per cid)
+  dropCidBurst: null       # 60      LIGUS_RELAY_CONTACT_DROP_CID_BURST
+  writeRate: null          # 0.2     LIGUS_RELAY_CONTACT_WRITE_RATE (record updates per cid)
+  writeBurst: null         # 10      LIGUS_RELAY_CONTACT_WRITE_BURST
+  createRate: null         # 0.01    LIGUS_RELAY_CONTACT_CREATE_RATE (new records per client)
+  createBurst: null        # 20      LIGUS_RELAY_CONTACT_CREATE_BURST
+
+# Deprecated GitHub social routes (directory, account, friends) for 1.x
+# clients: off (404) by default since relay v0.3, removed in v0.4.
+# LIGUS_RELAY_GITHUB_ROUTES.
+githubRoutes: false
+
 # Memory-store snapshot (topology=single, no database). For kind/k3d only.
 persistence:
   enabled: false

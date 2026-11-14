@@ -21,6 +21,23 @@ data:
   {{- with .Values.clientIP.header }}
   LIGUS_RELAY_CLIENT_IP_HEADER: {{ . | quote }}
   {{- end }}
+  {{- with .Values.contacts }}
+  {{- if not .enabled }}
+  LIGUS_RELAY_CONTACTS: "off"
+  {{- end }}
+  {{- $contactEnv := dict "maxRecordBytes" "LIGUS_RELAY_CONTACT_MAX_RECORD_BYTES" "maxDropBytes" "LIGUS_RELAY_CONTACT_MAX_DROP_BYTES" "ttlDays" "LIGUS_RELAY_CONTACT_TTL_DAYS" "dropMaxRows" "LIGUS_RELAY_CONTACT_DROP_MAX_ROWS" "dropMaxBoxBytes" "LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES" "dropRetentionDays" "LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS" "maxContacts" "LIGUS_RELAY_MAX_CONTACTS" "dropRate" "LIGUS_RELAY_CONTACT_DROP_RATE" "dropBurst" "LIGUS_RELAY_CONTACT_DROP_BURST" "dropCidRate" "LIGUS_RELAY_CONTACT_DROP_CID_RATE" "dropCidBurst" "LIGUS_RELAY_CONTACT_DROP_CID_BURST" "writeRate" "LIGUS_RELAY_CONTACT_WRITE_RATE" "writeBurst" "LIGUS_RELAY_CONTACT_WRITE_BURST" "createRate" "LIGUS_RELAY_CONTACT_CREATE_RATE" "createBurst" "LIGUS_RELAY_CONTACT_CREATE_BURST" }}
+  {{- $c := . }}
+  {{- range $key := keys $contactEnv | sortAlpha }}
+  {{- $v := get $c $key }}
+  {{- if not (kindIs "invalid" $v) }}
+  {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
+  {{ get $contactEnv $key }}: {{ $v | toString | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.githubRoutes }}
+  LIGUS_RELAY_GITHUB_ROUTES: "on"
+  {{- end }}
   {{- range $k, $val := .Values.config.env }}
   {{ $k }}: {{ $val | quote }}
   {{- end }}

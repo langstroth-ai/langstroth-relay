@@ -48,10 +48,13 @@ type Addon struct {
 }
 
 // relayPrefixes are the path prefixes the relay serves (Server.Handler). An
-// extension route may not overlap any of them.
+// extension route may not overlap any of them. The GitHub social prefixes
+// (/v1/directory/, /v1/account/, /v1/friends) stay reserved while those routes
+// are off by default (v0.3) and after they are removed (v0.4), so no extension
+// can reuse the paths with different semantics.
 var relayPrefixes = []string{
 	"/v1/health", "/v1/workspaces/", "/v1/pair", "/v1/directory/", "/v1/account/",
-	"/v1/friends", "/v1/admin/", "/v1/tunnel/", "/metrics",
+	"/v1/friends", "/v1/admin/", "/v1/tunnel/", "/v1/contacts/", "/metrics",
 }
 
 func validateExtensionPrefix(p string) error {
