@@ -343,9 +343,10 @@ inside the relay; the relay only needs its public key.
   deprovisioning: deactivating a user revokes their refresh tokens at once;
   access tokens lapse within the access TTL.
 - **Membership is not granted.** A token only says which workspaces a person
-  may reach on the relay. Joining a workspace still takes an Admin's signed
-  `MemberAdded`; events from someone who is not in the signed roster are
-  refused by every client, whatever the relay forwards.
+  may reach on the relay. It carries no workspace key and writes no roster
+  entry: joining a workspace still takes an invite (the end-to-end key) and an
+  Admin's signed `MemberAdded`, and governance events from outside the signed
+  roster are refused by every client, whatever the relay forwards.
 - **Tenants** each have their own IdP, SCIM token and workspaces. A workspace
   belongs to one tenant; grants can name only the tenant's own workspaces, and
   `LIGUS_RELAY_TENANTS` makes the relay refuse other tenants' tokens.
