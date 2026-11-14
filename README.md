@@ -95,7 +95,8 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
 | `LIGUS_RELAY_CONTACT_MAX_RECORD_BYTES` | `65536` (64 KiB) | one contact record's size; `413` past it |
 | `LIGUS_RELAY_CONTACT_MAX_DROP_BYTES` | `65536` (64 KiB) | one sealed drop's size; `413` past it |
-| `LIGUS_RELAY_CONTACT_TTL_DAYS` | `30` | a record expires N days after its last write (clients re-publish on heartbeat); an expired record and its drop box are deleted and the cid is free again |
+| `LIGUS_RELAY_CONTACT_TTL_DAYS` | `30` | a record expires N days after its last write (clients re-publish on heartbeat); an expired record and its drop box are deleted |
+| `LIGUS_RELAY_CONTACT_RECLAIM_HOLD_DAYS` | `180` | after a record expires, only its old write key may create the cid again for N days (`403` for any other key); then the cid is free. `0` = free at once |
 | `LIGUS_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); oldest evicted |
 | `LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; oldest evicted |
 | `LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
@@ -115,7 +116,7 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_CONTACT_DROP_RATE` / `_BURST` | `0.05` / `10` | contact drops per (sender, cid); the account-invite defaults |
 | `LIGUS_RELAY_CONTACT_DROP_CID_RATE` / `_BURST` | `1` / `60` | contact drops per cid, all senders together |
 | `LIGUS_RELAY_CONTACT_WRITE_RATE` / `_BURST` | `0.2` / `10` | contact record updates per cid (counted only after the key matches) |
-| `LIGUS_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address) |
+| `LIGUS_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address; IPv6 by /64, and each IPv6 /48 also gets 16x this rate and burst in total) |
 
 **Relay tunnel and push**
 

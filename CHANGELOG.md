@@ -21,6 +21,15 @@ default.
   snapshot and Postgres (`relay_contacts`, `relay_contact_drop`). Requests that
   carry a forge token are refused. Settings: `LIGUS_RELAY_CONTACTS`,
   `LIGUS_RELAY_CONTACT_*`, `LIGUS_RELAY_MAX_CONTACTS`; see README "Contacts".
+  - An expired cid stays reserved for its old write key for 180 days
+    (`LIGUS_RELAY_CONTACT_RECLAIM_HOLD_DAYS`), so nobody who learned the cid
+    can claim it while its owner is offline.
+  - Drop-box seqs never restart for a cid: a box created again starts after
+    its creation second times 2^20, so every device's cursor and ack stay
+    correct.
+  - Records and drops must be valid UTF-8 (`400` otherwise), so they come back
+    byte for byte from every store, across restarts.
+  - New records are also limited per IPv6 /48 (16x the per-client limit).
 - `ContactStore`, an optional store interface (like `TunnelStore`): a
   downstream `Store` without it keeps compiling and serves `404` on contacts.
 - `/v1/contacts/` joins the reserved extension prefixes.

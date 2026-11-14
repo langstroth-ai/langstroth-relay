@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -236,23 +238,26 @@ func TestContactDropReadNeedsKey(t *testing.T) {
 	if st != 200 || json.Unmarshal([]byte(body), &page) != nil || len(page.Items) != 3 || page.More {
 		t.Fatalf("read: %d %s", st, body)
 	}
-	if page.Items[0].Seq != 1 || string(page.Items[2].Blob) != `{"sealed": "zzz"}` || page.Items[0].CreatedAt == 0 {
+	// Seqs are consecutive from the box's base (contactSeqBase).
+	b := page.Items[0].Seq - 1
+	sq := func(n uint64) string { return strconv.FormatUint(b+n, 10) }
+	if page.Items[0].Seq == 0 || page.Items[2].Seq != b+3 || string(page.Items[2].Blob) != `{"sealed": "zzz"}` || page.Items[0].CreatedAt == 0 {
 		t.Fatalf("items: %+v", page.Items)
 	}
 	// Cursor + paging.
-	_, _, body = creq(t, "GET", u+"/drop?after=1&limit=1", "", keyHdr(key))
-	if !strings.HasPrefix(body, `{"items":[{"seq":2,`) || !strings.Contains(body, `"more":true`) {
+	_, _, body = creq(t, "GET", u+"/drop?after="+sq(1)+"&limit=1", "", keyHdr(key))
+	if !strings.HasPrefix(body, `{"items":[{"seq":`+sq(2)+`,`) || !strings.Contains(body, `"more":true`) {
 		t.Fatalf("after=1 limit=1: %s", body)
 	}
 	// Reading is non-destructive; ack deletes through a seq.
 	if st, _, _ := creq(t, "DELETE", u+"/drop", "", keyHdr(key)); st != 400 {
 		t.Fatalf("ack without through: %d", st)
 	}
-	if st, _, body := creq(t, "DELETE", u+"/drop?through=2", "", keyHdr(key)); st != 200 || body != `{"deleted":2,"ok":true}` {
+	if st, _, body := creq(t, "DELETE", u+"/drop?through="+sq(2), "", keyHdr(key)); st != 200 || body != `{"deleted":2,"ok":true}` {
 		t.Fatalf("ack: %d %s", st, body)
 	}
 	_, _, body = creq(t, "GET", u+"/drop", "", keyHdr(key))
-	if !strings.HasPrefix(body, `{"items":[{"seq":3,`) || strings.Count(body, `"seq"`) != 1 {
+	if !strings.HasPrefix(body, `{"items":[{"seq":`+sq(3)+`,`) || strings.Count(body, `"seq"`) != 1 {
 		t.Fatalf("after ack: %s", body)
 	}
 	// Deleting the record deletes the box.
@@ -279,7 +284,15 @@ func TestContactDropBoxBounds(t *testing.T) {
 		creq(t, "POST", u+"/drop", `{"blob":1}`)
 	}
 	_, _, body := creq(t, "GET", u+"/drop", "", keyHdr(key))
-	if strings.Count(body, `"seq"`) != 5 || !strings.HasPrefix(body, `{"items":[{"seq":4,`) {
+	var first struct {
+		Items []ContactDrop `json:"items"`
+	}
+	if json.Unmarshal([]byte(body), &first) != nil || len(first.Items) == 0 {
+		t.Fatalf("row cap: %s", body)
+	}
+	b := first.Items[0].Seq - 4 // the box's base: drop i has seq b+i
+	sq := func(n uint64) string { return strconv.FormatUint(b+n, 10) }
+	if strings.Count(body, `"seq"`) != 5 || !strings.HasPrefix(body, `{"items":[{"seq":`+sq(4)+`,`) {
 		t.Fatalf("row cap: %s", body)
 	}
 	// Byte cap: 40-byte blobs, 100-byte box → newest 2 remain.
@@ -287,7 +300,7 @@ func TestContactDropBoxBounds(t *testing.T) {
 		creq(t, "POST", u+"/drop", `{"blob":"`+strings.Repeat("q", 38)+`"}`)
 	}
 	_, _, body = creq(t, "GET", u+"/drop", "", keyHdr(key))
-	if strings.Count(body, `"seq"`) != 2 || !strings.HasPrefix(body, `{"items":[{"seq":10,`) {
+	if strings.Count(body, `"seq"`) != 2 || !strings.HasPrefix(body, `{"items":[{"seq":`+sq(10)+`,`) {
 		t.Fatalf("byte cap: %s", body)
 	}
 }
@@ -540,7 +553,7 @@ func TestContactSnapshotRoundTrip(t *testing.T) {
 	if err != nil || len(items) != 1 || string(items[0].Blob) != `"sealed"` {
 		t.Fatalf("drops after restore: %+v %v", items, err)
 	}
-	if seq, _ := r.AppendContactDrop(ctx, cid, raw(`"n"`), 13, ContactLimits{}); seq != 2 {
+	if seq, _ := r.AppendContactDrop(ctx, cid, raw(`"n"`), 13, ContactLimits{}); seq != items[0].Seq+1 {
 		t.Fatalf("seq after restore: %d", seq)
 	}
 	if r.storeBytes != s.storeBytes+3 {
@@ -557,7 +570,7 @@ func TestContactPrune(t *testing.T) {
 	ms.PutContact(ctx, dead, kh, raw(`{}`), 0, 50, ContactLimits{})
 	ms.AppendContactDrop(ctx, live, raw(`"old"`), 10, ContactLimits{})
 	ms.AppendContactDrop(ctx, live, raw(`"new"`), 90, ContactLimits{})
-	n, err := ms.PruneContacts(ctx, 100, 50*time.Second)
+	n, err := ms.PruneContacts(ctx, 100, 50*time.Second, 0)
 	if err != nil || n != 2 { // the expired record + the drop older than 50 s
 		t.Fatalf("prune: %d %v", n, err)
 	}
@@ -692,5 +705,97 @@ func TestGitHubRoutesEnabledByEnv(t *testing.T) {
 				t.Fatal("health marked deprecated")
 			}
 		})
+	}
+}
+
+// Records and blobs must be valid UTF-8. The relay promises them back byte
+// for byte, but the JSON snapshot rewrites invalid UTF-8 to U+FFFD on restart
+// (a signed record then stops verifying) and Postgres TEXT refuses it (500 and
+// an error log per request). Refuse it up front on every store.
+func TestContactRejectsInvalidUTF8(t *testing.T) {
+	ts := contactTestServer(t, Options{})
+	cid, key := newCID(), newWriteKey()
+	u := ts.URL + "/v1/contacts/" + cid
+	if st, _, body := creq(t, "PUT", u, putBody("{\"sig\":\"a\xffb\"}", key)); st != 400 {
+		t.Fatalf("record with invalid UTF-8: %d %s, want 400", st, body)
+	}
+	if st, _, _ := creq(t, "PUT", u, putBody(`{"sig":"ok é"}`, key)); st != 200 {
+		t.Fatalf("valid record: %d", st)
+	}
+	if st, _, body := creq(t, "POST", u+"/drop", "{\"blob\":\"\xc3\"}"); st != 400 {
+		t.Fatalf("drop with invalid UTF-8: %d %s, want 400", st, body)
+	}
+	if _, _, body := creq(t, "GET", u+"/drop", "", keyHdr(key)); body != `{"items":[],"more":false}` {
+		t.Fatalf("invalid drop stored: %q", body)
+	}
+}
+
+// An IPv6 client is keyed by its /64, but one /48 (a free tunnel-broker
+// allocation) holds 65536 of them. With only the /64 key, one /48 could create
+// 65536 x burst records at once: enough to fill the memory store's
+// LIGUS_RELAY_MAX_CONTACTS for every user, or a Postgres disk. Creates are
+// also limited per /48.
+func TestContactCreateLimitedPerIPv6Slash48(t *testing.T) {
+	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_RATE", "0.001")
+	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_BURST", "2")
+	h := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}}).Handler()
+	put := func(remote string) int {
+		req := httptest.NewRequest("PUT", "/v1/contacts/"+newCID(), strings.NewReader(putBody(`{}`, newWriteKey())))
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	ok := 0
+	for i := 0; i < 200; i++ {
+		if put(fmt.Sprintf("[2001:db8:1:%x::1]:4000", i)) == 200 {
+			ok++
+		}
+	}
+	// 2 per /64 alone would admit 200; the /48 bucket (16x the burst) caps it.
+	if ok > 32 {
+		t.Fatalf("one /48 created %d records by rotating its /64s", ok)
+	}
+	// Another /48, and IPv4 clients, keep their own budget.
+	if st := put("[2001:db8:2::1]:4000"); st != 200 {
+		t.Fatalf("another /48: %d", st)
+	}
+	if st := put("192.0.2.7:4000"); st != 200 {
+		t.Fatalf("ipv4 client: %d", st)
+	}
+}
+
+// Reclaim-hold tombstones (an expired record's key hash) don't count toward
+// LIGUS_RELAY_MAX_CONTACTS: they hold no record or drops, and counting them
+// would cut the store's capacity to live records by every record that expired
+// in the last hold period.
+func TestContactTombstonesOutsideMaxContacts(t *testing.T) {
+	ms := newMemoryStore()
+	ctx := context.Background()
+	hold := 1000 * time.Second
+	lim := ContactLimits{MaxContacts: 2, ReclaimHold: hold}
+	kh := sha256hex(newWriteKey())
+	a, b := newCID(), newCID()
+	ms.PutContact(ctx, a, kh, raw(`{}`), 0, 50, lim)
+	ms.PutContact(ctx, b, kh, raw(`{}`), 0, 50, lim)
+	if _, err := ms.PutContact(ctx, newCID(), kh, raw(`{}`), 10, 500, lim); err != ErrContactsFull {
+		t.Fatalf("cap with two live records: %v", err)
+	}
+	if _, err := ms.PruneContacts(ctx, 100, 0, hold); err != nil {
+		t.Fatal(err)
+	}
+	if ms.contactCount() != 2 {
+		t.Fatalf("tombstones: %d, want 2", ms.contactCount())
+	}
+	c := newCID()
+	if _, err := ms.PutContact(ctx, c, kh, raw(`{}`), 101, 500, lim); err != nil {
+		t.Fatalf("create with only tombstones held: %v", err)
+	}
+	// The owner reclaiming a tombstone makes it live again and counts.
+	if _, err := ms.PutContact(ctx, a, kh, raw(`{}`), 102, 500, lim); err != nil {
+		t.Fatalf("owner reclaim: %v", err)
+	}
+	if _, err := ms.PutContact(ctx, newCID(), kh, raw(`{}`), 103, 500, lim); err != ErrContactsFull {
+		t.Fatalf("cap after reclaim: %v", err)
 	}
 }

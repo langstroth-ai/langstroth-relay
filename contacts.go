@@ -6,9 +6,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // /v1/contacts/ (relay v0.3): opaque contact records and sealed drop boxes.
@@ -32,8 +34,10 @@ const (
 	defaultContactDropMaxRows      = defaultInboxMaxRows
 	defaultContactDropMaxBoxBytes  = 4 << 20
 	defaultContactDropRetentionDay = 30
-	defaultContactDropPage         = 100
-	maxContactDropPage             = 1000
+	// An expired cid stays reserved for its old write key this long.
+	defaultContactReclaimHoldDays = 180
+	defaultContactDropPage        = 100
+	maxContactDropPage            = 1000
 
 	// Drops reuse the account-invite limits per (sender, box): ~3/min
 	// sustained, burst 10. Per box (all senders) and per record writes are
@@ -85,6 +89,7 @@ func contactConfigFromEnv() contactConfig {
 			MaxContacts:     nonNeg("HIVE_RELAY_MAX_CONTACTS", defaultContactMaxContacts),
 			DropMaxRows:     pos("HIVE_RELAY_CONTACT_DROP_MAX_ROWS", defaultContactDropMaxRows),
 			DropMaxBoxBytes: pos("HIVE_RELAY_CONTACT_DROP_MAX_BOX_BYTES", defaultContactDropMaxBoxBytes),
+			ReclaimHold:     time.Duration(nonNeg("HIVE_RELAY_CONTACT_RECLAIM_HOLD_DAYS", defaultContactReclaimHoldDays)) * 24 * time.Hour,
 		},
 	}
 }
@@ -95,6 +100,35 @@ type contactLimiters struct {
 	dropCID *ipRateLimiter // per cid, all senders
 	write   *ipRateLimiter // record updates per cid (owner only)
 	create  *ipRateLimiter // new records per client
+	// create48 bounds new records per IPv6 /48 (a client is keyed by its /64,
+	// and one /48 holds 65536 of them): createSlash48Factor times create's
+	// rate and burst. Not applied to token subjects or IPv4.
+	create48 *ipRateLimiter
+}
+
+const createSlash48Factor = 16
+
+// slash48Key returns the IPv6 /48 of the client address, or "" for IPv4.
+func slash48Key(r *http.Request) string {
+	a, err := netip.ParseAddr(clientIP(r))
+	if err != nil || !a.Is6() || a.Is4In6() {
+		return ""
+	}
+	return netip.PrefixFrom(a, 48).Masked().String()
+}
+
+// allowCreate spends one create token for the client (and its /48).
+func (l contactLimiters) allowCreate(r *http.Request) bool {
+	tag := writerTag(r.Context(), clientKey(r))
+	if !l.create.allow(tag) {
+		return false
+	}
+	if strings.HasPrefix(tag, "ip:") {
+		if k := slash48Key(r); k != "" && !l.create48.allow(k) {
+			return false
+		}
+	}
+	return true
 }
 
 func contactLimitersFromEnv() contactLimiters {
@@ -103,6 +137,8 @@ func contactLimitersFromEnv() contactLimiters {
 		dropCID: newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_DROP_CID_RATE", defaultContactDropCIDRate), envFloat("HIVE_RELAY_CONTACT_DROP_CID_BURST", defaultContactDropCIDBurst)),
 		write:   newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_WRITE_RATE", defaultContactWriteRate), envFloat("HIVE_RELAY_CONTACT_WRITE_BURST", defaultContactWriteBurst)),
 		create:  newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_CREATE_RATE", defaultContactCreateRate), envFloat("HIVE_RELAY_CONTACT_CREATE_BURST", defaultContactCreateBurst)),
+		create48: newIPRateLimiter(createSlash48Factor*envFloat("HIVE_RELAY_CONTACT_CREATE_RATE", defaultContactCreateRate),
+			createSlash48Factor*envFloat("HIVE_RELAY_CONTACT_CREATE_BURST", defaultContactCreateBurst)),
 	}
 }
 
@@ -254,6 +290,12 @@ func (s *Server) contactPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "record too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	// Byte-exact storage needs valid UTF-8: the snapshot would rewrite it and
+	// Postgres TEXT refuses it.
+	if !utf8.Valid(req.Record) {
+		http.Error(w, "record is not valid UTF-8", http.StatusBadRequest)
+		return
+	}
 	hdr := strings.TrimSpace(r.Header.Get(contactKeyHeader))
 	body := strings.TrimSpace(req.WriteKey)
 	if hdr != "" && body != "" && hdr != body {
@@ -284,7 +326,7 @@ func (s *Server) contactPut(w http.ResponseWriter, r *http.Request) {
 		// spend the owner's write budget. The store re-checks atomically.
 		contactErr(w, ErrContactKey)
 		return
-	case existing == nil && !s.contactLim.create.allow(writerTag(r.Context(), clientKey(r))):
+	case existing == nil && !s.contactLim.allowCreate(r):
 		http.Error(w, "too many new contacts from this client", http.StatusTooManyRequests)
 		return
 	case existing != nil && !s.contactLim.write.allow(cid):
@@ -382,6 +424,10 @@ func (s *Server) contactDropPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Blob) > s.contactCfg.maxDropBytes {
 		http.Error(w, "blob too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if !utf8.Valid(req.Blob) {
+		http.Error(w, "blob is not valid UTF-8", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.contacts.AppendContactDrop(r.Context(), cid, req.Blob, nowUnix(), s.contactCfg.limits); contactErr(w, err) {

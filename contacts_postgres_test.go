@@ -32,22 +32,24 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 		t.Fatalf("get: %+v %v", r, err)
 	}
 
-	// Drops: row cap 3, byte cap 20 (blobs of 6 bytes → 3 fit).
+	// Drops: row cap 3, byte cap 20 (blobs of 6 bytes → 3 fit). Seqs count up
+	// from the box's base, contactSeqBase(creation time).
+	b := contactSeqBase(10)
 	for i := 0; i < 5; i++ {
 		seq, err := cs.AppendContactDrop(ctx, cid, raw(`"abcd"`), int64(20+i), lim)
-		if err != nil || seq != uint64(i+1) {
+		if err != nil || seq != b+uint64(i+1) {
 			t.Fatalf("drop %d: %d %v", i, seq, err)
 		}
 	}
 	items, more, err := cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, 30)
-	if err != nil || more || len(items) != 3 || items[0].Seq != 3 || string(items[2].Blob) != `"abcd"` || items[2].CreatedAt != 24 {
+	if err != nil || more || len(items) != 3 || items[0].Seq != b+3 || string(items[2].Blob) != `"abcd"` || items[2].CreatedAt != 24 {
 		t.Fatalf("drops after cap: %+v %v %v", items, more, err)
 	}
 	if _, err := cs.AppendContactDrop(ctx, cid, raw(`"0123456789012"`), 25, lim); err != nil { // 15 bytes
 		t.Fatal(err)
 	}
 	items, _, _ = cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, 30)
-	if len(items) != 1 || items[0].Seq != 6 {
+	if len(items) != 1 || items[0].Seq != b+6 {
 		t.Fatalf("byte cap: %+v", items)
 	}
 	cs.AppendContactDrop(ctx, cid, raw(`"x"`), 26, lim)
@@ -61,11 +63,11 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 	if _, err := cs.AckContactDrops(ctx, cid, other, 99, 30); err != ErrContactKey {
 		t.Fatalf("ack with another key: %v", err)
 	}
-	if n, err := cs.AckContactDrops(ctx, cid, kh, 6, 30); err != nil || n != 1 {
+	if n, err := cs.AckContactDrops(ctx, cid, kh, b+6, 30); err != nil || n != 1 {
 		t.Fatalf("ack: %d %v", n, err)
 	}
 	items, _, _ = cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, 30)
-	if len(items) != 1 || items[0].Seq != 7 {
+	if len(items) != 1 || items[0].Seq != b+7 {
 		t.Fatalf("after ack: %+v", items)
 	}
 
@@ -83,7 +85,7 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 		t.Fatalf("drop after delete: %v", err)
 	}
 	cs.PutContact(ctx, cid, other, raw(`{}`), 32, 1000, lim)
-	if seq, _ := cs.AppendContactDrop(ctx, cid, raw(`1`), 33, lim); seq != 1 {
+	if seq, _ := cs.AppendContactDrop(ctx, cid, raw(`1`), 33, lim); seq != contactSeqBase(32)+1 {
 		t.Fatalf("seq after recreate: %d", seq)
 	}
 
@@ -102,7 +104,7 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 	}
 	gone := newCID()
 	cs.PutContact(ctx, gone, kh, raw(`{}`), 0, 70, lim)
-	n, err := cs.PruneContacts(ctx, 100, 0)
+	n, err := cs.PruneContacts(ctx, 100, 0, 0)
 	if err != nil || n < 1 {
 		t.Fatalf("prune: %d %v", n, err)
 	}
@@ -112,7 +114,7 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 	// Age-based drop retention.
 	cs.AppendContactDrop(ctx, exp, raw(`"old"`), 100, lim)
 	cs.AppendContactDrop(ctx, exp, raw(`"new"`), 500, lim)
-	if _, err := cs.PruneContacts(ctx, 600, 200*time.Second); err != nil {
+	if _, err := cs.PruneContacts(ctx, 600, 200*time.Second, 0); err != nil {
 		t.Fatal(err)
 	}
 	items, _, _ = cs.ContactDropsAfter(ctx, exp, other, 0, 0, 0, 600)
@@ -151,3 +153,132 @@ func TestPG_ContactRoutesByteExact(t *testing.T) {
 		t.Fatalf("drop list: %s", body)
 	}
 }
+
+// contactSeqMonotonicConformance: a drop-box seq never repeats for a cid, even
+// when the record is deleted or expires and is created again. Several devices
+// of one account read the box with their own after= cursors and ack with
+// through=; a seq that restarts at 1 hides new drops from a device whose cursor
+// is past them and lets its stale ack delete drops nobody has read.
+func contactSeqMonotonicConformance(t *testing.T, cs ContactStore) {
+	ctx := context.Background()
+	kh := sha256hex(newWriteKey())
+	cid := newCID()
+	lim := ContactLimits{}
+	if _, err := cs.PutContact(ctx, cid, kh, raw(`{}`), 1000, 5000, lim); err != nil {
+		t.Fatal(err)
+	}
+	var last uint64
+	for i := 0; i < 3; i++ {
+		seq, err := cs.AppendContactDrop(ctx, cid, raw(`"a"`), 1001, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = seq
+	}
+	cursor := last // device B has read everything so far
+
+	// Delete and create again (a later second): seq continues past the cursor.
+	if err := cs.DeleteContact(ctx, cid, kh, 1002); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.PutContact(ctx, cid, kh, raw(`{}`), 2000, 5000, lim); err != nil {
+		t.Fatal(err)
+	}
+	seq, err := cs.AppendContactDrop(ctx, cid, raw(`"new"`), 2001, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq <= cursor {
+		t.Fatalf("seq restarted after delete: %d <= cursor %d", seq, cursor)
+	}
+	if n, err := cs.AckContactDrops(ctx, cid, kh, cursor, 2002); err != nil || n != 0 {
+		t.Fatalf("stale ack deleted unread drops: %d %v", n, err)
+	}
+	items, _, err := cs.ContactDropsAfter(ctx, cid, kh, cursor, 0, 0, 2003)
+	if err != nil || len(items) != 1 || items[0].Seq != seq {
+		t.Fatalf("new drop hidden from a device past the old seq: %+v %v", items, err)
+	}
+	cursor = seq
+
+	// Expiry, then the owner's next heartbeat creates the record again.
+	if _, err := cs.PutContact(ctx, cid, kh, raw(`{}`), 6000, 9000, lim); err != nil {
+		t.Fatal(err)
+	}
+	seq, err = cs.AppendContactDrop(ctx, cid, raw(`"after-expiry"`), 6001, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq <= cursor {
+		t.Fatalf("seq restarted after expiry: %d <= cursor %d", seq, cursor)
+	}
+}
+
+func TestContactSeqMonotonicMemory(t *testing.T) {
+	contactSeqMonotonicConformance(t, newMemoryStore())
+}
+
+func TestPG_ContactSeqMonotonic(t *testing.T) { contactSeqMonotonicConformance(t, pgStore(t)) }
+
+// contactReclaimHoldConformance: after a record expires, its cid stays
+// reserved for the old write key for ContactLimits.ReclaimHold. Anyone who
+// learned the cid (co-members, invitees, a forwarded link) could otherwise
+// claim it the moment the owner is offline past the TTL and receive the drops
+// meant for the owner.
+func contactReclaimHoldConformance(t *testing.T, cs ContactStore) {
+	ctx := context.Background()
+	owner, stranger := sha256hex(newWriteKey()), sha256hex(newWriteKey())
+	lim := ContactLimits{ReclaimHold: 1000 * time.Second}
+	hold := 1000 * time.Second
+
+	cid := newCID()
+	if _, err := cs.PutContact(ctx, cid, owner, raw(`{"o":1}`), 100, 200, lim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.AppendContactDrop(ctx, cid, raw(`"old"`), 150, lim); err != nil {
+		t.Fatal(err)
+	}
+	// Expired, not yet pruned: a stranger is refused, the record stays hidden.
+	if _, err := cs.PutContact(ctx, cid, stranger, raw(`{"evil":1}`), 201, 5000, lim); err != ErrContactKey {
+		t.Fatalf("stranger claimed an expired cid during the hold: %v", err)
+	}
+	if r, _ := cs.GetContact(ctx, cid, 202); r != nil {
+		t.Fatalf("expired record served: %s", r.Record)
+	}
+	// Prune keeps the hold.
+	if _, err := cs.PruneContacts(ctx, 300, 0, hold); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.PutContact(ctx, cid, stranger, raw(`{"evil":1}`), 301, 5000, lim); err != ErrContactKey {
+		t.Fatalf("stranger claimed an expired cid after prune: %v", err)
+	}
+	// The owner's next heartbeat creates it again, with an empty box.
+	if created, err := cs.PutContact(ctx, cid, owner, raw(`{"o":2}`), 400, 5000, lim); err != nil || !created {
+		t.Fatalf("owner reclaim: %v %v", created, err)
+	}
+	if items, _, err := cs.ContactDropsAfter(ctx, cid, owner, 0, 0, 0, 401); err != nil || len(items) != 0 {
+		t.Fatalf("expired box survived: %+v %v", items, err)
+	}
+	if r, _ := cs.GetContact(ctx, cid, 401); r == nil || string(r.Record) != `{"o":2}` {
+		t.Fatalf("owner record: %+v", r)
+	}
+
+	// After the hold the cid is free for anyone.
+	free := newCID()
+	cs.PutContact(ctx, free, owner, raw(`{}`), 100, 200, lim)
+	if _, err := cs.PruneContacts(ctx, 1300, 0, hold); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := cs.PutContact(ctx, free, stranger, raw(`{}`), 1301, 5000, lim); err != nil || !created {
+		t.Fatalf("claim after the hold: %v %v", created, err)
+	}
+	// Unpruned but past the hold: free too.
+	late := newCID()
+	cs.PutContact(ctx, late, owner, raw(`{}`), 100, 200, lim)
+	if created, err := cs.PutContact(ctx, late, stranger, raw(`{}`), 1201, 5000, lim); err != nil || !created {
+		t.Fatalf("claim past the hold, unpruned: %v %v", created, err)
+	}
+}
+
+func TestContactReclaimHoldMemory(t *testing.T) { contactReclaimHoldConformance(t, newMemoryStore()) }
+
+func TestPG_ContactReclaimHold(t *testing.T) { contactReclaimHoldConformance(t, pgStore(t)) }

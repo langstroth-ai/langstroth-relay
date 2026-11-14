@@ -227,7 +227,8 @@ func pruneLoop(pruner envelopePruner, stop <-chan struct{}) {
 }
 
 func contactPruneLoop(cs ContactStore, stop <-chan struct{}) {
-	dropAge := contactConfigFromEnv().dropMaxAge
+	cfg := contactConfigFromEnv()
+	dropAge, hold := cfg.dropMaxAge, cfg.limits.ReclaimHold
 	tick := time.NewTicker(time.Hour)
 	defer tick.Stop()
 	for {
@@ -236,7 +237,7 @@ func contactPruneLoop(cs ContactStore, stop <-chan struct{}) {
 			return
 		case <-tick.C:
 			runPrune("contacts", func() (int64, error) {
-				return cs.PruneContacts(context.Background(), nowUnix(), dropAge)
+				return cs.PruneContacts(context.Background(), nowUnix(), dropAge, hold)
 			})
 		}
 	}
