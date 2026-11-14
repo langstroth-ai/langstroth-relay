@@ -99,6 +99,21 @@ type memContact struct {
 	nextSeq   uint64
 }
 
+// contactSeqBase is the drop-box seq a box created at now starts after. A box
+// that is deleted, or expires, and is created again for the same cid must not
+// reuse seqs: each device of the account keeps its own after= cursor and acks
+// with through=, so a restart at 1 would hide new drops from a device whose
+// cursor is past them and let its stale ack delete drops nobody has read. The
+// creation second times 2^20 grows faster than any box can be filled (drops are
+// rate-limited per cid), stays below 2^53 until the year 2242 so JavaScript
+// clients read it exactly, and needs no per-cid state after a delete.
+func contactSeqBase(now int64) uint64 {
+	if now <= 0 {
+		return 0
+	}
+	return uint64(now) << 20
+}
+
 // contactOverheadBytes is what the byte budget charges per record beyond its
 // payload (map entry, cid, key hash).
 const contactOverheadBytes = 256
@@ -154,7 +169,7 @@ func (m *memContacts) PutContact(_ context.Context, cid, keyHash string, record 
 	if lim.MaxContacts > 0 && len(m.contacts) >= lim.MaxContacts {
 		return false, ErrContactsFull
 	}
-	c := &memContact{keyHash: keyHash, record: rec, updatedAt: now, expiresAt: expiresAt}
+	c := &memContact{keyHash: keyHash, record: rec, updatedAt: now, expiresAt: expiresAt, nextSeq: contactSeqBase(now)}
 	if !m.charge(c.bytes()) {
 		return false, ErrStoreFull
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -236,23 +237,26 @@ func TestContactDropReadNeedsKey(t *testing.T) {
 	if st != 200 || json.Unmarshal([]byte(body), &page) != nil || len(page.Items) != 3 || page.More {
 		t.Fatalf("read: %d %s", st, body)
 	}
-	if page.Items[0].Seq != 1 || string(page.Items[2].Blob) != `{"sealed": "zzz"}` || page.Items[0].CreatedAt == 0 {
+	// Seqs are consecutive from the box's base (contactSeqBase).
+	b := page.Items[0].Seq - 1
+	sq := func(n uint64) string { return strconv.FormatUint(b+n, 10) }
+	if page.Items[0].Seq == 0 || page.Items[2].Seq != b+3 || string(page.Items[2].Blob) != `{"sealed": "zzz"}` || page.Items[0].CreatedAt == 0 {
 		t.Fatalf("items: %+v", page.Items)
 	}
 	// Cursor + paging.
-	_, _, body = creq(t, "GET", u+"/drop?after=1&limit=1", "", keyHdr(key))
-	if !strings.HasPrefix(body, `{"items":[{"seq":2,`) || !strings.Contains(body, `"more":true`) {
+	_, _, body = creq(t, "GET", u+"/drop?after="+sq(1)+"&limit=1", "", keyHdr(key))
+	if !strings.HasPrefix(body, `{"items":[{"seq":`+sq(2)+`,`) || !strings.Contains(body, `"more":true`) {
 		t.Fatalf("after=1 limit=1: %s", body)
 	}
 	// Reading is non-destructive; ack deletes through a seq.
 	if st, _, _ := creq(t, "DELETE", u+"/drop", "", keyHdr(key)); st != 400 {
 		t.Fatalf("ack without through: %d", st)
 	}
-	if st, _, body := creq(t, "DELETE", u+"/drop?through=2", "", keyHdr(key)); st != 200 || body != `{"deleted":2,"ok":true}` {
+	if st, _, body := creq(t, "DELETE", u+"/drop?through="+sq(2), "", keyHdr(key)); st != 200 || body != `{"deleted":2,"ok":true}` {
 		t.Fatalf("ack: %d %s", st, body)
 	}
 	_, _, body = creq(t, "GET", u+"/drop", "", keyHdr(key))
-	if !strings.HasPrefix(body, `{"items":[{"seq":3,`) || strings.Count(body, `"seq"`) != 1 {
+	if !strings.HasPrefix(body, `{"items":[{"seq":`+sq(3)+`,`) || strings.Count(body, `"seq"`) != 1 {
 		t.Fatalf("after ack: %s", body)
 	}
 	// Deleting the record deletes the box.
@@ -279,7 +283,15 @@ func TestContactDropBoxBounds(t *testing.T) {
 		creq(t, "POST", u+"/drop", `{"blob":1}`)
 	}
 	_, _, body := creq(t, "GET", u+"/drop", "", keyHdr(key))
-	if strings.Count(body, `"seq"`) != 5 || !strings.HasPrefix(body, `{"items":[{"seq":4,`) {
+	var first struct {
+		Items []ContactDrop `json:"items"`
+	}
+	if json.Unmarshal([]byte(body), &first) != nil || len(first.Items) == 0 {
+		t.Fatalf("row cap: %s", body)
+	}
+	b := first.Items[0].Seq - 4 // the box's base: drop i has seq b+i
+	sq := func(n uint64) string { return strconv.FormatUint(b+n, 10) }
+	if strings.Count(body, `"seq"`) != 5 || !strings.HasPrefix(body, `{"items":[{"seq":`+sq(4)+`,`) {
 		t.Fatalf("row cap: %s", body)
 	}
 	// Byte cap: 40-byte blobs, 100-byte box → newest 2 remain.
@@ -287,7 +299,7 @@ func TestContactDropBoxBounds(t *testing.T) {
 		creq(t, "POST", u+"/drop", `{"blob":"`+strings.Repeat("q", 38)+`"}`)
 	}
 	_, _, body = creq(t, "GET", u+"/drop", "", keyHdr(key))
-	if strings.Count(body, `"seq"`) != 2 || !strings.HasPrefix(body, `{"items":[{"seq":10,`) {
+	if strings.Count(body, `"seq"`) != 2 || !strings.HasPrefix(body, `{"items":[{"seq":`+sq(10)+`,`) {
 		t.Fatalf("byte cap: %s", body)
 	}
 }
@@ -540,7 +552,7 @@ func TestContactSnapshotRoundTrip(t *testing.T) {
 	if err != nil || len(items) != 1 || string(items[0].Blob) != `"sealed"` {
 		t.Fatalf("drops after restore: %+v %v", items, err)
 	}
-	if seq, _ := r.AppendContactDrop(ctx, cid, raw(`"n"`), 13, ContactLimits{}); seq != 2 {
+	if seq, _ := r.AppendContactDrop(ctx, cid, raw(`"n"`), 13, ContactLimits{}); seq != items[0].Seq+1 {
 		t.Fatalf("seq after restore: %d", seq)
 	}
 	if r.storeBytes != s.storeBytes+3 {

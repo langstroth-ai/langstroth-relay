@@ -11,7 +11,8 @@ import (
 
 // Postgres ContactStore (relay v0.3). Records and drops are TEXT so the relay
 // returns the exact bytes it received, like relay_envelopes. Drop-box
-// sequences use relay_seq with scope "cdrop:<cid>". The global record cap
+// sequences use relay_seq with scope "cdrop:<cid>", started at contactSeqBase
+// when the box is created. The global record cap
 // (ContactLimits.MaxContacts) applies to the memory store only: a count per
 // create doesn't scale here, and the database's disk is the bound.
 
@@ -36,11 +37,20 @@ CREATE INDEX IF NOT EXISTS relay_contact_drop_created ON relay_contact_drop (cre
 
 func contactSeqScope(cid string) string { return "cdrop:" + cid }
 
-// wipeContactTx deletes a record, its drop box and its sequence counter.
+// startContactSeqTx starts a new box's seq counter at contactSeqBase(now).
+func startContactSeqTx(ctx context.Context, tx pgx.Tx, cid string, now int64) error {
+	_, err := tx.Exec(ctx, `
+INSERT INTO relay_seq (scope, next_seq) VALUES ($1, $2)
+ON CONFLICT (scope) DO UPDATE SET next_seq = GREATEST(relay_seq.next_seq, EXCLUDED.next_seq)`,
+		contactSeqScope(cid), int64(contactSeqBase(now)))
+	return err
+}
+
+// wipeContactTx deletes a record and its drop box. The seq counter stays, so
+// a box created again for the cid continues past it (startContactSeqTx).
 func wipeContactTx(ctx context.Context, tx pgx.Tx, cid string) error {
 	for _, q := range []string{
 		`DELETE FROM relay_contact_drop WHERE cid = $1`,
-		`DELETE FROM relay_seq WHERE scope = 'cdrop:' || $1`,
 		`DELETE FROM relay_contacts WHERE cid = $1`,
 	} {
 		if _, err := tx.Exec(ctx, q, cid); err != nil {
@@ -67,7 +77,7 @@ ON CONFLICT (cid) DO NOTHING`, cid, keyHash, string(record), now, expiresAt)
 		if _, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1`, cid); err != nil {
 			return false, err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM relay_seq WHERE scope = $1`, contactSeqScope(cid)); err != nil {
+		if err := startContactSeqTx(ctx, tx, cid, now); err != nil {
 			return false, err
 		}
 		return true, tx.Commit(ctx)
@@ -87,6 +97,9 @@ ON CONFLICT (cid) DO NOTHING`, cid, keyHash, string(record), now, expiresAt)
 		if _, err := tx.Exec(ctx, `
 INSERT INTO relay_contacts (cid, write_key_hash, record, updated_at, expires_at) VALUES ($1, $2, $3, $4, $5)`,
 			cid, keyHash, string(record), now, expiresAt); err != nil {
+			return false, err
+		}
+		if err := startContactSeqTx(ctx, tx, cid, now); err != nil {
 			return false, err
 		}
 		created = true
@@ -266,14 +279,18 @@ func (s *postgresStore) PruneContacts(ctx context.Context, now int64, dropMaxAge
 		return 0, err
 	}
 	n += tag.RowsAffected()
-	if _, err := tx.Exec(ctx, `DELETE FROM relay_seq WHERE scope IN (SELECT 'cdrop:' || cid FROM relay_contacts WHERE expires_at <= $1)`, now); err != nil {
-		return 0, err
-	}
 	tag, err = tx.Exec(ctx, `DELETE FROM relay_contacts WHERE expires_at <= $1`, now)
 	if err != nil {
 		return 0, err
 	}
 	n += tag.RowsAffected()
+	// Seq counters of records that are gone (expired here, or deleted by their
+	// owner since the last prune).
+	if _, err := tx.Exec(ctx, `
+DELETE FROM relay_seq WHERE scope LIKE 'cdrop:%'
+  AND NOT EXISTS (SELECT 1 FROM relay_contacts c WHERE 'cdrop:' || c.cid = relay_seq.scope)`); err != nil {
+		return 0, err
+	}
 	if dropMaxAge > 0 {
 		tag, err = tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE created_at < $1`, now-int64(dropMaxAge/time.Second))
 		if err != nil {
