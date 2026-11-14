@@ -27,6 +27,10 @@ type postgresStore struct {
 	// cross-instance push (Postgres LISTEN/NOTIFY) is the tracked follow-up
 	// (#151). Until then multi-instance clients keep their poll as the backstop.
 	notify *wsNotifier
+
+	// Keyring caps (refuse past them; see AppendKeyRotation). 0 = unbounded.
+	maxKeyringPerWS      int
+	maxKeyringBytesPerWS int
 }
 
 func newPostgresStore(ctx context.Context, dsn string) (Store, error) {
@@ -80,7 +84,12 @@ func newPostgresStore(ctx context.Context, dsn string) (Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres (no read-write node?): %w", pingErr)
 	}
-	s := &postgresStore{pool: pool, notify: newWSNotifier()}
+	s := &postgresStore{
+		pool:                 pool,
+		notify:               newWSNotifier(),
+		maxKeyringPerWS:      int(envInt64("HIVE_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
+		maxKeyringBytesPerWS: int(envInt64("HIVE_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
+	}
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -361,22 +370,6 @@ func (s *postgresStore) PruneInbox(ctx context.Context, maxRows int, maxAge time
 	return total, nil
 }
 
-// PruneKeyring keeps at most maxPerWorkspace most-recent key-rotation rows (by id)
-// per workspace (P2-13). Returns rows deleted.
-func (s *postgresStore) PruneKeyring(ctx context.Context, maxPerWorkspace int) (int64, error) {
-	if maxPerWorkspace <= 0 {
-		return 0, nil
-	}
-	ct, err := s.pool.Exec(ctx,
-		`DELETE FROM relay_keyring k
-		 USING (SELECT workspace, MAX(id) AS mx FROM relay_keyring GROUP BY workspace) m
-		 WHERE k.workspace = m.workspace AND k.id <= m.mx - $1`, int64(maxPerWorkspace))
-	if err != nil {
-		return 0, err
-	}
-	return ct.RowsAffected(), nil
-}
-
 // PruneFriendRequests sweeps terminal (non-pending) friend requests older than
 // maxAge (P2-13); pending requests still expire via requestTTLSecs on read. A
 // zero bound disables it. Returns rows deleted.
@@ -544,22 +537,37 @@ func (s *postgresStore) deviceBlobs(ctx context.Context, table, workspace string
 }
 
 func (s *postgresStore) AppendKeyRotation(ctx context.Context, workspace string, blob json.RawMessage) error {
-	if _, err := s.pool.Exec(ctx,
+	// Bound key-rotation growth per workspace (P2-12) by refusing past the
+	// caps, never by evicting: the oldest rows are the real rotations a junk
+	// flood would otherwise push out. The advisory lock serializes appends to
+	// one workspace's keyring so concurrent writers can't overshoot the caps.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('relay_keyring:' || $1, 0))`, workspace); err != nil {
+		return err
+	}
+	if s.maxKeyringPerWS > 0 || s.maxKeyringBytesPerWS > 0 {
+		var n, bytes int64
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*), coalesce(sum(octet_length(blob)), 0) FROM relay_keyring WHERE workspace = $1`,
+			workspace).Scan(&n, &bytes); err != nil {
+			return err
+		}
+		if s.maxKeyringPerWS > 0 && n >= int64(s.maxKeyringPerWS) {
+			return ErrKeyringFull
+		}
+		if s.maxKeyringBytesPerWS > 0 && bytes+int64(len(blob)) > int64(s.maxKeyringBytesPerWS) {
+			return ErrKeyringFull
+		}
+	}
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO relay_keyring (workspace, blob) VALUES ($1, $2)`, workspace, string(blob)); err != nil {
 		return err
 	}
-	// Bound key-rotation growth per workspace (P2-12): keep only the most-recent
-	// rows (by id) past the cap.
-	if defaultMaxKeyringPerWS > 0 {
-		if _, err := s.pool.Exec(ctx,
-			`DELETE FROM relay_keyring
-			 WHERE workspace = $1
-			   AND id <= (SELECT MAX(id) FROM relay_keyring WHERE workspace = $1) - $2`,
-			workspace, int64(defaultMaxKeyringPerWS)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *postgresStore) KeyRotations(ctx context.Context, workspace string) ([]json.RawMessage, error) {

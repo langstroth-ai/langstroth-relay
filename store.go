@@ -125,6 +125,9 @@ var (
 	// ErrStoreFull is returned when a write would exceed the store's byte
 	// budget (LIGUS_RELAY_MAX_STORE_BYTES); the handler answers 507.
 	ErrStoreFull = errors.New("relay storage budget exhausted")
+	// ErrKeyringFull is returned when a workspace's keyring is at its rotation
+	// count or byte cap. It wraps ErrStoreFull, so the handler answers 507.
+	ErrKeyringFull = fmt.Errorf("workspace keyring is full: %w", ErrStoreFull)
 )
 
 // ── Tunables (mirror the Rust relay) ─────────────────────────────────────────

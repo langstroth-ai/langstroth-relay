@@ -42,9 +42,15 @@ const (
 	// Per-workspace structural caps that bound unauthenticated growth (P2-12):
 	// live pairing codes across the instance, keyring rows per workspace, and
 	// candidate/presence device blobs per workspace.
-	defaultMaxLivePairings     = 50000
-	defaultMaxKeyringPerWS     = 2000
-	defaultMaxDeviceBlobsPerWS = 1000
+	defaultMaxLivePairings = 50000
+	defaultMaxKeyringPerWS = 2000
+	// Keyring byte cap per workspace and size cap per rotation. The byte cap
+	// equals the default list bound, so GET /keyring always returns the whole
+	// keyring. A rotation seals the workspace key to every device (~400 bytes
+	// of JSON each), so 256 KiB fits several hundred devices.
+	defaultMaxKeyringBytesPerWS = defaultMaxListBytes
+	defaultMaxRotationBytes     = 256 << 10
+	defaultMaxDeviceBlobsPerWS  = 1000
 
 	// Terminal friend requests (accepted/rejected/cancelled) are swept by age in
 	// the prune loop (P2-13); pending ones already expire via requestTTLSecs.

@@ -118,6 +118,8 @@ type Server struct {
 
 	maxListBytes int // LIGUS_RELAY_MAX_LIST_BYTES: keyring/candidates/presence response bound (listcap.go)
 
+	maxRotationBytes int // LIGUS_RELAY_MAX_ROTATION_BYTES: one key rotation's size (0 = body cap only)
+
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
 	healthErr     error
 	healthChecked time.Time
@@ -143,27 +145,28 @@ func New(o Options) *Server {
 	// Client address policy for rate limits and logs (clientip.go).
 	activeClientIP.Store(clientIPPolicyFromEnv())
 	s := &Server{
-		store:         o.Store,
-		entitlement:   o.Entitlement,
-		guard:         o.WriteGuard,
-		readGuard:     o.ReadGuard,
-		hooks:         o.Hooks,
-		adminAuth:     o.AdminAuth,
-		membership:    o.Membership || membershipFromEnv(),
-		friendCap:     o.FriendCap,
-		httpClient:    &http.Client{Timeout: 10 * time.Second},
-		pairings:      map[string]pairing{},
-		pairAttempts:  map[string]*pairAttempt{},
-		maxPairings:   int(envInt64("HIVE_RELAY_MAX_PAIRINGS", defaultMaxLivePairings)),
-		pushLimiter:   newIPRateLimiter(envFloat("HIVE_RELAY_PUSH_RATE", 100), envFloat("HIVE_RELAY_PUSH_BURST", 300)),
-		sseLimiter:    newConcurrencyLimiter(envInt64("HIVE_RELAY_MAX_SSE", 2000)),
-		wsWriterLimit: newIPRateLimiter(envFloat("HIVE_RELAY_WS_WRITER_RATE", defaultWSWriterRate), envFloat("HIVE_RELAY_WS_WRITER_BURST", defaultWSWriterBurst)),
-		ghLimiter:     newIPRateLimiter(envFloat("HIVE_RELAY_GITHUB_RATE", defaultGitHubAuthRate), envFloat("HIVE_RELAY_GITHUB_BURST", defaultGitHubAuthBurst)),
-		inviteLimiter: newIPRateLimiter(envFloat("HIVE_RELAY_INVITE_RATE", defaultInviteRate), envFloat("HIVE_RELAY_INVITE_BURST", defaultInviteBurst)),
-		ghCache:       newIdentityCache(ghIdentityTTL, ghNegativeTTL),
-		metricsToken:  metricsToken,
-		wsScope:       workspaceScopeFromEnv(),
-		maxListBytes:  listCapFromEnv(),
+		store:            o.Store,
+		entitlement:      o.Entitlement,
+		guard:            o.WriteGuard,
+		readGuard:        o.ReadGuard,
+		hooks:            o.Hooks,
+		adminAuth:        o.AdminAuth,
+		membership:       o.Membership || membershipFromEnv(),
+		friendCap:        o.FriendCap,
+		httpClient:       &http.Client{Timeout: 10 * time.Second},
+		pairings:         map[string]pairing{},
+		pairAttempts:     map[string]*pairAttempt{},
+		maxPairings:      int(envInt64("HIVE_RELAY_MAX_PAIRINGS", defaultMaxLivePairings)),
+		pushLimiter:      newIPRateLimiter(envFloat("HIVE_RELAY_PUSH_RATE", 100), envFloat("HIVE_RELAY_PUSH_BURST", 300)),
+		sseLimiter:       newConcurrencyLimiter(envInt64("HIVE_RELAY_MAX_SSE", 2000)),
+		wsWriterLimit:    newIPRateLimiter(envFloat("HIVE_RELAY_WS_WRITER_RATE", defaultWSWriterRate), envFloat("HIVE_RELAY_WS_WRITER_BURST", defaultWSWriterBurst)),
+		ghLimiter:        newIPRateLimiter(envFloat("HIVE_RELAY_GITHUB_RATE", defaultGitHubAuthRate), envFloat("HIVE_RELAY_GITHUB_BURST", defaultGitHubAuthBurst)),
+		inviteLimiter:    newIPRateLimiter(envFloat("HIVE_RELAY_INVITE_RATE", defaultInviteRate), envFloat("HIVE_RELAY_INVITE_BURST", defaultInviteBurst)),
+		ghCache:          newIdentityCache(ghIdentityTTL, ghNegativeTTL),
+		metricsToken:     metricsToken,
+		wsScope:          workspaceScopeFromEnv(),
+		maxListBytes:     listCapFromEnv(),
+		maxRotationBytes: int(max(envInt64("HIVE_RELAY_MAX_ROTATION_BYTES", defaultMaxRotationBytes), 0)),
 	}
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
@@ -712,6 +715,10 @@ func (s *Server) publishKeyring(w http.ResponseWriter, r *http.Request) {
 	}
 	var body json.RawMessage
 	if !readJSON(w, r, &body) {
+		return
+	}
+	if s.maxRotationBytes > 0 && len(body) > s.maxRotationBytes {
+		http.Error(w, "key rotation too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	id := r.PathValue("id")
@@ -1389,6 +1396,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // storeErr writes 500 and returns true if a backend error occurred.
 func storeErr(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, ErrKeyringFull) {
+		http.Error(w, "workspace keyring is full", http.StatusInsufficientStorage)
+		return true
+	}
 	if errors.Is(err, ErrStoreFull) {
 		http.Error(w, "relay storage is full", http.StatusInsufficientStorage)
 		return true

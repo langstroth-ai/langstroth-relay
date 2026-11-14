@@ -188,12 +188,12 @@ func flushLoop(store Store, stop <-chan struct{}) {
 
 // envelopePruner is implemented by backends whose durable logs need periodic
 // pruning (Postgres). The in-memory store prunes inline at write time instead.
-// Beyond envelopes, the loop also sweeps the inbox, keyring, and terminal friend
-// requests so no durable table grows without bound (P2-13).
+// Beyond envelopes, the loop also sweeps the inbox and terminal friend requests
+// (P2-13). The keyring is not pruned: it is bounded by refusing rotations past
+// its caps at write time, so real rotations are never evicted.
 type envelopePruner interface {
 	PruneEnvelopes(ctx context.Context, maxEnvelopes int, maxAge time.Duration) (int64, error)
 	PruneInbox(ctx context.Context, maxRows int, maxAge time.Duration) (int64, error)
-	PruneKeyring(ctx context.Context, maxPerWorkspace int) (int64, error)
 	PruneFriendRequests(ctx context.Context, maxAge time.Duration) (int64, error)
 }
 
@@ -213,9 +213,6 @@ func pruneLoop(pruner envelopePruner, stop <-chan struct{}) {
 			})
 			runPrune("inbox", func() (int64, error) {
 				return pruner.PruneInbox(context.Background(), defaultInboxMaxRows, inboxAge)
-			})
-			runPrune("keyring", func() (int64, error) {
-				return pruner.PruneKeyring(context.Background(), defaultMaxKeyringPerWS)
 			})
 			runPrune("friend_requests", func() (int64, error) {
 				return pruner.PruneFriendRequests(context.Background(), friendReqAge)

@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 
@@ -231,3 +232,30 @@ func TestPG_FriendCapAndExpiry(t *testing.T) {
 
 // Ensure the pool type assertion path stays valid.
 var _ = pgxpool.Pool{}
+
+// Past the per-workspace cap, Postgres refuses the rotation and keeps the
+// stored ones (no oldest-first eviction), like the memory store.
+func TestPG_KeyringCapRefuses(t *testing.T) {
+	s := pgStore(t)
+	s.maxKeyringPerWS = 2
+	for i := 0; i < 2; i++ {
+		if err := s.AppendKeyRotation(bg, "ws", raw(`{"v":`+itoa(i)+`}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AppendKeyRotation(bg, "ws", raw(`{"v":"junk"}`)); !errors.Is(err, ErrKeyringFull) {
+		t.Fatalf("rotation past the cap: %v", err)
+	}
+	kr, _ := s.KeyRotations(bg, "ws")
+	if len(kr) != 2 || string(kr[0]) != `{"v":0}` {
+		t.Fatalf("stored rotations changed: %s", kr)
+	}
+	s.maxKeyringPerWS = 0
+	s.maxKeyringBytesPerWS = 20
+	if err := s.AppendKeyRotation(bg, "ws2", raw(`{"v":"0123456789"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendKeyRotation(bg, "ws2", raw(`{"v":"0123456789"}`)); !errors.Is(err, ErrKeyringFull) {
+		t.Fatalf("rotation past the byte cap: %v", err)
+	}
+}

@@ -186,18 +186,6 @@ func TestInboxRowCapEvictsOldest(t *testing.T) {
 	}
 }
 
-func TestKeyringCapRetainsNewest(t *testing.T) {
-	s := newMemoryStore()
-	s.maxKeyringPerWS = 2
-	for i := 0; i < 5; i++ {
-		_ = s.AppendKeyRotation(bg, "ws", raw(`{"v":`+itoa(i)+`}`))
-	}
-	kr, _ := s.KeyRotations(bg, "ws")
-	if len(kr) != 2 || string(kr[0]) != `{"v":3}` || string(kr[1]) != `{"v":4}` {
-		t.Fatalf("keyring cap should keep the 2 newest, got %v", kr)
-	}
-}
-
 func TestDeviceBlobCapBounded(t *testing.T) {
 	s := newMemoryStore()
 	s.maxDeviceBlobsPerWS = 2

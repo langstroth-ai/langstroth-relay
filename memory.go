@@ -64,6 +64,9 @@ type memoryStore struct {
 	inboxMaxRows        int
 	maxKeyringPerWS     int
 	maxDeviceBlobsPerWS int
+	// maxKeyringBytesPerWS caps the stored bytes of one workspace's keyring
+	// (0 = unbounded).
+	maxKeyringBytesPerWS int
 
 	// maxStoreBytes caps the bytes of workspace blobs held (envelope bodies,
 	// keyring rows, candidate and presence blobs) across all workspaces
@@ -141,6 +144,7 @@ func newMemoryStore() *memoryStore {
 		retentionMaxAge:       maxAge,
 		inboxMaxRows:          int(envInt64("HIVE_RELAY_INBOX_MAX_ROWS", defaultInboxMaxRows)),
 		maxKeyringPerWS:       int(envInt64("HIVE_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
+		maxKeyringBytesPerWS:  int(envInt64("HIVE_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
 		maxDeviceBlobsPerWS:   int(envInt64("HIVE_RELAY_MAX_DEVICE_BLOBS_PER_WS", defaultMaxDeviceBlobsPerWS)),
 		maxStoreBytes:         max(envInt64("HIVE_RELAY_MAX_STORE_BYTES", 0), 0),
 		notify:                newWSNotifier(),
@@ -435,18 +439,25 @@ func (s *memoryStore) AppendKeyRotation(_ context.Context, workspace string, blo
 	if err != nil {
 		return err
 	}
+	// Bound key-rotation growth per workspace (P2-12) by refusing past the
+	// caps, never by evicting: the oldest rows are the real rotations a junk
+	// flood would otherwise push out.
+	if s.maxKeyringPerWS > 0 && len(w.keyring) >= s.maxKeyringPerWS {
+		return ErrKeyringFull
+	}
+	if s.maxKeyringBytesPerWS > 0 {
+		total := len(blob)
+		for _, k := range w.keyring {
+			total += len(k)
+		}
+		if total > s.maxKeyringBytesPerWS {
+			return ErrKeyringFull
+		}
+	}
 	if !s.reserveLocked(int64(len(blob))) {
 		return ErrStoreFull
 	}
 	w.keyring = append(w.keyring, blob)
-	// Bound key-rotation growth per workspace (P2-12): keep only the most-recent
-	// rows past the cap.
-	if s.maxKeyringPerWS > 0 && len(w.keyring) > s.maxKeyringPerWS {
-		for _, old := range w.keyring[:len(w.keyring)-s.maxKeyringPerWS] {
-			s.storeBytes -= int64(len(old))
-		}
-		w.keyring = append([]json.RawMessage(nil), w.keyring[len(w.keyring)-s.maxKeyringPerWS:]...)
-	}
 	return nil
 }
 
