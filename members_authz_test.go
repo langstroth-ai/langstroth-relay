@@ -96,3 +96,22 @@ func TestJoinDoesNotDowngrade(t *testing.T) {
 		t.Fatalf("owner was downgraded by redeeming a viewer invite: %s", body)
 	}
 }
+
+// F-04: the roster of a claimed workspace (member account ids, logins, roles)
+// was readable by any caller that passed the entitlement gate, which on an
+// open relay with membership on is anyone.
+func TestRosterReadRequiresMembership(t *testing.T) {
+	ts, sk := membershipServer(t)
+	base := ts.URL + "/v1/workspaces/wsR/members"
+	owner := issueToken(sk, TokenClaims{Sub: "github:1"})
+	stranger := issueToken(sk, TokenClaims{Sub: "github:99"})
+	if code, _ := req(t, "POST", base+"/claim", owner, map[string]string{"login": "alice"}); code != http.StatusOK {
+		t.Fatalf("claim: %d", code)
+	}
+	if code, body := req(t, "GET", base, stranger, nil); code != http.StatusForbidden {
+		t.Fatalf("non-member roster read: want 403, got %d %s", code, body)
+	}
+	if code, _ := req(t, "GET", base, owner, nil); code != http.StatusOK {
+		t.Fatalf("member roster read: want 200, got %d", code)
+	}
+}

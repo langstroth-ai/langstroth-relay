@@ -197,9 +197,14 @@ func (s *Server) requireRole(ctx context.Context, workspace, account string, min
 	return nil
 }
 
-// GET /v1/workspaces/{id}/members — the roster (entitlement-gated; a member set
-// is metadata, and the client needs it to render + bootstrap).
+// GET /v1/workspaces/{id}/members — the roster. Read-authorized like the other
+// workspace reads: an unclaimed workspace's (empty) roster is open, a claimed
+// one is visible to its members only (account ids and logins are metadata a
+// stranger has no need for). The client treats a 403 like "unmanaged".
 func (s *Server) membersList(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRead(w, r, r.PathValue("id")) {
+		return
+	}
 	members, err := s.store.WorkspaceMembers(r.Context(), r.PathValue("id"))
 	if storeErr(w, err) {
 		return
