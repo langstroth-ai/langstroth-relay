@@ -122,3 +122,28 @@ func TestTrustedProxySeparatesClients(t *testing.T) {
 		t.Fatalf("another client behind the same ingress must not be blocked, got %d", code)
 	}
 }
+
+// F-02: an IPv6 client normally holds a whole /64 and can pick a fresh source
+// address per request; keying limits on the full address gave it a fresh
+// bucket each time.
+func TestIPv6RotationWithinA64SharesABucket(t *testing.T) {
+	t.Setenv("FLY_APP_NAME", "")
+	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "")
+	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
+	h := srv.Handler()
+	blocked := false
+	for i := 0; i < maxResolveFailures+5; i++ {
+		remote := fmt.Sprintf("[2001:db8:1:2::%x]:4000", i+1)
+		if resolveMiss(t, h, remote, "", "") == http.StatusTooManyRequests {
+			blocked = true
+			break
+		}
+	}
+	if !blocked {
+		t.Fatal("rotating addresses inside one IPv6 /64 evaded the pairing guess limit")
+	}
+	// A different /64 is a different client.
+	if code := resolveMiss(t, h, "[2001:db8:1:3::1]:4000", "", ""); code != http.StatusNotFound {
+		t.Fatalf("another /64 must not be blocked, got %d", code)
+	}
+}

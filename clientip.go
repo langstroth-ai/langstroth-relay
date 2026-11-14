@@ -143,3 +143,19 @@ func (p *clientIPPolicy) ip(r *http.Request) string {
 func clientIP(r *http.Request) string {
 	return activeClientIP.Load().ip(r)
 }
+
+// clientKey is the rate-limit and abuse-block key for r: the client address,
+// with IPv6 reduced to its /64. An IPv6 host is normally handed a whole /64 and
+// can use a fresh source address per request, so a per-address key would give
+// it a fresh bucket each time.
+func clientKey(r *http.Request) string {
+	return rateKey(clientIP(r))
+}
+
+func rateKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil || !a.Is6() || a.Is4In6() {
+		return ip
+	}
+	return netip.PrefixFrom(a, 64).Masked().String()
+}

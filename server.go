@@ -447,7 +447,7 @@ func (s *Server) guardMetrics(next http.HandlerFunc) http.HandlerFunc {
 // no unauth write path is left unbounded (P2-12). Returns false (after writing
 // 429) when the caller is over the limit.
 func (s *Server) limitWrite(w http.ResponseWriter, r *http.Request) bool {
-	if !s.pushLimiter.allow(clientIP(r)) {
+	if !s.pushLimiter.allow(clientKey(r)) {
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return false
 	}
@@ -463,7 +463,7 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 	// history (P1-6). Content-blind — keyed on the entitlement subject or client
 	// IP, never the body.
 	id := r.PathValue("id")
-	if !s.wsWriterLimit.allow(id + "|" + writerTag(r.Context(), clientIP(r))) {
+	if !s.wsWriterLimit.allow(id + "|" + writerTag(r.Context(), clientKey(r))) {
 		http.Error(w, "workspace write quota exceeded", http.StatusTooManyRequests)
 		return
 	}
@@ -768,7 +768,7 @@ func (s *Server) createPairing(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resolvePairing(w http.ResponseWriter, r *http.Request) {
 	code := normalizePairCode(r.PathValue("code"))
-	client := clientIP(r)
+	client := clientKey(r)
 	now := time.Now()
 
 	s.pairMu.Lock()
@@ -1195,7 +1195,7 @@ func (s *Server) requireGitHub(w http.ResponseWriter, r *http.Request) (*githubU
 	// friends) so a flood can't be amplified into one outbound api.github.com call
 	// per request, and to throttle bulk directory / membership enumeration (P1-8,
 	// P2-14). Generous (default 30/s, burst 120); env-tunable.
-	if !s.ghLimiter.allow(clientIP(r)) {
+	if !s.ghLimiter.allow(clientKey(r)) {
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return nil, false
 	}

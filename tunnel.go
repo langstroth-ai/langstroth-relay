@@ -423,7 +423,7 @@ func statusString(st HostStatus) string {
 // ── Host control connection (§6.2) ───────────────────────────────────────────
 
 func (h *tunnelHub) handleHost(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := clientKey(r)
 	c := h.upgrade(w, r, h.lim.TextMax)
 	if c == nil {
 		return
@@ -835,7 +835,7 @@ func (h *tunnelHub) killSessions(hostID, pid string, tc tunnelCode, msg string) 
 // ── Host accept connection (§6.3) ────────────────────────────────────────────
 
 func (h *tunnelHub) handleAccept(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := clientKey(r)
 	c := h.upgrade(w, r, h.lim.BinaryMax)
 	if c == nil {
 		return
@@ -864,7 +864,7 @@ func (h *tunnelHub) handleAccept(w http.ResponseWriter, r *http.Request) {
 // ── Phone connect (§6.4) ─────────────────────────────────────────────────────
 
 func (h *tunnelHub) handleConnect(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := clientKey(r)
 	c := h.upgrade(w, r, h.lim.TextMax)
 	if c == nil {
 		return
