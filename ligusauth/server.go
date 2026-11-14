@@ -143,7 +143,7 @@ func (s *Server) AdminHandler() http.Handler {
 
 func (s *Server) limited(h func(http.ResponseWriter, *http.Request, *TenantConfig)) func(http.ResponseWriter, *http.Request, *TenantConfig) {
 	return func(w http.ResponseWriter, r *http.Request, t *TenantConfig) {
-		if !s.publicLimit.allow(s.clientIP(r)) {
+		if !s.publicLimit.allow(s.limitKey(r)) {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
@@ -214,6 +214,22 @@ func (s *Server) clientIP(r *http.Request) string {
 		}
 	}
 	return addr.String()
+}
+
+// limitKey is the rate-limit key for a request: the client address, with
+// IPv6 reduced to its /64 (a host is normally handed a whole /64, so
+// per-address buckets would be free to multiply), as the relay does.
+func (s *Server) limitKey(r *http.Request) string {
+	ip := s.clientIP(r)
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	a = a.Unmap()
+	if a.Is6() {
+		return netip.PrefixFrom(a, 64).Masked().String()
+	}
+	return a.String()
 }
 
 func (s *Server) trusted(a netip.Addr) bool {

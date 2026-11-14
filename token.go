@@ -175,6 +175,12 @@ func entitlementConfigError() error {
 		if len(ts) == 0 {
 			return errors.New("LIGUS_RELAY_TENANTS is set but lists no tenant id")
 		}
+		// tid confines which tokens are admitted, not which workspaces they
+		// reach: without strict scope one tenant's token would read and write
+		// every other tenant's workspaces.
+		if workspaceScopeFromEnv() != scopeStrict {
+			return errors.New("LIGUS_RELAY_TENANTS needs LIGUS_RELAY_WORKSPACE_SCOPE=strict, or one tenant's tokens reach every workspace")
+		}
 	}
 	return nil
 }

@@ -365,6 +365,14 @@ func (s *Server) resolveUser(ctx context.Context, t *TenantConfig, idc *IDClaims
 	if t.Provisioning == "scim" {
 		return User{}, errors.New("not_provisioned")
 	}
+	if t.LinkClaim == t.OIDC.ClaimMap.Email && (idc.EmailVerified == nil || !*idc.EmailVerified) {
+		// An unverified address is not this person's to claim. Recording it
+		// as the new user's userName (or externalId) would squat the real
+		// owner's name: their sign-in would then be refused, and a SCIM
+		// client that looks users up by userName before adding them to
+		// groups would link the squatter's record instead.
+		link = ""
+	}
 	name := link
 	if name == "" {
 		name = uid
@@ -464,7 +472,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request, t *Ten
 
 func (s *Server) handleDeviceSubmit(w http.ResponseWriter, r *http.Request, t *TenantConfig) {
 	ip := s.clientIP(r)
-	if !s.codeLimit.allow(t.ID + "|" + ip) {
+	if !s.codeLimit.allow(t.ID + "|" + s.limitKey(r)) {
 		s.page(w, http.StatusTooManyRequests, "Too many attempts", "Wait a minute, then try the code again.")
 		return
 	}

@@ -54,7 +54,7 @@ func (s *Server) adminAuthorized(w http.ResponseWriter, r *http.Request) bool {
 	ip := s.clientIP(r)
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || !constEq(sha256Hex(strings.TrimSpace(tok)), s.adminTokenHash) {
-		if !s.authFail.allow("admin|" + ip) {
+		if !s.authFail.allow("admin|" + s.limitKey(r)) {
 			http.Error(w, "too many failed attempts", http.StatusTooManyRequests)
 			return false
 		}

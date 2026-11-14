@@ -175,6 +175,12 @@ func New(o Options) *Server {
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
 	}
+	// A tenant-confined gate is always workspace-strict (see
+	// entitlementConfigError): tid alone would let one tenant's token reach
+	// another tenant's workspaces.
+	if ep, ok := s.entitlement.(entitlementPolicy); ok && ep.tenants != nil {
+		s.wsScope = scopeStrict
+	}
 	s.verify = s.verifyGitHub
 	tunnelPolicy := o.TunnelPolicy
 	if tunnelPolicy == nil {
