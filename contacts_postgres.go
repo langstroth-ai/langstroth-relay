@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS relay_contact_drop (
   PRIMARY KEY (cid, seq)
 );
 CREATE INDEX IF NOT EXISTS relay_contact_drop_created ON relay_contact_drop (created_at);
+ALTER TABLE relay_contact_drop ADD COLUMN IF NOT EXISTS sender    TEXT    NOT NULL DEFAULT '';
+ALTER TABLE relay_contact_drop ADD COLUMN IF NOT EXISTS verified  BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE relay_contact_drop ADD COLUMN IF NOT EXISTS delivered BOOLEAN NOT NULL DEFAULT false;
 `
 
 func contactSeqScope(cid string) string { return "cdrop:" + cid }
@@ -174,8 +177,10 @@ func (s *postgresStore) AppendContactDrop(ctx context.Context, cid string, blob 
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
+	// FOR UPDATE serializes appends to one box, so each eviction sees the
+	// box it trims.
 	var one int
-	err = tx.QueryRow(ctx, `SELECT 1 FROM relay_contacts WHERE cid = $1 AND expires_at > $2 FOR SHARE`, cid, now).Scan(&one)
+	err = tx.QueryRow(ctx, `SELECT 1 FROM relay_contacts WHERE cid = $1 AND expires_at > $2 FOR UPDATE`, cid, now).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrContactNotFound
 	}
@@ -186,29 +191,61 @@ func (s *postgresStore) AppendContactDrop(ctx context.Context, cid string, blob 
 	if err != nil {
 		return 0, err
 	}
+	snd := dropSenderFrom(ctx)
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO relay_contact_drop (cid, seq, blob, created_at) VALUES ($1, $2, $3, $4)`,
-		cid, seq, string(blob), now); err != nil {
+		`INSERT INTO relay_contact_drop (cid, seq, blob, created_at, sender, verified) VALUES ($1, $2, $3, $4, $5, $6)`,
+		cid, seq, string(blob), now, dropSenderHash(cid, snd), snd.Verified); err != nil {
 		return 0, err
 	}
-	if lim.DropMaxRows > 0 {
-		if _, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1 AND seq <= $2`,
-			cid, int64(seq)-int64(lim.DropMaxRows)); err != nil {
+	if lim.DropMaxRows > 0 || lim.DropMaxBoxBytes > 0 {
+		var rows, bytes int64
+		if err := tx.QueryRow(ctx,
+			`SELECT COUNT(*), COALESCE(SUM(octet_length(blob)), 0) FROM relay_contact_drop WHERE cid = $1`, cid).
+			Scan(&rows, &bytes); err != nil {
 			return 0, err
 		}
-	}
-	if lim.DropMaxBoxBytes > 0 {
-		// Evict the oldest until the box's blobs fit (the newest always stays).
-		if _, err := tx.Exec(ctx, `
-DELETE FROM relay_contact_drop WHERE cid = $1 AND seq < $3 AND seq IN (
-  SELECT seq FROM (
-    SELECT seq, SUM(octet_length(blob)) OVER (ORDER BY seq DESC) AS cum
-    FROM relay_contact_drop WHERE cid = $1
-  ) t WHERE cum > $2)`, cid, int64(lim.DropMaxBoxBytes), seq); err != nil {
-			return 0, err
+		if (lim.DropMaxRows > 0 && rows > int64(lim.DropMaxRows)) || (lim.DropMaxBoxBytes > 0 && bytes > int64(lim.DropMaxBoxBytes)) {
+			if err := evictContactDropsTx(ctx, tx, cid, lim); err != nil {
+				return 0, err
+			}
 		}
 	}
 	return seq, tx.Commit(ctx)
+}
+
+// evictContactDropsTx trims a full box per dropEvictions. Only the eviction
+// metadata is read (octet_length, not the blobs).
+func evictContactDropsTx(ctx context.Context, tx pgx.Tx, cid string, lim ContactLimits) error {
+	rows, err := tx.Query(ctx, `
+SELECT seq, octet_length(blob), sender, verified, delivered FROM relay_contact_drop WHERE cid = $1 ORDER BY seq`, cid)
+	if err != nil {
+		return err
+	}
+	var drops []ContactDrop
+	for rows.Next() {
+		var d ContactDrop
+		var size int
+		if err := rows.Scan(&d.Seq, &size, &d.sender, &d.verified, &d.delivered); err != nil {
+			rows.Close()
+			return err
+		}
+		d.Blob = make(json.RawMessage, size) // length only: dropEvictions counts bytes
+		drops = append(drops, d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	ev := dropEvictions(drops, lim)
+	if len(ev) == 0 {
+		return nil
+	}
+	seqs := make([]int64, len(ev))
+	for i, j := range ev {
+		seqs[i] = int64(drops[j].Seq)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1 AND seq = ANY($2)`, cid, seqs)
+	return err
 }
 
 func (s *postgresStore) ContactDropsAfter(ctx context.Context, cid, keyHash string, after uint64, limit, maxBytes int, now int64) ([]ContactDrop, bool, error) {
@@ -251,7 +288,15 @@ func (s *postgresStore) ContactDropsAfter(ctx context.Context, cid, keyHash stri
 	if err := rows.Err(); err != nil && !more {
 		return nil, false, err
 	}
-	return out, more, nil
+	rows.Close()
+	// Served drops count as delivered: a full box evicts them first.
+	if len(out) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE relay_contact_drop SET delivered = true
+WHERE cid = $1 AND seq >= $2 AND seq <= $3 AND NOT delivered`, cid, int64(out[0].Seq), int64(out[len(out)-1].Seq)); err != nil {
+			return nil, false, err
+		}
+	}
+	return out, more, tx.Commit(ctx)
 }
 
 func (s *postgresStore) AckContactDrops(ctx context.Context, cid, keyHash string, through uint64, now int64) (int64, error) {

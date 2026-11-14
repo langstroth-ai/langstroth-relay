@@ -15,8 +15,10 @@ default.
   capability whose SHA-256 the relay stores, plus a sealed, append-only drop
   box per contact that only the key holder reads or empties. The relay does no
   cryptography on either. Size caps (64 KiB record and drop), a 30-day record
-  TTL refreshed on every write, per-box row (5000) and byte (4 MiB) caps with
-  oldest-first eviction, 30-day drop retention, and rate limits per sender and
+  TTL refreshed on every write, per-box row (5000) and byte (4 MiB) caps
+  (eviction takes drops already served to the owner first, then the heaviest
+  sender's unread drops, so a flood evicts itself and not a pending invite),
+  30-day drop retention, and rate limits per sender and
   box, per box, per record and per client. Stored in the memory store, its
   snapshot and Postgres (`relay_contacts`, `relay_contact_drop`). Requests that
   carry a forge token are refused. Settings: `LIGUS_RELAY_CONTACTS`,
