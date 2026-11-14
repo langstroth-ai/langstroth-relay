@@ -86,7 +86,7 @@ func (m *metrics) observe(next http.Handler) http.Handler {
 		// Log a normalized ROUTE TEMPLATE, never the raw path: raw paths carry
 		// secrets — pairing codes (/v1/pair/<code>), workspace ids, @handles,
 		// account keys, token/request ids — which must not land in logs (P2-15).
-		// And log the real client IP (Fly-Client-IP behind the edge), not the
+		// And log the client IP (clientIP: a trusted proxy's header), not the
 		// shared proxy address in RemoteAddr.
 		slog.Info("request",
 			"method", r.Method,

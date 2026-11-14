@@ -66,6 +66,7 @@ of silently serving from memory.
 | `persistence.enabled` | `false` | Memory-store snapshot PVC (`single` only) |
 | `config.env` | `{}` | Plain `LIGUS_RELAY_*` settings (membership mode, retention, ...) |
 | `config.existingSecret` | empty | Secret whose keys become env (`LIGUS_RELAY_TOKEN_PUBKEY`, `LIGUS_RELAY_METRICS_TOKEN`, ...) |
+| `clientIP.trustedProxies` / `clientIP.header` | empty, `X-Forwarded-For` | Proxies whose forwarding header names the client (see Scaling) |
 | `ingress.*`, `httpRoute.*` | off | TLS at the edge; idle timeout must exceed 60 s |
 | `metrics.serviceMonitor.*` | off | Prometheus Operator; set `bearerTokenSecret` when a metrics token is configured |
 | `networkPolicy.enabled` | `true` | Ingress to 8443 from `ingressFrom` (empty = anywhere) |
@@ -93,10 +94,13 @@ Keep `relay-sync` at one replica for now. With more than one:
   poll, so this costs latency, not correctness);
 - rate limits are per process.
 
-Rate limits key on the connection's remote address (or `Fly-Client-IP`).
-Behind a Kubernetes ingress every client shares the proxy's address, so
-per-client limits need a trusted-proxy setting in the relay before they mean
-anything there.
+Rate limits key on the connection's remote address. Behind a Kubernetes
+ingress every client shares the proxy's address (and one bucket: ten bad
+pairing-code guesses from anyone block pairing for everyone for a minute), so
+set `clientIP.trustedProxies` to the CIDRs your ingress controller or load
+balancer connects from. The relay then reads `X-Forwarded-For` (or
+`clientIP.header`) from those peers only, walking right to left past trusted
+hops; a header from any other peer is ignored.
 
 ## Image
 

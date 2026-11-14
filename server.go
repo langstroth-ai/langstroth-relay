@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -136,6 +135,8 @@ func New(o Options) *Server {
 		o.Entitlement = EntitlementFromEnv()
 	}
 	metricsToken := strings.TrimSpace(getenv("HIVE_RELAY_METRICS_TOKEN"))
+	// Client address policy for rate limits and logs (clientip.go).
+	activeClientIP.Store(clientIPPolicyFromEnv())
 	s := &Server{
 		store:         o.Store,
 		entitlement:   o.Entitlement,
@@ -827,22 +828,6 @@ func (s *Server) noteResolveFailureLocked(client string, now time.Time) {
 		s.pairAttempts[client] = a
 	}
 	a.failures++
-}
-
-// clientIP is the caller's IP (host without port), used as the pairing
-// rate-limit key. Behind a reverse proxy this is the proxy's address; operators
-// terminating TLS upstream should ensure per-client isolation there if needed.
-func clientIP(r *http.Request) string {
-	// Behind Fly's edge, RemoteAddr is the proxy IP (shared by all clients). Fly
-	// sets the real client IP here and strips any client-supplied copy, so it's
-	// trustworthy on Fly and absent off it — where we fall back to RemoteAddr.
-	if ip := r.Header.Get("Fly-Client-IP"); ip != "" {
-		return ip
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
 }
 
 // ── Identity directory handlers ───────────────────────────────────────────────

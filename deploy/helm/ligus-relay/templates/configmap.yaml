@@ -12,6 +12,12 @@ data:
   {{- if $require }}
   LIGUS_RELAY_REQUIRE_DB: "1"
   {{- end }}
+  {{- with .Values.clientIP.trustedProxies }}
+  LIGUS_RELAY_TRUSTED_PROXIES: {{ join "," . | quote }}
+  {{- end }}
+  {{- with .Values.clientIP.header }}
+  LIGUS_RELAY_CLIENT_IP_HEADER: {{ . | quote }}
+  {{- end }}
   {{- range $k, $val := .Values.config.env }}
   {{ $k }}: {{ $val | quote }}
   {{- end }}

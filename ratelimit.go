@@ -15,7 +15,7 @@ import (
 //   HIVE_RELAY_MAX_SSE     max concurrent SSE streams (0 = unlimited)     default 2000
 
 // ipRateLimiter is a per-key token bucket. Keyed on the real client IP (see
-// clientIP, which prefers Fly-Client-IP behind the edge).
+// clientIP, which reads a forwarding header only from a trusted proxy).
 type ipRateLimiter struct {
 	mu     sync.Mutex
 	rate   float64 // tokens per second

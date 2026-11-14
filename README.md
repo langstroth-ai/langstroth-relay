@@ -59,6 +59,8 @@ Each `LIGUS_RELAY_*` setting below is also read under its legacy
 | `LIGUS_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap for the memory store (default `50000`; `0` = unbounded) |
 | `LIGUS_RELAY_RETENTION_DAYS` | prune memory-store envelopes older than N days (default `0` = age pruning off) |
 | `LIGUS_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
+| `LIGUS_RELAY_TRUSTED_PROXIES` | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (default empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used, as before |
+| `LIGUS_RELAY_CLIENT_IP_HEADER` | header read from a trusted proxy: `X-Forwarded-For` (default; walked right to left past trusted hops) or a single-address header such as `X-Real-IP` |
 | `LIGUS_RELAY_TUNNEL` | relay tunnel (phone ↔ home host): `off` (**default**, `/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LIGUS_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
 | `LIGUS_RELAY_TUNNEL_HOSTS` | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
 | `LIGUS_RELAY_APNS_KEY_FILE` | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |

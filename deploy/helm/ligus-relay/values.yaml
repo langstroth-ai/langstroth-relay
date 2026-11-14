@@ -119,6 +119,16 @@ config:
   env: {}
   existingSecret: ""
 
+# Client addresses for rate limits, abuse blocks and logs. Empty (default):
+# the TCP peer, so behind an ingress every client shares the ingress's
+# address and one rate-limit bucket. Set trustedProxies to the CIDRs your
+# ingress controller or load balancer connects from (for example the
+# controller's pod CIDR); only then is `header` read, and only from them.
+clientIP:
+  trustedProxies: []
+  # X-Forwarded-For when empty; or X-Real-IP, CF-Connecting-IP, ...
+  header: ""
+
 service:
   type: ClusterIP
   port: 8443
