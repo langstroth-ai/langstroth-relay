@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // /v1/contacts/ (relay v0.3): opaque contact records and sealed drop boxes.
@@ -257,6 +258,12 @@ func (s *Server) contactPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "record too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	// Byte-exact storage needs valid UTF-8: the snapshot would rewrite it and
+	// Postgres TEXT refuses it.
+	if !utf8.Valid(req.Record) {
+		http.Error(w, "record is not valid UTF-8", http.StatusBadRequest)
+		return
+	}
 	hdr := strings.TrimSpace(r.Header.Get(contactKeyHeader))
 	body := strings.TrimSpace(req.WriteKey)
 	if hdr != "" && body != "" && hdr != body {
@@ -385,6 +392,10 @@ func (s *Server) contactDropPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Blob) > s.contactCfg.maxDropBytes {
 		http.Error(w, "blob too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if !utf8.Valid(req.Blob) {
+		http.Error(w, "blob is not valid UTF-8", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.contacts.AppendContactDrop(r.Context(), cid, req.Blob, nowUnix(), s.contactCfg.limits); contactErr(w, err) {

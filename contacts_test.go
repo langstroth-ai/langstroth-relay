@@ -706,3 +706,25 @@ func TestGitHubRoutesEnabledByEnv(t *testing.T) {
 		})
 	}
 }
+
+// Records and blobs must be valid UTF-8. The relay promises them back byte
+// for byte, but the JSON snapshot rewrites invalid UTF-8 to U+FFFD on restart
+// (a signed record then stops verifying) and Postgres TEXT refuses it (500 and
+// an error log per request). Refuse it up front on every store.
+func TestContactRejectsInvalidUTF8(t *testing.T) {
+	ts := contactTestServer(t, Options{})
+	cid, key := newCID(), newWriteKey()
+	u := ts.URL + "/v1/contacts/" + cid
+	if st, _, body := creq(t, "PUT", u, putBody("{\"sig\":\"a\xffb\"}", key)); st != 400 {
+		t.Fatalf("record with invalid UTF-8: %d %s, want 400", st, body)
+	}
+	if st, _, _ := creq(t, "PUT", u, putBody(`{"sig":"ok é"}`, key)); st != 200 {
+		t.Fatalf("valid record: %d", st)
+	}
+	if st, _, body := creq(t, "POST", u+"/drop", "{\"blob\":\"\xc3\"}"); st != 400 {
+		t.Fatalf("drop with invalid UTF-8: %d %s, want 400", st, body)
+	}
+	if _, _, body := creq(t, "GET", u+"/drop", "", keyHdr(key)); body != `{"items":[],"more":false}` {
+		t.Fatalf("invalid drop stored: %q", body)
+	}
+}
