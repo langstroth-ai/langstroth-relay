@@ -101,6 +101,7 @@ type Server struct {
 	pairings     map[string]pairing
 	pairAttempts map[string]*pairAttempt // client → recent failed-resolve window
 	maxPairings  int                     // cap on live pairing codes (0 = unlimited)
+	pairSweptAt  time.Time               // last sweep of pairings/pairAttempts (≤ 1/s)
 
 	pushLimiter    *ipRateLimiter      // per-IP write rate limit (all unauth writes)
 	sseLimiter     *concurrencyLimiter // cap on concurrent SSE streams
@@ -770,7 +771,7 @@ func (s *Server) createPairing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.pairMu.Lock()
-	s.prunePairings()
+	s.sweepPairingsLocked(time.Now())
 	// Cap live pairing codes so an attacker can't exhaust memory by spraying
 	// creates (P2-12). Checked after pruning expired entries so only genuinely
 	// live codes count against the cap.
@@ -798,14 +799,16 @@ func (s *Server) resolvePairing(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 
 	s.pairMu.Lock()
-	s.prunePairings()
-	s.prunePairAttempts(now)
 	if s.resolveBlockedLocked(client, now) {
 		s.pairMu.Unlock()
 		http.Error(w, "too many attempts", http.StatusTooManyRequests)
 		return
 	}
+	s.sweepPairingsLocked(now)
 	p, ok := s.pairings[code]
+	if ok && !p.expiresAt.After(now) {
+		ok = false // expired, not yet swept
+	}
 	if !ok {
 		s.noteResolveFailureLocked(client, now)
 	}
@@ -816,6 +819,19 @@ func (s *Server) resolvePairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"payload": p.payload})
+}
+
+// sweepPairingsLocked drops expired pairings and rolled-over failure windows,
+// at most once per second: a full sweep per request would let anyone hold
+// pairMu busy for O(live codes) per cheap request. Lookups check expiry
+// themselves. Caller holds pairMu.
+func (s *Server) sweepPairingsLocked(now time.Time) {
+	if !s.pairSweptAt.IsZero() && now.Sub(s.pairSweptAt) < time.Second {
+		return
+	}
+	s.pairSweptAt = now
+	s.prunePairings()
+	s.prunePairAttempts(now)
 }
 
 // prunePairings drops expired entries. Caller holds pairMu.
