@@ -472,7 +472,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request, t *Ten
 
 func (s *Server) handleDeviceSubmit(w http.ResponseWriter, r *http.Request, t *TenantConfig) {
 	ip := s.clientIP(r)
-	if !s.codeLimit.allow(t.ID + "|" + ip) {
+	if !s.codeLimit.allow(t.ID + "|" + s.limitKey(r)) {
 		s.page(w, http.StatusTooManyRequests, "Too many attempts", "Wait a minute, then try the code again.")
 		return
 	}

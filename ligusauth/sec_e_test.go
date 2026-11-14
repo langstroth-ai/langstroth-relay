@@ -35,3 +35,35 @@ func TestJITUnverifiedEmailCannotSquatUserName(t *testing.T) {
 		t.Fatalf("the real owner of the address is locked out: %q", got)
 	}
 }
+
+// E-3: rate limits keyed per IPv6 address are void, because one host is
+// normally handed a whole /64. Each new address in the prefix got a fresh
+// bucket, so a single client could flood the shared flow tables (and fill
+// the global caps for every tenant) or brute-force user codes past the
+// per-IP limits. The relay already keys IPv6 by /64 (clientip.go).
+func TestRateLimitsKeyIPv6ByPrefix(t *testing.T) {
+	h, _ := homeHarness(t)
+	h.srv.publicLimit = newRateLimiter(1, 3, h.clock.Now)
+	handler := h.srv.Handler()
+	limited := 0
+	for i := 1; i <= 10; i++ {
+		r := httptestNewRequest("POST", "/t/home/device_authorization", "client_id=ligus-cli")
+		r.RemoteAddr = "[2001:db8:1:2::" + itoa(i) + "]:4000"
+		w := newRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited < 7 {
+		t.Fatalf("10 requests from one /64 with burst 3: only %d limited", limited)
+	}
+	// A different /64 is a different client.
+	r := httptestNewRequest("POST", "/t/home/device_authorization", "client_id=ligus-cli")
+	r.RemoteAddr = "[2001:db8:1:3::1]:4000"
+	w := newRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code == http.StatusTooManyRequests {
+		t.Fatal("another /64 shares the bucket")
+	}
+}

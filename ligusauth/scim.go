@@ -55,7 +55,7 @@ func (s *Server) scimAuthorized(w http.ResponseWriter, r *http.Request, t *Tenan
 	ip := s.clientIP(r)
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || !constEq(sha256Hex(strings.TrimSpace(tok)), t.scimTokenHash) {
-		if !s.authFail.allow("scim|" + ip) {
+		if !s.authFail.allow("scim|" + s.limitKey(r)) {
 			scimError(w, http.StatusTooManyRequests, "", "too many failed attempts")
 			return false
 		}
@@ -64,7 +64,7 @@ func (s *Server) scimAuthorized(w http.ResponseWriter, r *http.Request, t *Tenan
 		scimError(w, http.StatusUnauthorized, "", "invalid SCIM token")
 		return false
 	}
-	if !s.scimLimit.allow(t.ID + "|" + ip) {
+	if !s.scimLimit.allow(t.ID + "|" + s.limitKey(r)) {
 		scimError(w, http.StatusTooManyRequests, "", "rate limited")
 		return false
 	}
