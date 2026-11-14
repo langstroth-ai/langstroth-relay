@@ -298,7 +298,9 @@ func (s *memoryStore) flushSnapshot() error {
 		return nil
 	}
 	if parent := filepath.Dir(s.persistPath); parent != "" {
-		if err := os.MkdirAll(parent, 0o755); err != nil {
+		// Owner-only: the snapshot holds token and invite-code hashes, user
+		// records, APNs device tokens and rosters.
+		if err := os.MkdirAll(parent, 0o700); err != nil {
 			return err
 		}
 	}
@@ -307,7 +309,11 @@ func (s *memoryStore) flushSnapshot() error {
 		return err
 	}
 	tmp := s.persistPath + ".tmp"
-	if err := os.WriteFile(tmp, bytes, 0o644); err != nil {
+	if err := os.WriteFile(tmp, bytes, 0o600); err != nil {
+		return err
+	}
+	// WriteFile keeps the mode of a leftover tmp file; force it.
+	if err := os.Chmod(tmp, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.persistPath)

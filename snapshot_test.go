@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -57,4 +58,32 @@ func TestMissingSnapshotStartsEmpty(t *testing.T) {
 		t.Fatalf("no-path flush should be nil: %v", err)
 	}
 	_ = filepath.Join(dir, snapshotFile)
+}
+
+// F-07: the snapshot (token and invite-code hashes, user records, APNs device
+// tokens, rosters, ciphertext) was written 0644 in a 0755 directory, readable
+// by every local user on a shared host.
+func TestSnapshotFilePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	s := newMemoryStoreWithPersistence(dir)
+	if _, err := s.AppendEnvelope(t.Context(), "w", []byte(`"x"`), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(s.persistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		t.Errorf("snapshot mode %v is readable by group/other", fi.Mode().Perm())
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm()&0o077 != 0 {
+		t.Errorf("data dir mode %v is open to group/other", di.Mode().Perm())
+	}
 }
