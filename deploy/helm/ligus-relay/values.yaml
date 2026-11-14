@@ -129,6 +129,7 @@ contacts:
   dropMaxRows: null        # 5000    LIGUS_RELAY_CONTACT_DROP_MAX_ROWS
   dropMaxBoxBytes: null    # 4194304 LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES
   dropRetentionDays: null  # 30      LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS
+  reclaimHoldDays: null    # 180     LIGUS_RELAY_CONTACT_RECLAIM_HOLD_DAYS
   maxContacts: null        # 100000  LIGUS_RELAY_MAX_CONTACTS (memory store only)
   dropRate: null           # 0.05    LIGUS_RELAY_CONTACT_DROP_RATE (per sender and cid)
   dropBurst: null          # 10      LIGUS_RELAY_CONTACT_DROP_BURST

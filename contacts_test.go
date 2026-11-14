@@ -569,7 +569,7 @@ func TestContactPrune(t *testing.T) {
 	ms.PutContact(ctx, dead, kh, raw(`{}`), 0, 50, ContactLimits{})
 	ms.AppendContactDrop(ctx, live, raw(`"old"`), 10, ContactLimits{})
 	ms.AppendContactDrop(ctx, live, raw(`"new"`), 90, ContactLimits{})
-	n, err := ms.PruneContacts(ctx, 100, 50*time.Second)
+	n, err := ms.PruneContacts(ctx, 100, 50*time.Second, 0)
 	if err != nil || n != 2 { // the expired record + the drop older than 50 s
 		t.Fatalf("prune: %d %v", n, err)
 	}

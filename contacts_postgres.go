@@ -60,7 +60,7 @@ func wipeContactTx(ctx context.Context, tx pgx.Tx, cid string) error {
 	return nil
 }
 
-func (s *postgresStore) PutContact(ctx context.Context, cid, keyHash string, record json.RawMessage, now, expiresAt int64, _ ContactLimits) (bool, error) {
+func (s *postgresStore) PutContact(ctx context.Context, cid, keyHash string, record json.RawMessage, now, expiresAt int64, lim ContactLimits) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
@@ -90,7 +90,11 @@ ON CONFLICT (cid) DO NOTHING`, cid, keyHash, string(record), now, expiresAt)
 	}
 	created := false
 	if exp <= now {
-		// Expired, not yet pruned: the cid is free again.
+		// Expired: during the reclaim hold only the old key may create it
+		// again; after it the cid is free.
+		if now < exp+int64(lim.ReclaimHold/time.Second) && !constantTimeEq(stored, keyHash) {
+			return false, ErrContactKey
+		}
 		if err := wipeContactTx(ctx, tx, cid); err != nil {
 			return false, err
 		}
@@ -266,7 +270,7 @@ func (s *postgresStore) AckContactDrops(ctx context.Context, cid, keyHash string
 	return tag.RowsAffected(), tx.Commit(ctx)
 }
 
-func (s *postgresStore) PruneContacts(ctx context.Context, now int64, dropMaxAge time.Duration) (int64, error) {
+func (s *postgresStore) PruneContacts(ctx context.Context, now int64, dropMaxAge, reclaimHold time.Duration) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -279,7 +283,11 @@ func (s *postgresStore) PruneContacts(ctx context.Context, now int64, dropMaxAge
 		return 0, err
 	}
 	n += tag.RowsAffected()
-	tag, err = tx.Exec(ctx, `DELETE FROM relay_contacts WHERE expires_at <= $1`, now)
+	// An expired record keeps only its key hash during the reclaim hold.
+	if _, err := tx.Exec(ctx, `UPDATE relay_contacts SET record = '' WHERE expires_at <= $1 AND record <> ''`, now); err != nil {
+		return 0, err
+	}
+	tag, err = tx.Exec(ctx, `DELETE FROM relay_contacts WHERE expires_at <= $1`, now-int64(reclaimHold/time.Second))
 	if err != nil {
 		return 0, err
 	}

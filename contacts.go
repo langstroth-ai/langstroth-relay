@@ -32,6 +32,8 @@ const (
 	defaultContactDropMaxRows      = defaultInboxMaxRows
 	defaultContactDropMaxBoxBytes  = 4 << 20
 	defaultContactDropRetentionDay = 30
+	// An expired cid stays reserved for its old write key this long.
+	defaultContactReclaimHoldDays = 180
 	defaultContactDropPage         = 100
 	maxContactDropPage             = 1000
 
@@ -85,6 +87,7 @@ func contactConfigFromEnv() contactConfig {
 			MaxContacts:     nonNeg("HIVE_RELAY_MAX_CONTACTS", defaultContactMaxContacts),
 			DropMaxRows:     pos("HIVE_RELAY_CONTACT_DROP_MAX_ROWS", defaultContactDropMaxRows),
 			DropMaxBoxBytes: pos("HIVE_RELAY_CONTACT_DROP_MAX_BOX_BYTES", defaultContactDropMaxBoxBytes),
+			ReclaimHold:     time.Duration(nonNeg("HIVE_RELAY_CONTACT_RECLAIM_HOLD_DAYS", defaultContactReclaimHoldDays)) * 24 * time.Hour,
 		},
 	}
 }

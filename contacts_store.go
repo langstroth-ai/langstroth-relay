@@ -50,14 +50,22 @@ type ContactLimits struct {
 	MaxContacts     int // live records per store (memory store only; 0 = unbounded)
 	DropMaxRows     int // rows per drop box, oldest evicted (0 = unbounded)
 	DropMaxBoxBytes int // blob bytes per drop box, oldest evicted (0 = unbounded)
+	// ReclaimHold is how long after a record expires only its old write key
+	// may create the cid again (0 = anyone at once). A cid travels to
+	// co-members, invitees and anyone a link was forwarded to; without a hold,
+	// any of them could claim the cid of an owner who was offline past the TTL
+	// and receive the drops meant for them.
+	ReclaimHold time.Duration
 }
 
 // ContactStore is the contacts' durable state.
 type ContactStore interface {
-	// PutContact creates the record when the cid has no live record (an expired
-	// one is replaced, with its drop box), storing keyHash as its write key.
-	// Otherwise keyHash must equal the stored hash (ErrContactKey) and the
-	// record is replaced. created reports which case applied.
+	// PutContact creates the record when the cid has no live record, storing
+	// keyHash as its write key. An expired record's drop box is discarded; for
+	// lim.ReclaimHold after its expiry only its old key may create it again
+	// (ErrContactKey otherwise). For a live record keyHash must equal the
+	// stored hash (ErrContactKey) and the record is replaced. created reports
+	// whether a record was created.
 	PutContact(ctx context.Context, cid, keyHash string, record json.RawMessage, now, expiresAt int64, lim ContactLimits) (created bool, err error)
 	// GetContact returns the live record, or nil.
 	GetContact(ctx context.Context, cid string, now int64) (*ContactRecord, error)
@@ -72,9 +80,11 @@ type ContactStore interface {
 	ContactDropsAfter(ctx context.Context, cid, keyHash string, after uint64, limit, maxBytes int, now int64) (items []ContactDrop, more bool, err error)
 	// AckContactDrops deletes the drops with seq <= through (key-checked).
 	AckContactDrops(ctx context.Context, cid, keyHash string, through uint64, now int64) (int64, error)
-	// PruneContacts deletes expired records (with their drop boxes) and drops
-	// older than dropMaxAge (0 = no age bound). Returns rows removed.
-	PruneContacts(ctx context.Context, now int64, dropMaxAge time.Duration) (int64, error)
+	// PruneContacts empties expired records (record and drop box; the write
+	// key hash is kept until reclaimHold after expiry, then the row goes) and
+	// deletes drops older than dropMaxAge (0 = no age bound). Returns rows
+	// removed.
+	PruneContacts(ctx context.Context, now int64, dropMaxAge, reclaimHold time.Duration) (int64, error)
 }
 
 // ── Memory (and snapshot) implementation ─────────────────────────────────────
@@ -139,10 +149,21 @@ func (m *memContacts) liveLocked(cid string, now int64) *memContact {
 		return nil
 	}
 	if c.expiresAt <= now {
-		m.removeLocked(cid)
+		m.stripLocked(c)
 		return nil
 	}
 	return c
+}
+
+// stripLocked empties an expired record down to its key hash and seq counter
+// (a reclaim hold tombstone; PruneContacts removes it after the hold).
+func (m *memContacts) stripLocked(c *memContact) {
+	freed := len(c.record) + c.dropBytes
+	if freed == 0 && len(c.drops) == 0 {
+		return
+	}
+	c.record, c.drops, c.dropBytes = nil, nil, 0
+	m.charge(-int64(freed))
 }
 
 func (m *memContacts) removeLocked(cid string) {
@@ -165,6 +186,22 @@ func (m *memContacts) PutContact(_ context.Context, cid, keyHash string, record 
 		}
 		c.record, c.updatedAt, c.expiresAt = rec, now, expiresAt
 		return false, nil
+	}
+	if old := m.contacts[cid]; old != nil { // expired (stripped by liveLocked)
+		held := now < old.expiresAt+int64(lim.ReclaimHold/time.Second)
+		if !constantTimeEq(old.keyHash, keyHash) {
+			if held {
+				return false, ErrContactKey
+			}
+			m.removeLocked(cid)
+		} else {
+			if !m.charge(int64(len(rec))) {
+				return false, ErrStoreFull
+			}
+			old.record, old.updatedAt, old.expiresAt = rec, now, expiresAt
+			old.nextSeq = max(old.nextSeq, contactSeqBase(now))
+			return true, nil
+		}
 	}
 	if lim.MaxContacts > 0 && len(m.contacts) >= lim.MaxContacts {
 		return false, ErrContactsFull
@@ -281,15 +318,20 @@ func (m *memContacts) AckContactDrops(_ context.Context, cid, keyHash string, th
 	return int64(i), nil
 }
 
-func (m *memContacts) PruneContacts(_ context.Context, now int64, dropMaxAge time.Duration) (int64, error) {
+func (m *memContacts) PruneContacts(_ context.Context, now int64, dropMaxAge, reclaimHold time.Duration) (int64, error) {
 	m.cmu.Lock()
 	defer m.cmu.Unlock()
 	var n int64
 	cutoff := now - int64(dropMaxAge/time.Second)
 	for cid, c := range m.contacts {
 		if c.expiresAt <= now {
-			n += 1 + int64(len(c.drops))
-			m.removeLocked(cid)
+			n += int64(len(c.drops))
+			if now >= c.expiresAt+int64(reclaimHold/time.Second) {
+				n++
+				m.removeLocked(cid)
+			} else {
+				m.stripLocked(c)
+			}
 			continue
 		}
 		if dropMaxAge <= 0 {

@@ -104,7 +104,7 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 	}
 	gone := newCID()
 	cs.PutContact(ctx, gone, kh, raw(`{}`), 0, 70, lim)
-	n, err := cs.PruneContacts(ctx, 100, 0)
+	n, err := cs.PruneContacts(ctx, 100, 0, 0)
 	if err != nil || n < 1 {
 		t.Fatalf("prune: %d %v", n, err)
 	}
@@ -114,7 +114,7 @@ func contactStoreConformance(t *testing.T, cs ContactStore) {
 	// Age-based drop retention.
 	cs.AppendContactDrop(ctx, exp, raw(`"old"`), 100, lim)
 	cs.AppendContactDrop(ctx, exp, raw(`"new"`), 500, lim)
-	if _, err := cs.PruneContacts(ctx, 600, 200*time.Second); err != nil {
+	if _, err := cs.PruneContacts(ctx, 600, 200*time.Second, 0); err != nil {
 		t.Fatal(err)
 	}
 	items, _, _ = cs.ContactDropsAfter(ctx, exp, other, 0, 0, 0, 600)
@@ -218,3 +218,67 @@ func TestContactSeqMonotonicMemory(t *testing.T) {
 }
 
 func TestPG_ContactSeqMonotonic(t *testing.T) { contactSeqMonotonicConformance(t, pgStore(t)) }
+
+// contactReclaimHoldConformance: after a record expires, its cid stays
+// reserved for the old write key for ContactLimits.ReclaimHold. Anyone who
+// learned the cid (co-members, invitees, a forwarded link) could otherwise
+// claim it the moment the owner is offline past the TTL and receive the drops
+// meant for the owner.
+func contactReclaimHoldConformance(t *testing.T, cs ContactStore) {
+	ctx := context.Background()
+	owner, stranger := sha256hex(newWriteKey()), sha256hex(newWriteKey())
+	lim := ContactLimits{ReclaimHold: 1000 * time.Second}
+	hold := 1000 * time.Second
+
+	cid := newCID()
+	if _, err := cs.PutContact(ctx, cid, owner, raw(`{"o":1}`), 100, 200, lim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.AppendContactDrop(ctx, cid, raw(`"old"`), 150, lim); err != nil {
+		t.Fatal(err)
+	}
+	// Expired, not yet pruned: a stranger is refused, the record stays hidden.
+	if _, err := cs.PutContact(ctx, cid, stranger, raw(`{"evil":1}`), 201, 5000, lim); err != ErrContactKey {
+		t.Fatalf("stranger claimed an expired cid during the hold: %v", err)
+	}
+	if r, _ := cs.GetContact(ctx, cid, 202); r != nil {
+		t.Fatalf("expired record served: %s", r.Record)
+	}
+	// Prune keeps the hold.
+	if _, err := cs.PruneContacts(ctx, 300, 0, hold); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.PutContact(ctx, cid, stranger, raw(`{"evil":1}`), 301, 5000, lim); err != ErrContactKey {
+		t.Fatalf("stranger claimed an expired cid after prune: %v", err)
+	}
+	// The owner's next heartbeat creates it again, with an empty box.
+	if created, err := cs.PutContact(ctx, cid, owner, raw(`{"o":2}`), 400, 5000, lim); err != nil || !created {
+		t.Fatalf("owner reclaim: %v %v", created, err)
+	}
+	if items, _, err := cs.ContactDropsAfter(ctx, cid, owner, 0, 0, 0, 401); err != nil || len(items) != 0 {
+		t.Fatalf("expired box survived: %+v %v", items, err)
+	}
+	if r, _ := cs.GetContact(ctx, cid, 401); r == nil || string(r.Record) != `{"o":2}` {
+		t.Fatalf("owner record: %+v", r)
+	}
+
+	// After the hold the cid is free for anyone.
+	free := newCID()
+	cs.PutContact(ctx, free, owner, raw(`{}`), 100, 200, lim)
+	if _, err := cs.PruneContacts(ctx, 1300, 0, hold); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := cs.PutContact(ctx, free, stranger, raw(`{}`), 1301, 5000, lim); err != nil || !created {
+		t.Fatalf("claim after the hold: %v %v", created, err)
+	}
+	// Unpruned but past the hold: free too.
+	late := newCID()
+	cs.PutContact(ctx, late, owner, raw(`{}`), 100, 200, lim)
+	if created, err := cs.PutContact(ctx, late, stranger, raw(`{}`), 1201, 5000, lim); err != nil || !created {
+		t.Fatalf("claim past the hold, unpruned: %v %v", created, err)
+	}
+}
+
+func TestContactReclaimHoldMemory(t *testing.T) { contactReclaimHoldConformance(t, newMemoryStore()) }
+
+func TestPG_ContactReclaimHold(t *testing.T) { contactReclaimHoldConformance(t, pgStore(t)) }
