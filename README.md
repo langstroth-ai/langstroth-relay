@@ -62,7 +62,7 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
 | `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
 | `LIGUS_RELAY_TOKEN_PUBKEY_NEXT` | empty | A second issuer public key accepted next to `LIGUS_RELAY_TOKEN_PUBKEY` while the issuer rotates its key. Needs `LIGUS_RELAY_TOKEN_PUBKEY`; a key that doesn't parse denies every token |
-| `LIGUS_RELAY_TENANTS` | unset | Comma-separated tenant ids. When set, a signed token must carry a `tid` claim in this list (tokens without one get `401`). Needs `LIGUS_RELAY_TOKEN_PUBKEY`. See [Sign-in with your identity provider](#sign-in-with-your-identity-provider-ligus-auth) |
+| `LIGUS_RELAY_TENANTS` | unset | Comma-separated tenant ids. When set, a signed token must carry a `tid` claim in this list (tokens without one get `401`). Needs `LIGUS_RELAY_TOKEN_PUBKEY` and `LIGUS_RELAY_WORKSPACE_SCOPE=strict` (the relay refuses to start otherwise, because `tid` alone does not keep one tenant out of another's workspaces). See [Sign-in with your identity provider](#sign-in-with-your-identity-provider-ligus-auth) |
 | `LIGUS_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
 | `LIGUS_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
 | `LIGUS_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |

@@ -58,6 +58,7 @@ func TestTenantConfinement(t *testing.T) {
 	sk := testKey(t)
 	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", pubHex(sk))
 	t.Setenv("LIGUS_RELAY_TENANTS", "acme, home")
+	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", "strict")
 	if err := entitlementConfigError(); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestTenantConfinement(t *testing.T) {
 	if code, _ := req(t, "GET", ts.URL+"/v1/workspaces/wsA/envelopes", issueToken(sk, TokenClaims{Sub: "evil:u", Tid: "evil"}), nil); code != http.StatusUnauthorized {
 		t.Errorf("foreign tenant: want 401, got %d", code)
 	}
-	if code, _ := req(t, "GET", ts.URL+"/v1/workspaces/wsA/envelopes", issueToken(sk, TokenClaims{Sub: "acme:u", Tid: "acme"}), nil); code != http.StatusOK {
+	if code, _ := req(t, "GET", ts.URL+"/v1/workspaces/wsA/envelopes", issueToken(sk, TokenClaims{Sub: "acme:u", Tid: "acme", Workspaces: []string{"wsA"}}), nil); code != http.StatusOK {
 		t.Errorf("own tenant: want 200, got %d", code)
 	}
 }
