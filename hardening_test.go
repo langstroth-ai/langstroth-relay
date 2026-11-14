@@ -129,7 +129,7 @@ func TestLivePairingCap(t *testing.T) {
 	defer ts.Close()
 
 	mk := func() int {
-		resp, _ := do(t, "POST", ts.URL+"/v1/pair", "", map[string]any{"payload": "x"})
+		resp, _ := do(t, "POST", ts.URL+"/v1/pair", "", map[string]any{"payload": testFriendCode})
 		return resp.StatusCode
 	}
 	if mk() != 200 || mk() != 200 {

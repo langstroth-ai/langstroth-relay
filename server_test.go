@@ -160,7 +160,7 @@ func TestPairingCreateAndResolve(t *testing.T) {
 	ts := testServer(entitlementPolicy{kind: entOpen}, nil)
 	defer ts.Close()
 
-	resp, body := do(t, "POST", ts.URL+"/v1/pair", "", map[string]any{"payload": "invite-blob"})
+	resp, body := do(t, "POST", ts.URL+"/v1/pair", "", map[string]any{"payload": testFriendCode})
 	if resp.StatusCode != 200 {
 		t.Fatalf("pair: %d %s", resp.StatusCode, body)
 	}
@@ -178,7 +178,7 @@ func TestPairingCreateAndResolve(t *testing.T) {
 		Payload string `json:"payload"`
 	}
 	_ = json.Unmarshal(body, &resolved)
-	if resolved.Payload != "invite-blob" {
+	if resolved.Payload != testFriendCode {
 		t.Fatalf("resolve: %s", body)
 	}
 

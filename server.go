@@ -759,6 +759,10 @@ func (s *Server) createPairing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	if msg := pairPayloadError(req.Payload); msg != "" {
+		http.Error(w, msg, http.StatusUnprocessableEntity)
+		return
+	}
 	ttl := uint64(defaultPairTTL)
 	if req.TTLSecs != nil {
 		ttl = *req.TTLSecs
@@ -809,7 +813,11 @@ func (s *Server) resolvePairing(w http.ResponseWriter, r *http.Request) {
 	if ok && !p.expiresAt.After(now) {
 		ok = false // expired, not yet swept
 	}
-	if !ok {
+	if ok {
+		// Single-use: the first successful resolve consumes the code, so a
+		// code seen over a shoulder or in a log can't be replayed.
+		delete(s.pairings, code)
+	} else {
 		s.noteResolveFailureLocked(client, now)
 	}
 	s.pairMu.Unlock()
