@@ -647,6 +647,10 @@ func (s *Server) publishCandidates(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &b) {
 		return
 	}
+	if len(b.DeviceID) > maxDeviceIDLen {
+		http.Error(w, "device_id too long", http.StatusBadRequest)
+		return
+	}
 	id := r.PathValue("id")
 	if !s.enforceWrite(w, r, id) {
 		return
@@ -674,6 +678,10 @@ func (s *Server) publishPresence(w http.ResponseWriter, r *http.Request) {
 	}
 	var b deviceBlobReq
 	if !readJSON(w, r, &b) {
+		return
+	}
+	if len(b.DeviceID) > maxDeviceIDLen {
+		http.Error(w, "device_id too long", http.StatusBadRequest)
 		return
 	}
 	id := r.PathValue("id")

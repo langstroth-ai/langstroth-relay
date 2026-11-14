@@ -63,14 +63,24 @@ func scopeAllows(mode string, claims *TokenClaims, workspace string) bool {
 	return false
 }
 
-// scoped wraps a /v1/workspaces/{id}/... handler with the scope check. It runs
-// after the entitlement gate, which put the verified claims in the context.
+// Identifier bounds. Workspace and device ids are map and table keys that the
+// store byte budget doesn't count; real ones are short (UUIDs, hashes, room
+// names).
+const (
+	maxWorkspaceIDLen = 512
+	maxDeviceIDLen    = 256
+)
+
+// scoped wraps every /v1/workspaces/{id}/... handler: it bounds the id length
+// and applies the workspace scope check. It runs after the entitlement gate,
+// which put the verified claims in the context.
 func (s *Server) scoped(h http.HandlerFunc) http.HandlerFunc {
-	if s.wsScope == scopeOff {
-		return h
-	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !scopeAllows(s.wsScope, claimsFrom(r.Context()), r.PathValue("id")) {
+		if len(r.PathValue("id")) > maxWorkspaceIDLen {
+			http.Error(w, "workspace id too long", http.StatusBadRequest)
+			return
+		}
+		if s.wsScope != scopeOff && !scopeAllows(s.wsScope, claimsFrom(r.Context()), r.PathValue("id")) {
 			http.Error(w, "this access token is not scoped to this workspace", http.StatusForbidden)
 			return
 		}
