@@ -1319,11 +1319,17 @@ func bearerToken(r *http.Request) string {
 	return t
 }
 
+// githubTokenHeader returns the caller's GitHub token from the explicit GitHub
+// token header (X-Ligus-Github-Token, or the X-Hive-Github-Token that current
+// clients send). It never falls back to the Authorization bearer: that header
+// carries the relay access token, which must never be forwarded to
+// api.github.com. The operator of a relay can still see GitHub tokens sent in
+// these headers (they're verified server-side); see README "GitHub-backed routes".
 func githubTokenHeader(r *http.Request) string {
-	if t := strings.TrimSpace(r.Header.Get("x-hive-github-token")); t != "" {
+	if t := strings.TrimSpace(r.Header.Get("x-ligus-github-token")); t != "" {
 		return t
 	}
-	return bearerToken(r)
+	return strings.TrimSpace(r.Header.Get("x-hive-github-token"))
 }
 
 func afterParam(r *http.Request) uint64 {
