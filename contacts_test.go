@@ -799,3 +799,54 @@ func TestContactTombstonesOutsideMaxContacts(t *testing.T) {
 		t.Fatalf("cap after reclaim: %v", err)
 	}
 }
+
+// TestContactDropFloodKeepsUnreadInvites (R6): a handful of IPs that know a
+// cid can fill the drop box within the default rate limits. Eviction takes
+// from the heaviest sender first, so the flood evicts the flood and an unread
+// invite from another sender survives it.
+func TestContactDropFloodKeepsUnreadInvites(t *testing.T) {
+	t.Setenv("LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES", "16384")
+	h := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}}).Handler()
+	do := func(method, path, remote, body string, hdr ...string) (int, string) {
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, path, rdr)
+		req.RemoteAddr = remote
+		for _, kv := range hdr {
+			k, v, _ := strings.Cut(kv, ": ")
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	cid, key := newCID(), newWriteKey()
+	u := "/v1/contacts/" + cid
+	if st, body := do("PUT", u, "198.51.100.1:1000", putBody(`{}`, key)); st != 200 {
+		t.Fatalf("put: %d %s", st, body)
+	}
+	if st, _ := do("POST", u+"/drop", "192.0.2.10:1000", `{"blob":"real-invite"}`); st != 200 {
+		t.Fatalf("invite drop: %d", st)
+	}
+	flood := `{"blob":"` + strings.Repeat("f", 1000) + `"}`
+	accepted := 0
+	for ip := 1; ip <= 6; ip++ {
+		for i := 0; i < 20; i++ {
+			if st, _ := do("POST", u+"/drop", fmt.Sprintf("203.0.113.%d:1000", ip), flood); st == 200 {
+				accepted++
+			}
+		}
+	}
+	if accepted*1000 <= 16384 {
+		t.Fatalf("flood too small to test eviction: %d drops accepted", accepted)
+	}
+	st, body := do("GET", u+"/drop?limit=1000", "198.51.100.1:1000", "", keyHdr(key))
+	if st != 200 {
+		t.Fatalf("list: %d %s", st, body)
+	}
+	if !strings.Contains(body, `"blob":"real-invite"`) {
+		t.Fatalf("the flood (%d drops from 6 IPs) evicted the unread invite: %d items", accepted, strings.Count(body, `"seq"`))
+	}
+}

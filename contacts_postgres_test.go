@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -282,3 +283,97 @@ func contactReclaimHoldConformance(t *testing.T, cs ContactStore) {
 func TestContactReclaimHoldMemory(t *testing.T) { contactReclaimHoldConformance(t, newMemoryStore()) }
 
 func TestPG_ContactReclaimHold(t *testing.T) { contactReclaimHoldConformance(t, pgStore(t)) }
+
+// contactDropEvictionConformance (R6): a full box evicts drops already served
+// to the owner first, then the heaviest sender's; an unread invite from a
+// light sender survives a flood, and on a tie a verified sender is kept.
+func contactDropEvictionConformance(t *testing.T, cs ContactStore) {
+	ctx := context.Background()
+	kh := sha256hex(newWriteKey())
+	cid := newCID()
+	lim := ContactLimits{DropMaxRows: 4, DropMaxBoxBytes: 1000}
+	if _, err := cs.PutContact(ctx, cid, kh, raw(`{}`), 10, 1000, lim); err != nil {
+		t.Fatal(err)
+	}
+	from := func(tag string, verified bool) context.Context {
+		return WithDropSender(ctx, DropSender{Tag: tag, Verified: verified})
+	}
+	blobs := func(now int64) []string {
+		items, _, err := cs.ContactDropsAfter(ctx, cid, kh, 0, 0, 0, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, d := range items {
+			out = append(out, string(d.Blob))
+		}
+		return out
+	}
+	has := func(got []string, want string) bool {
+		for _, g := range got {
+			if g == want {
+				return true
+			}
+		}
+		return false
+	}
+	// Already served: the owner listed it, so it goes first.
+	if _, err := cs.AppendContactDrop(from("ip:192.0.2.1", false), cid, raw(`"read"`), 11, lim); err != nil {
+		t.Fatal(err)
+	}
+	blobs(12)
+	if _, err := cs.AppendContactDrop(from("ip:192.0.2.2", false), cid, raw(`"invite"`), 13, lim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.AppendContactDrop(from("sub:alice", true), cid, raw(`"signed-in"`), 14, lim); err != nil {
+		t.Fatal(err)
+	}
+	// A flood from two senders: each over-cap append evicts the read drop
+	// first, then the flood's own drops.
+	for i := 0; i < 6; i++ {
+		tag := "ip:203.0.113.1"
+		if i%2 == 1 {
+			tag = "ip:203.0.113.2"
+		}
+		if _, err := cs.AppendContactDrop(from(tag, false), cid, raw(`"flood-`+strconv.Itoa(i)+`"`), int64(15+i), lim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := blobs(30)
+	if len(got) != 4 || !has(got, `"invite"`) || !has(got, `"signed-in"`) || has(got, `"read"`) {
+		t.Fatalf("flood eviction kept %v", got)
+	}
+	// Everything is now served; the byte cap evicts oldest first again.
+	if _, err := cs.AppendContactDrop(from("ip:192.0.2.9", false), cid, raw(`"`+strings.Repeat("z", 990)+`"`), 31, lim); err != nil {
+		t.Fatal(err)
+	}
+	got = blobs(32)
+	if len(got) != 1 || got[0] != `"`+strings.Repeat("z", 990)+`"` {
+		t.Fatalf("byte cap after delivery kept %d drops", len(got))
+	}
+
+	// A tie between an unverified and a verified sender evicts the unverified.
+	cid2 := newCID()
+	lim2 := ContactLimits{DropMaxRows: 1}
+	if _, err := cs.PutContact(ctx, cid2, kh, raw(`{}`), 40, 1000, lim2); err != nil {
+		t.Fatal(err)
+	}
+	cs.AppendContactDrop(from("sub:bob", true), cid2, raw(`"v"`), 41, lim2)
+	cs.AppendContactDrop(from("ip:198.51.100.3", false), cid2, raw(`"u"`), 42, lim2)
+	items, _, _ := cs.ContactDropsAfter(ctx, cid2, kh, 0, 0, 0, 43)
+	if len(items) != 1 || string(items[0].Blob) != `"v"` {
+		t.Fatalf("tie kept %v", items)
+	}
+}
+
+func TestContactDropEvictionMemory(t *testing.T) {
+	contactDropEvictionConformance(t, newMemoryStore())
+}
+
+func TestPG_ContactDropEviction(t *testing.T) {
+	s := pgStore(t)
+	if _, err := s.pool.Exec(bg, `TRUNCATE relay_contacts, relay_contact_drop`); err != nil {
+		t.Fatal(err)
+	}
+	contactDropEvictionConformance(t, s)
+}

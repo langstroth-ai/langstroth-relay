@@ -97,8 +97,8 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_CONTACT_MAX_DROP_BYTES` | `65536` (64 KiB) | one sealed drop's size; `413` past it |
 | `LIGUS_RELAY_CONTACT_TTL_DAYS` | `30` | a record expires N days after its last write (clients re-publish on heartbeat); an expired record and its drop box are deleted |
 | `LIGUS_RELAY_CONTACT_RECLAIM_HOLD_DAYS` | `180` | after a record expires, only its old write key may create the cid again for N days (`403` for any other key); then the cid is free. `0` = free at once |
-| `LIGUS_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); oldest evicted |
-| `LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; oldest evicted |
+| `LIGUS_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); see eviction under Contacts |
+| `LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
 | `LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
 | `LIGUS_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LIGUS_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
 
@@ -307,7 +307,13 @@ record and drop into the box. Every route goes through the entitlement gate.
 - Reading the drop box doesn't delete anything, so each device of an account
   can keep its own `after` cursor; the owner deletes what all its devices have
   processed with `DELETE …/drop?through=<seq>`. Past the row or byte cap the
-  oldest drops are evicted. `limit` defaults to 100 (max 1000) and a page is
+  relay evicts drops it has already served to the owner first (oldest first),
+  then the unread drops of the heaviest sender in the box (most bytes, then
+  most rows; an unverified sender before one with a relay-token subject on a
+  tie), oldest first. A sender is the relay-token subject, else the client
+  address (IPv6 /64); it is stored only as a salted hash. So a flood from a few
+  addresses that know the cid evicts its own drops, not an unread invite from
+  someone else. `limit` defaults to 100 (max 1000) and a page is
   also bounded by `LIGUS_RELAY_MAX_LIST_BYTES`.
 - A request on these routes that carries a forge token (any
   `X-*-Github-Token`, `X-*-Gitlab-Token`, `X-*-Forge-Token`, ... header, or a

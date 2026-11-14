@@ -430,7 +430,9 @@ func (s *Server) contactDropPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "blob is not valid UTF-8", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.contacts.AppendContactDrop(r.Context(), cid, req.Blob, nowUnix(), s.contactCfg.limits); contactErr(w, err) {
+	c := claimsFrom(r.Context())
+	sender := DropSender{Tag: writerTag(r.Context(), clientKey(r)), Verified: c != nil && c.Sub != ""}
+	if _, err := s.contacts.AppendContactDrop(WithDropSender(r.Context(), sender), cid, req.Blob, nowUnix(), s.contactCfg.limits); contactErr(w, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, okResp())

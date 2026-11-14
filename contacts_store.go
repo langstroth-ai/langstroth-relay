@@ -2,6 +2,9 @@ package relay
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -29,10 +32,151 @@ type ContactRecord struct {
 }
 
 // ContactDrop is one sealed message in a contact's drop box (wire shape).
+// The unexported fields are relay-side eviction metadata and never reach the
+// wire.
 type ContactDrop struct {
 	Seq       uint64          `json:"seq"`
 	Blob      json.RawMessage `json:"blob"`
 	CreatedAt int64           `json:"createdAt"`
+
+	sender    string // salted hash of the sender tag (dropSenderHash)
+	verified  bool   // the sender carried a relay-token subject
+	delivered bool   // served to the owner at least once
+}
+
+// DropSender is who the relay attributes a drop to: the relay-token subject
+// when the request carries one (Verified), else the client address (an IPv6
+// /64 or an IPv4 address). Drops are sealed, so this is the only sender
+// identity the relay has; it is used for eviction only.
+type DropSender struct {
+	Tag      string
+	Verified bool
+}
+
+type dropSenderKey struct{}
+
+// WithDropSender attaches the drop's sender to ctx for AppendContactDrop.
+// (Carried in the context so the ContactStore signature stays stable for
+// downstream stores.)
+func WithDropSender(ctx context.Context, s DropSender) context.Context {
+	return context.WithValue(ctx, dropSenderKey{}, s)
+}
+
+func dropSenderFrom(ctx context.Context) DropSender {
+	s, _ := ctx.Value(dropSenderKey{}).(DropSender)
+	return s
+}
+
+// dropSenderSalt keys the stored sender hashes, so a snapshot or database dump
+// doesn't list who dropped into which box (an IPv4 tag hashed without a
+// secret is brute-forced in seconds). It changes on restart: senders of drops
+// stored before the restart then count as different senders, which only
+// weakens the ranking for boxes that were mid-flood across a restart.
+var dropSenderSalt = func() []byte {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return b
+}()
+
+// dropSenderHash is the stored, per-box sender key.
+func dropSenderHash(cid string, s DropSender) string {
+	if s.Tag == "" {
+		return ""
+	}
+	h := sha256.New()
+	h.Write(dropSenderSalt)
+	h.Write([]byte(cid))
+	h.Write([]byte{0})
+	h.Write([]byte(s.Tag))
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// dropEvictions picks the drops to evict so a box (drops in seq order) fits
+// lim's row and byte caps; at least one drop always stays.
+//
+// A drop box is open to anyone who knows the cid, and a few addresses within
+// the rate limits can fill it. Plain oldest-first eviction then lets a flood
+// push out an invite nobody has read yet. Instead, in order:
+//
+//  1. drops already served to the owner go first, oldest first;
+//  2. then unread drops of the heaviest sender (most bytes in the box, then
+//     most rows; on a tie an unverified sender before a verified one, then
+//     the sender whose oldest unread drop is oldest), its oldest first.
+//
+// So a flood evicts the flood, and a sender with one small invite keeps it
+// unless it is itself the heaviest sender.
+func dropEvictions(drops []ContactDrop, lim ContactLimits) []int {
+	rows, bytes := len(drops), 0
+	for _, d := range drops {
+		bytes += len(d.Blob)
+	}
+	over := func() bool {
+		return rows > 1 && ((lim.DropMaxRows > 0 && rows > lim.DropMaxRows) ||
+			(lim.DropMaxBoxBytes > 0 && bytes > lim.DropMaxBoxBytes))
+	}
+	if !over() {
+		return nil
+	}
+	type senderLoad struct {
+		bytes, rows int
+		verified    bool
+		idx         []int // unread drops, seq order
+	}
+	senders := map[string]*senderLoad{}
+	var order []string // first-seen order (oldest unread drop first)
+	var delivered []int
+	for i, d := range drops {
+		if d.delivered {
+			delivered = append(delivered, i)
+			continue
+		}
+		l := senders[d.sender]
+		if l == nil {
+			l = &senderLoad{}
+			senders[d.sender] = l
+			order = append(order, d.sender)
+		}
+		l.bytes += len(d.Blob)
+		l.rows++
+		l.verified = l.verified || d.verified
+		l.idx = append(l.idx, i)
+	}
+	var out []int
+	evict := func(i int) {
+		out = append(out, i)
+		rows--
+		bytes -= len(drops[i].Blob)
+	}
+	for over() && len(delivered) > 0 {
+		evict(delivered[0])
+		delivered = delivered[1:]
+	}
+	for over() {
+		var best *senderLoad
+		for _, k := range order {
+			l := senders[k]
+			if len(l.idx) == 0 {
+				continue
+			}
+			if best == nil || l.bytes > best.bytes ||
+				(l.bytes == best.bytes && (l.rows > best.rows ||
+					(l.rows == best.rows && best.verified && !l.verified))) {
+				best = l
+			}
+		}
+		if best == nil {
+			break
+		}
+		i := best.idx[0]
+		best.idx = best.idx[1:]
+		best.bytes -= len(drops[i].Blob)
+		best.rows--
+		evict(i)
+	}
+	sort.Ints(out)
+	return out
 }
 
 var (
@@ -71,12 +215,15 @@ type ContactStore interface {
 	GetContact(ctx context.Context, cid string, now int64) (*ContactRecord, error)
 	// DeleteContact removes the record and its drop box (key-checked).
 	DeleteContact(ctx context.Context, cid, keyHash string, now int64) error
-	// AppendContactDrop appends a blob to a live record's drop box, evicting
-	// the oldest rows past lim.DropMaxRows / lim.DropMaxBoxBytes.
+	// AppendContactDrop appends a blob to a live record's drop box (the sender
+	// comes from WithDropSender on ctx), evicting per dropEvictions past
+	// lim.DropMaxRows / lim.DropMaxBoxBytes: drops already served to the owner
+	// first, then the heaviest sender's.
 	AppendContactDrop(ctx context.Context, cid string, blob json.RawMessage, now int64, lim ContactLimits) (uint64, error)
 	// ContactDropsAfter returns up to limit drops with seq > after (and at most
 	// about maxBytes of blobs, always at least one row); more reports a
-	// truncated page. Key-checked.
+	// truncated page. Key-checked. The returned drops count as delivered for
+	// eviction.
 	ContactDropsAfter(ctx context.Context, cid, keyHash string, after uint64, limit, maxBytes int, now int64) (items []ContactDrop, more bool, err error)
 	// AckContactDrops deletes the drops with seq <= through (key-checked).
 	AckContactDrops(ctx context.Context, cid, keyHash string, through uint64, now int64) (int64, error)
@@ -255,7 +402,7 @@ func (m *memContacts) DeleteContact(_ context.Context, cid, keyHash string, now 
 	return nil
 }
 
-func (m *memContacts) AppendContactDrop(_ context.Context, cid string, blob json.RawMessage, now int64, lim ContactLimits) (uint64, error) {
+func (m *memContacts) AppendContactDrop(ctx context.Context, cid string, blob json.RawMessage, now int64, lim ContactLimits) (uint64, error) {
 	m.cmu.Lock()
 	defer m.cmu.Unlock()
 	c := m.liveLocked(cid, now)
@@ -265,22 +412,29 @@ func (m *memContacts) AppendContactDrop(_ context.Context, cid string, blob json
 	if !m.charge(int64(len(blob))) {
 		return 0, ErrStoreFull
 	}
+	snd := dropSenderFrom(ctx)
 	c.nextSeq++
-	c.drops = append(c.drops, ContactDrop{Seq: c.nextSeq, Blob: append(json.RawMessage(nil), blob...), CreatedAt: now})
+	c.drops = append(c.drops, ContactDrop{Seq: c.nextSeq, Blob: append(json.RawMessage(nil), blob...), CreatedAt: now,
+		sender: dropSenderHash(cid, snd), verified: snd.Verified})
 	c.dropBytes += len(blob)
-	// Evict the oldest past the row and byte caps (the newest always stays).
-	drop := 0
-	bytes := c.dropBytes
-	for drop < len(c.drops)-1 &&
-		((lim.DropMaxRows > 0 && len(c.drops)-drop > lim.DropMaxRows) ||
-			(lim.DropMaxBoxBytes > 0 && bytes > lim.DropMaxBoxBytes)) {
-		bytes -= len(c.drops[drop].Blob)
-		drop++
-	}
-	if drop > 0 {
-		m.charge(-int64(c.dropBytes - bytes))
-		c.dropBytes = bytes
-		c.drops = append([]ContactDrop(nil), c.drops[drop:]...)
+	// Past the row and byte caps, evict per dropEvictions (one drop always
+	// stays).
+	if ev := dropEvictions(c.drops, lim); len(ev) > 0 {
+		gone := make(map[int]bool, len(ev))
+		freed := 0
+		for _, i := range ev {
+			gone[i] = true
+			freed += len(c.drops[i].Blob)
+		}
+		kept := make([]ContactDrop, 0, len(c.drops)-len(ev))
+		for i, d := range c.drops {
+			if !gone[i] {
+				kept = append(kept, d)
+			}
+		}
+		m.charge(-int64(freed))
+		c.dropBytes -= freed
+		c.drops = kept
 	}
 	return c.nextSeq, nil
 }
@@ -300,6 +454,7 @@ func (m *memContacts) ContactDropsAfter(_ context.Context, cid, keyHash string, 
 		if len(out) > 0 && ((limit > 0 && len(out) >= limit) || (maxBytes > 0 && size+len(d.Blob) > maxBytes)) {
 			return out, true, nil
 		}
+		c.drops[i].delivered = true
 		out = append(out, d)
 		size += len(d.Blob)
 	}
@@ -387,6 +542,9 @@ type contactDropSnap struct {
 	Seq       uint64 `json:"seq"`
 	Blob      string `json:"blob"`
 	CreatedAt int64  `json:"createdAt"`
+	Sender    string `json:"sender,omitempty"`
+	Verified  bool   `json:"verified,omitempty"`
+	Delivered bool   `json:"delivered,omitempty"`
 }
 
 func (m *memContacts) toContactSnap() map[string]contactSnap {
@@ -400,7 +558,8 @@ func (m *memContacts) toContactSnap() map[string]contactSnap {
 		cs := contactSnap{KeyHash: c.keyHash, Record: string(c.record), UpdatedAt: c.updatedAt,
 			ExpiresAt: c.expiresAt, NextSeq: c.nextSeq, Stripped: c.stripped}
 		for _, d := range c.drops {
-			cs.Drops = append(cs.Drops, contactDropSnap{Seq: d.Seq, Blob: string(d.Blob), CreatedAt: d.CreatedAt})
+			cs.Drops = append(cs.Drops, contactDropSnap{Seq: d.Seq, Blob: string(d.Blob), CreatedAt: d.CreatedAt,
+				Sender: d.sender, Verified: d.verified, Delivered: d.delivered})
 		}
 		out[cid] = cs
 	}
@@ -419,7 +578,8 @@ func (m *memContacts) restoreContacts(snap map[string]contactSnap) int64 {
 		c := &memContact{keyHash: s.KeyHash, record: json.RawMessage(s.Record), updatedAt: s.UpdatedAt,
 			expiresAt: s.ExpiresAt, nextSeq: s.NextSeq}
 		for _, d := range s.Drops {
-			c.drops = append(c.drops, ContactDrop{Seq: d.Seq, Blob: json.RawMessage(d.Blob), CreatedAt: d.CreatedAt})
+			c.drops = append(c.drops, ContactDrop{Seq: d.Seq, Blob: json.RawMessage(d.Blob), CreatedAt: d.CreatedAt,
+				sender: d.Sender, verified: d.Verified, delivered: d.Delivered})
 			c.dropBytes += len(d.Blob)
 		}
 		if s.Stripped {
