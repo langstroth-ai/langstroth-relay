@@ -219,6 +219,14 @@ func (s *Server) workspaceJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invite is invalid, expired, revoked, or used up", http.StatusForbidden)
 		return
 	}
+	// Never lower an existing member's role (an owner redeeming a viewer invite
+	// would otherwise demote itself and could orphan the workspace).
+	if cur, found, err := s.store.MemberRole(r.Context(), ws, caller); storeErr(w, err) {
+		return
+	} else if found && roleRank(cur) >= roleRank(role) {
+		writeJSON(w, http.StatusOK, map[string]string{"role": cur})
+		return
+	}
 	if err := s.store.UpsertMember(r.Context(), ws, caller, body.Login, role, "invite", nowUnix()); storeErr(w, err) {
 		return
 	}

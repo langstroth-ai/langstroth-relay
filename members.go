@@ -233,6 +233,14 @@ func (s *Server) memberUpsert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	members, err := s.store.WorkspaceMembers(r.Context(), ws)
+	if storeErr(w, err) {
+		return
+	}
+	if code, msg := checkRoleChange(members, caller, body.Account, body.Role); code != 0 {
+		http.Error(w, msg, code)
+		return
+	}
 	if err := s.store.UpsertMember(r.Context(), ws, body.Account, body.Login, body.Role, caller, nowUnix()); storeErr(w, err) {
 		return
 	}
@@ -258,8 +266,8 @@ func (s *Server) memberRemove(w http.ResponseWriter, r *http.Request) {
 	if storeErr(w, err) {
 		return
 	}
-	if isLastOwner(members, account) {
-		http.Error(w, "can't remove the workspace's last owner", http.StatusConflict)
+	if code, msg := checkRoleChange(members, caller, account, ""); code != 0 {
+		http.Error(w, msg, code)
 		return
 	}
 	if err := s.store.RemoveMember(r.Context(), ws, account); storeErr(w, err) {
@@ -294,6 +302,33 @@ func (s *Server) membershipClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"claimed": true})
+}
+
+// checkRoleChange authorizes caller (already known to be Admin+) setting
+// target's role to newRole ("" = removing target). A caller can't grant a role
+// above its own, can't change or remove a member who outranks it, and the last
+// owner can't be demoted or removed. Returns 0 when allowed, else the HTTP
+// status and message.
+func checkRoleChange(members []MemberRow, caller, target, newRole string) (int, string) {
+	callerRank, targetRank := -1, -1
+	for _, m := range members {
+		if m.Account == caller {
+			callerRank = roleRank(m.Role)
+		}
+		if m.Account == target {
+			targetRank = roleRank(m.Role)
+		}
+	}
+	if newRole != "" && roleRank(newRole) > callerRank {
+		return http.StatusForbidden, "can't grant a role above your own"
+	}
+	if targetRank > callerRank {
+		return http.StatusForbidden, "can't change a member who outranks you"
+	}
+	if newRole != "owner" && isLastOwner(members, target) {
+		return http.StatusConflict, "can't remove or demote the workspace's last owner"
+	}
+	return 0, ""
 }
 
 // isLastOwner reports whether `account` is the only Owner in the roster.
