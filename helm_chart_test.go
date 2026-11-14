@@ -91,3 +91,15 @@ func TestChartLivenessDoesNotDependOnStore(t *testing.T) {
 		}
 	}
 }
+
+// Regression: the APNs key reaches the tunnel pod only, never relay-sync.
+func TestChartAPNsKeyOnlyOnTunnelPod(t *testing.T) {
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "tunnel.mode=open",
+		"--set", "tunnel.apns.existingSecret=apns", "--set", "tunnel.apns.keyId=K", "--set", "tunnel.apns.teamId=T", "--set", "tunnel.apns.topic=x.y")
+	if d := docOfKind(out, "Deployment", "-sync"); strings.Contains(d, "APNS") || strings.Contains(d, "secretName: apns") {
+		t.Fatal("relay-sync must not get the APNs key")
+	}
+	if d := docOfKind(out, "Deployment", "-tunnel"); !strings.Contains(d, "LIGUS_RELAY_APNS_KEY_FILE") || !strings.Contains(d, "secretName: apns") {
+		t.Fatal("the tunnel pod should get the APNs key file")
+	}
+}
