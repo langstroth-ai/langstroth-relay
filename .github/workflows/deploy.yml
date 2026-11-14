@@ -22,11 +22,14 @@ on:
 
 concurrency: deploy-relay
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     # Manual dispatch, or a green `ci` from a push to main.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
@@ -38,8 +41,28 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Pinned to the verified commit of the upstream 1.5 release tag (P2-22).
-      - uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # 1.5
+        with:
+          # Deploy exactly the commit the green ci run tested, not whatever main
+          # points at by the time this job starts.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      # flyctl is installed from a pinned upstream release and checked against
+      # its published SHA-256 (P2-22). The flyctl-actions installer would download whatever URL
+      # the Fly API returns, unverified, into the step that holds FLY_API_TOKEN.
+      # Bump FLYCTL_VERSION and FLYCTL_SHA256 together (flyctl_<ver>_checksums.txt).
+      - name: Install flyctl (pinned, checksum-verified)
+        env:
+          FLYCTL_VERSION: 0.4.122
+          FLYCTL_SHA256: 3d6ae2e2e24df47b46132e8920eebb7aec4ed0930dae2074369e59db89493cf2
+        run: |
+          set -euo pipefail
+          tarball="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/${tarball}"
+          echo "${FLYCTL_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/flyctl"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/flyctl" flyctl
+          echo "$RUNNER_TEMP/flyctl" >> "$GITHUB_PATH"
       - name: Deploy (open relay -> hive-relay-enterprise)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
