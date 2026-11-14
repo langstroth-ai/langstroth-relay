@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 )
@@ -123,7 +124,20 @@ const (
 	entTokens
 	// entSigned — signed hrt1 tokens verified against the issuer's public key.
 	entSigned
+	// entDeny — admits nobody (a configured issuer key that doesn't parse).
+	entDeny
 )
+
+// entitlementConfigError reports an access-gate setting that can't be used,
+// so the binary refuses to start instead of serving with a broken gate.
+func entitlementConfigError() error {
+	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
+		if _, ok := parsePubkey(pk); !ok {
+			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY is set but is not an Ed25519 public key (64 hex chars or base64)")
+		}
+	}
+	return nil
+}
 
 // entitlementPolicy decides whether a presented bearer token is admitted.
 type entitlementPolicy struct {
@@ -145,8 +159,10 @@ func entitlementFromEnv() entitlementPolicy {
 		if vk, ok := parsePubkey(pk); ok {
 			return entitlementPolicy{kind: entSigned, pubkey: vk}
 		}
-		// Parsing failed — fall through, but make it loud.
-		os.Stderr.WriteString("HIVE_RELAY_TOKEN_PUBKEY set but unparseable; ignoring\n")
+		// Parsing failed: fail closed. Falling through would run the relay on
+		// the allowlist or, with none, open: a typo would silently ungate it.
+		os.Stderr.WriteString("LIGUS_RELAY_TOKEN_PUBKEY is set but unparseable; denying every token\n")
+		return entitlementPolicy{kind: entDeny}
 	}
 	if v := strings.TrimSpace(getenv("HIVE_RELAY_ACCESS_TOKENS")); v != "" {
 		var hashes []string

@@ -62,6 +62,8 @@ func MainWith(ext Extension) {
 		}
 	}
 
+	fatalIf(entitlementConfigError())
+
 	store, err := buildStore(context.Background())
 	fatalIf(err)
 	defer store.Close()
