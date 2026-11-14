@@ -1,0 +1,99 @@
+# Default values for ligus-auth. See docs (ligus-auth) for the model: the
+# service signs people in at your IdP and mints short-lived relay tokens; it
+# never makes anyone a workspace member.
+
+image:
+  repository: ghcr.io/ligus-ai/ligus-auth
+  tag: ""          # defaults to the chart appVersion
+  digest: ""       # pin by digest in production; overrides tag
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# The ligus-auth config file (rendered to /etc/ligus-auth/config.json).
+# listen/admin_listen/signing_key_file/store are set by the chart; put the
+# rest here. Secret files referenced by the config (client secrets, SCIM
+# tokens) live in secretFiles.existingSecret, mounted at
+# /etc/ligus-auth/secrets/<key>.
+config:
+  public_url: ""   # required, e.g. https://auth.example.com
+  access_ttl: "15m"
+  refresh_idle_ttl: "168h"
+  session_max_age: "720h"
+  trusted_proxies: []
+  tenants: []
+  # - id: home
+  #   oidc:
+  #     issuer: https://dex.example.com
+  #     client_id: ligus-auth
+  #     client_secret_file: /etc/ligus-auth/secrets/dex-client-secret
+  #   idp_groups: true
+  #   workspaces: ["<workspace-uuid>"]
+  #   grants: {"ligus-users": ["<workspace-uuid>"]}
+
+# Required: a Secret holding the issuer Ed25519 seed (ligus-auth keygen --out).
+signingKey:
+  existingSecret: ""
+  key: signing-key
+
+# Optional: a Secret whose keys are mounted as files under
+# /etc/ligus-auth/secrets (IdP client secrets, SCIM tokens).
+secretFiles:
+  existingSecret: ""
+
+# Optional: enables the admin API on adminPort (never exposed by the Ingress).
+adminToken:
+  existingSecret: ""
+  key: admin-token
+
+# Store: "file" (one replica, state on a volume) or "postgres" (shared).
+store:
+  driver: file
+  # postgres: a Secret with the DSN, passed as LIGUS_AUTH_DATABASE_URL.
+  databaseUrl:
+    existingSecret: ""
+    key: database-url
+
+persistence:
+  enabled: false   # file store without persistence loses sessions on restart
+  size: 1Gi
+  storageClass: ""
+
+# Flow state (sign-in, device codes) is per process: keep one replica unless
+# the Ingress pins clients to one pod.
+replicas: 1
+
+service:
+  type: ClusterIP
+  port: 8090
+  adminPort: 8091
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls: []
+
+resources:
+  requests: {cpu: 20m, memory: 32Mi}
+  limits: {memory: 128Mi}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: {type: RuntimeDefault}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

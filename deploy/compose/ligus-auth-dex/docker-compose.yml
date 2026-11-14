@@ -1,0 +1,57 @@
+# Example only (not run in CI): Dex federating GitHub (or LDAP/SAML) in front
+# of ligus-auth and the relay. Kubeflow shops already run Dex: reuse it and
+# just add the ligus-auth static client (see dex.yaml). Replace example.com,
+# then follow docs/ligus-auth-dex.
+#
+# Before the first start:
+#   mkdir -p secrets && chmod 700 secrets
+#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/ligus-ai/ligus-auth:0.2.0 keygen --out /out/signing-key
+#   docker run --rm ghcr.io/ligus-ai/ligus-auth:0.2.0 gen-token > secrets/dex-client-secret && chmod 600 secrets/dex-client-secret
+#   Put the same secret in .env as LIGUS_AUTH_DEX_SECRET, plus the GitHub
+#   OAuth app id/secret as GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET.
+services:
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      LIGUS_AUTH_DEX_SECRET: ${LIGUS_AUTH_DEX_SECRET:?}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?}
+    volumes:
+      - ./dex.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/dex
+    restart: unless-stopped
+
+  ligus-auth:
+    image: ghcr.io/ligus-ai/ligus-auth:0.2.0
+    command: ["serve", "--config", "/etc/ligus-auth/config.json"]
+    volumes:
+      - ./ligus-auth.json:/etc/ligus-auth/config.json:ro
+      - ./secrets:/etc/ligus-auth/secrets:ro
+      - ligus-auth-state:/var/lib/ligus-auth
+    restart: unless-stopped
+
+  relay:
+    image: ghcr.io/ligus-ai/ligus-relay:0.2.0
+    environment:
+      LIGUS_RELAY_TOKEN_PUBKEY: ${LIGUS_RELAY_TOKEN_PUBKEY:?set it from ligus-auth keygen}
+      LIGUS_RELAY_WORKSPACE_SCOPE: strict
+      LIGUS_RELAY_TENANTS: acme
+      LIGUS_RELAY_DATA_DIR: /data
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  dex-data:
+  ligus-auth-state:
+  relay-data:

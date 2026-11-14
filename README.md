@@ -61,6 +61,8 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** entitlement tokens. A key that doesn't parse denies every token |
 | `LIGUS_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
 | `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
+| `LIGUS_RELAY_TOKEN_PUBKEY_NEXT` | empty | A second issuer public key accepted next to `LIGUS_RELAY_TOKEN_PUBKEY` while the issuer rotates its key. Needs `LIGUS_RELAY_TOKEN_PUBKEY`; a key that doesn't parse denies every token |
+| `LIGUS_RELAY_TENANTS` | unset | Comma-separated tenant ids. When set, a signed token must carry a `tid` claim in this list (tokens without one get `401`). Needs `LIGUS_RELAY_TOKEN_PUBKEY`. See [Sign-in with your identity provider](#sign-in-with-your-identity-provider-ligus-auth) |
 | `LIGUS_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
 | `LIGUS_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
 | `LIGUS_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
@@ -317,6 +319,47 @@ alternative when the roster, not the issuer, should decide.
 - *High-entropy workspace ids.* Clients today derive a workspace id from a
   possibly-guessable room *name*. Making ids high-entropy (so an id can't be
   guessed at all) is a client-side + invite-model change, not a relay change.
+
+### Sign-in with your identity provider (ligus-auth)
+
+`ligus-auth` (`cmd/ligus-auth`, image `deploy/container/Dockerfile.ligus-auth`,
+chart `deploy/helm/ligus-auth`) is an optional, separate service that lets
+people sign in with any OIDC provider (Pocket ID, Dex, Keycloak, Authentik,
+Okta, Entra ID, ...) and receive short-lived relay tokens. It never runs
+inside the relay; the relay only needs its public key.
+
+- **Flows:** authorization code + PKCE for apps with a browser (loopback
+  redirect on the desktop, the system browser on iOS) and the device
+  authorization grant (RFC 8628) for `ligus serve`, workers and the CLI.
+- **Tokens:** ordinary `hrt1` tokens, signed with the ligus-auth issuer key.
+  `sub` is `<tenant>:<user>`, `exp` is at most an hour away (15 minutes by
+  default), and three claims are added, each omitted when empty: `tid`
+  (tenant), `uid` (a hash of the IdP subject) and `did` (the device id whose
+  Ed25519 key signed the token request). `workspaces` comes from group grants
+  and is never empty, so set `LIGUS_RELAY_WORKSPACE_SCOPE=strict`.
+  Refresh tokens are opaque, rotate on every use (reuse revokes the session)
+  and only work from the device key they were issued to.
+- **SCIM 2.0** at `/t/<tenant>/scim/v2` (Users, Groups) for provisioning and
+  deprovisioning: deactivating a user revokes their refresh tokens at once;
+  access tokens lapse within the access TTL.
+- **Membership is not granted.** A token only says which workspaces a person
+  may reach on the relay. Joining a workspace still takes an Admin's signed
+  `MemberAdded`; events from someone who is not in the signed roster are
+  refused by every client, whatever the relay forwards.
+- **Tenants** each have their own IdP, SCIM token and workspaces. A workspace
+  belongs to one tenant; grants can name only the tenant's own workspaces, and
+  `LIGUS_RELAY_TENANTS` makes the relay refuse other tenants' tokens.
+
+```sh
+ligus-auth keygen --out /etc/ligus-auth/signing-key   # prints only the public key
+LIGUS_RELAY_TOKEN_PUBKEY=<that key> LIGUS_RELAY_WORKSPACE_SCOPE=strict \
+  LIGUS_RELAY_TENANTS=home ligus-relay
+ligus-auth serve --config /etc/ligus-auth/config.json
+```
+
+Examples: `deploy/compose/ligus-auth-pocket-id` (home lab, passkeys) and
+`deploy/compose/ligus-auth-dex` (federation; Kubeflow shops can reuse their
+Dex). The Ligus docs have the full setup guides.
 
 ### User/token admin API (`/v1/admin/*`)
 

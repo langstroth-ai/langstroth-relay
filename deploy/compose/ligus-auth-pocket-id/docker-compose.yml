@@ -1,0 +1,53 @@
+# Example only (not run in CI): a home-lab relay with Pocket ID (passkey-only
+# OIDC) and ligus-auth, behind Caddy for TLS. Replace example.com with your
+# own names, then follow docs/ligus-auth-pocket-id.
+#
+# Before the first start:
+#   mkdir -p secrets && chmod 700 secrets
+#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/ligus-ai/ligus-auth:0.2.0 keygen --out /out/signing-key
+#     (prints public_key=...; put it in .env as LIGUS_RELAY_TOKEN_PUBKEY)
+#   After creating the OIDC client in Pocket ID, save its secret:
+#   printf %s '<client secret>' > secrets/pocket-id-client-secret && chmod 600 secrets/pocket-id-client-secret
+services:
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:v1
+    environment:
+      APP_URL: https://id.example.com
+      TRUST_PROXY: "true"
+    volumes:
+      - pocket-id-data:/app/data
+    restart: unless-stopped
+
+  ligus-auth:
+    image: ghcr.io/ligus-ai/ligus-auth:0.2.0
+    command: ["serve", "--config", "/etc/ligus-auth/config.json"]
+    volumes:
+      - ./ligus-auth.json:/etc/ligus-auth/config.json:ro
+      - ./secrets:/etc/ligus-auth/secrets:ro
+      - ligus-auth-state:/var/lib/ligus-auth
+    restart: unless-stopped
+
+  relay:
+    image: ghcr.io/ligus-ai/ligus-relay:0.2.0
+    environment:
+      LIGUS_RELAY_TOKEN_PUBKEY: ${LIGUS_RELAY_TOKEN_PUBKEY:?set it from ligus-auth keygen}
+      LIGUS_RELAY_WORKSPACE_SCOPE: strict
+      LIGUS_RELAY_TENANTS: home
+      LIGUS_RELAY_DATA_DIR: /data
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  pocket-id-data:
+  ligus-auth-state:
+  relay-data:

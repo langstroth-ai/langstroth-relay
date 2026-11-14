@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+#
+# Non-root, distroless image for ligus-auth (cmd/ligus-auth), the optional
+# OIDC sign-in and token service that runs beside the relay. Same shape as
+# the relay's deploy/container/Dockerfile: no shell, UID 65532, read-only
+# root filesystem.
+#
+#   docker build -f deploy/container/Dockerfile.ligus-auth -t ligus-auth:dev .
+#
+# Mount the configuration at /etc/ligus-auth/config.json and the issuer key
+# as a file (signing_key_file), never as a build arg or a baked-in layer.
+
+ARG GO_VERSION=1.25
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/ligus-auth ./cmd/ligus-auth
+
+FROM gcr.io/distroless/static-debian12:nonroot
+LABEL org.opencontainers.image.title="ligus-auth" \
+      org.opencontainers.image.description="OIDC sign-in, SCIM deprovisioning and short-lived relay tokens for Ligus" \
+      org.opencontainers.image.source="https://github.com/ligus-ai/relay" \
+      org.opencontainers.image.licenses="MIT"
+COPY --from=build /out/ligus-auth /usr/local/bin/ligus-auth
+USER 65532:65532
+EXPOSE 8090 8091
+ENTRYPOINT ["/usr/local/bin/ligus-auth"]
+CMD ["serve", "--config", "/etc/ligus-auth/config.json"]
