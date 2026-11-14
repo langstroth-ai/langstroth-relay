@@ -29,8 +29,12 @@ topology: auto
 
 tunnel:
   # off | open | allowlist (LIGUS_RELAY_TUNNEL). "off" in split topology
-  # renders no tunnel Deployment.
-  mode: open
+  # renders no tunnel Deployment. Off by default, like the binary: "open" lets
+  # any host on the internet register and relay phone sessions through you.
+  # Prefer allowlist, or open with a token gate (LIGUS_RELAY_TOKEN_PUBKEY or
+  # LIGUS_RELAY_ACCESS_TOKENS in config.existingSecret), which a host's first
+  # registration must pass.
+  mode: "off"
   # host ids allowed when mode=allowlist (LIGUS_RELAY_TUNNEL_HOSTS).
   allowedHosts: []
   # Built-in APNs push sender (tunnel pod only). Off unless existingSecret is

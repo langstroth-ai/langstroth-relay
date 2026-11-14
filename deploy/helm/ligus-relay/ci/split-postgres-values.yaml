@@ -6,3 +6,5 @@ postgres:
   enabled: true
   persistence:
     size: 256Mi
+tunnel:
+  mode: open

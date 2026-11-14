@@ -58,7 +58,7 @@ of silently serving from memory.
 | `image.repository` / `tag` / `digest` | `ghcr.io/ligus-ai/ligus-relay`, appVersion | Pin by digest in production |
 | `image.command` | `[/usr/local/bin/ligus-relay]` | Runs the binary directly as UID 65532; also skips the Alpine image's root-only entrypoint |
 | `topology` | `auto` | `split`, `single`, `auto` |
-| `tunnel.mode` | `open` | `off`, `open`, `allowlist` (`tunnel.allowedHosts`) |
+| `tunnel.mode` | `off` | `off`, `open`, `allowlist` (`tunnel.allowedHosts`). `open` admits any host; pair it with a token gate |
 | `tunnel.apns.*` | off | Built-in push sender on the tunnel pod; key file from `existingSecret` |
 | `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | See Scaling |
 | `postgres.enabled` | `false` | Development Postgres in the release |
