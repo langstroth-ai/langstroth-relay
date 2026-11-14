@@ -184,8 +184,11 @@ spec:
         httpGet: { path: /v1/health, port: http }
         periodSeconds: 10
         timeoutSeconds: 3
+      # Liveness checks only that the process accepts connections:
+      # /v1/health round-trips the store, and restarting every pod because the
+      # database is down fixes nothing (and drops every tunnel socket).
       livenessProbe:
-        httpGet: { path: /v1/health, port: http }
+        tcpSocket: { port: http }
         periodSeconds: 20
         timeoutSeconds: 3
         failureThreshold: 3

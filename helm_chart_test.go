@@ -63,3 +63,31 @@ func TestChartTunnelOffByDefault(t *testing.T) {
 		t.Fatal("tunnel.mode=open must still render")
 	}
 }
+
+// H-02: the liveness probe hit /v1/health, which round-trips the database, so
+// a database outage or a slow query made the kubelet restart every relay pod
+// (dropping every tunnel socket) without fixing anything. Liveness must only
+// check the process; readiness keeps the store check.
+func TestChartLivenessDoesNotDependOnStore(t *testing.T) {
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "tunnel.mode=open")
+	for _, suffix := range []string{"-sync", "-tunnel"} {
+		d := docOfKind(out, "Deployment", suffix)
+		if d == "" {
+			t.Fatalf("no %s Deployment", suffix)
+		}
+		i := strings.Index(d, "livenessProbe:")
+		if i < 0 {
+			t.Fatalf("%s: no livenessProbe", suffix)
+		}
+		probe := d[i:]
+		if j := strings.Index(probe, "resources:"); j > 0 {
+			probe = probe[:j]
+		}
+		if strings.Contains(probe, "/v1/health") {
+			t.Errorf("%s: livenessProbe depends on the store via /v1/health:\n%s", suffix, probe)
+		}
+		if !strings.Contains(d, "readinessProbe:\n") || !strings.Contains(d, "path: /v1/health") {
+			t.Errorf("%s: readinessProbe should still check /v1/health", suffix)
+		}
+	}
+}
