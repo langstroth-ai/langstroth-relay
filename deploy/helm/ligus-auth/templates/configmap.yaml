@@ -1,0 +1,12 @@
+{{- if not .Values.config.public_url }}{{ fail "config.public_url is required" }}{{ end }}
+{{- if not .Values.signingKey.existingSecret }}{{ fail "signingKey.existingSecret is required (create it from `ligus-auth keygen --out`)" }}{{ end }}
+{{- if and (eq .Values.store.driver "file") (gt (int .Values.replicas) 1) }}{{ fail "the file store supports one replica; use store.driver=postgres" }}{{ end }}
+{{- if and (eq .Values.store.driver "postgres") (not .Values.store.databaseUrl.existingSecret) }}{{ fail "store.driver=postgres needs store.databaseUrl.existingSecret" }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ligus-auth.fullname" . }}
+  labels: {{- include "ligus-auth.labels" . | nindent 4 }}
+data:
+  config.json: |
+{{ include "ligus-auth.config" . | indent 4 }}

@@ -29,6 +29,7 @@ Mint an entitlement token:  ligus-relay issue --key <priv-hex> --sub <id> \
                               [--plan team] [--exp-days 365] [--max-members 50] \
                               [--turn] [--cap remove_member --cap rotate_key]
                               [--workspace <id> ...]  (scope; see LIGUS_RELAY_WORKSPACE_SCOPE)
+                              [--tenant <id>]         (tid; see LIGUS_RELAY_TENANTS)
 Bootstrap a remote agent:   ligus-relay bootstrap-agent --key <priv-hex> \
                               --relay <url> --room <room> --ws-key <passphrase> \
                               --sub github:<agent-id> --admin-sub github:<owner-id> \
@@ -95,6 +96,8 @@ func cmdIssue(args []string) error {
 			claims.Caps = append(claims.Caps, next())
 		case "--workspace":
 			claims.Workspaces = append(claims.Workspaces, next())
+		case "--tenant":
+			claims.Tid = next()
 		default:
 			return fmt.Errorf("unknown flag %s (try `ligus-relay help`)", args[i])
 		}

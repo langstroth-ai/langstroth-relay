@@ -34,6 +34,14 @@ type TokenClaims struct {
 	// (scope.go); omitted from the JSON when empty, so tokens minted without it
 	// are byte-identical to before.
 	Workspaces []string `json:"workspaces,omitempty"`
+	// Tid, Uid and Did are set by ligus-auth (cmd/ligus-auth): the tenant, a
+	// hash of the upstream IdP subject, and the device id whose key proved
+	// possession at mint time. All are omitted from the JSON when empty, so
+	// tokens minted without them are byte-identical to before. The relay
+	// enforces only Tid, and only when LIGUS_RELAY_TENANTS is set.
+	Tid string `json:"tid,omitempty"`
+	Uid string `json:"uid,omitempty"`
+	Did string `json:"did,omitempty"`
 }
 
 // IsExpired reports whether Exp is set and now-or-past.
@@ -77,6 +85,22 @@ func verifyToken(token string, pub ed25519.PublicKey) (TokenClaims, bool) {
 	}
 	return claims, true
 }
+
+// IssueToken mints a compact hrt1 token with the issuer's Ed25519 key. It is
+// the exported form of the issuer used by ligus-relay issue and ligus-auth.
+func IssueToken(priv ed25519.PrivateKey, claims TokenClaims) string { return issueToken(priv, claims) }
+
+// VerifyToken checks a compact hrt1 token against an issuer public key and
+// returns its claims. Expiry is not checked (see TokenClaims.IsExpired).
+func VerifyToken(token string, pub ed25519.PublicKey) (TokenClaims, bool) {
+	return verifyToken(token, pub)
+}
+
+// ParsePubkey parses an Ed25519 public key from hex or base64.
+func ParsePubkey(s string) (ed25519.PublicKey, bool) { return parsePubkey(s) }
+
+// ParseSigningKey parses a 64-char hex Ed25519 seed into a private key.
+func ParseSigningKey(h string) (ed25519.PrivateKey, bool) { return parseSigningKey(h) }
 
 // parsePubkey parses an Ed25519 public key from hex (64 chars) or base64
 // (url-safe or standard, with or without padding).
@@ -136,7 +160,54 @@ func entitlementConfigError() error {
 			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY is set but is not an Ed25519 public key (64 hex chars or base64)")
 		}
 	}
+	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY_NEXT"); pk != "" {
+		if getenv("HIVE_RELAY_TOKEN_PUBKEY") == "" {
+			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY_NEXT is set without LIGUS_RELAY_TOKEN_PUBKEY")
+		}
+		if _, ok := parsePubkey(pk); !ok {
+			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY_NEXT is set but is not an Ed25519 public key (64 hex chars or base64)")
+		}
+	}
+	if ts := tenantsFromEnv(); ts != nil {
+		if getenv("HIVE_RELAY_TOKEN_PUBKEY") == "" {
+			return errors.New("LIGUS_RELAY_TENANTS needs signed tokens: set LIGUS_RELAY_TOKEN_PUBKEY")
+		}
+		if len(ts) == 0 {
+			return errors.New("LIGUS_RELAY_TENANTS is set but lists no tenant id")
+		}
+	}
 	return nil
+}
+
+// tenantsFromEnv reads LIGUS_RELAY_TENANTS (comma-separated tenant ids). It
+// returns nil when the setting is unset (tenant confinement off, the default)
+// and an empty non-nil slice when it is set but lists nothing.
+func tenantsFromEnv() []string {
+	raw, set := lookupRelayEnv("HIVE_RELAY_TENANTS")
+	if !set {
+		return nil
+	}
+	out := []string{}
+	for _, t := range strings.Split(raw, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// lookupRelayEnv is getenv that also reports whether the setting is present
+// (a set-but-blank value counts as set, so it fails closed at startup).
+func lookupRelayEnv(name string) (string, bool) {
+	if v := getenv(name); v != "" {
+		return v, true
+	}
+	canonical := envPrefix + strings.TrimPrefix(name, legacyEnvPrefix)
+	if _, ok := os.LookupEnv(canonical); ok {
+		return "", true
+	}
+	_, ok := os.LookupEnv(name)
+	return "", ok
 }
 
 // entitlementPolicy decides whether a presented bearer token is admitted.
@@ -148,6 +219,13 @@ type entitlementPolicy struct {
 	// lookup, which could leak a valid token's length/prefix by timing (P3-13).
 	tokenHashes []string
 	pubkey      ed25519.PublicKey // entSigned
+	// nextPubkey is an optional second issuer key (LIGUS_RELAY_TOKEN_PUBKEY_NEXT)
+	// accepted alongside pubkey while the issuer rotates its signing key.
+	nextPubkey ed25519.PublicKey
+	// tenants, when non-nil, confines signed tokens to these "tid" claims
+	// (LIGUS_RELAY_TENANTS). A token without a tid is refused. Off (nil) by
+	// default.
+	tenants []string
 }
 
 // entitlementFromEnv resolves the policy, most specific first:
@@ -157,7 +235,16 @@ type entitlementPolicy struct {
 func entitlementFromEnv() entitlementPolicy {
 	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
 		if vk, ok := parsePubkey(pk); ok {
-			return entitlementPolicy{kind: entSigned, pubkey: vk}
+			p := entitlementPolicy{kind: entSigned, pubkey: vk, tenants: tenantsFromEnv()}
+			if next := getenv("HIVE_RELAY_TOKEN_PUBKEY_NEXT"); next != "" {
+				nk, ok := parsePubkey(next)
+				if !ok {
+					os.Stderr.WriteString("LIGUS_RELAY_TOKEN_PUBKEY_NEXT is set but unparseable; denying every token\n")
+					return entitlementPolicy{kind: entDeny}
+				}
+				p.nextPubkey = nk
+			}
+			return p
 		}
 		// Parsing failed: fail closed. Falling through would run the relay on
 		// the allowlist or, with none, open: a typo would silently ungate it.
@@ -203,11 +290,31 @@ func (p entitlementPolicy) Allow(token string, nowUnix int64) (*TokenClaims, boo
 		return nil, ok
 	case entSigned:
 		claims, ok := verifyToken(token, p.pubkey)
+		if !ok && p.nextPubkey != nil {
+			claims, ok = verifyToken(token, p.nextPubkey)
+		}
 		if !ok || claims.IsExpired(nowUnix) {
+			return nil, false
+		}
+		if p.tenants != nil && !tenantAllowed(p.tenants, claims.Tid) {
 			return nil, false
 		}
 		return &claims, true
 	default:
 		return nil, false
 	}
+}
+
+// tenantAllowed reports whether tid is one of the configured tenants. An
+// empty tid never matches.
+func tenantAllowed(tenants []string, tid string) bool {
+	if tid == "" {
+		return false
+	}
+	for _, t := range tenants {
+		if t == tid {
+			return true
+		}
+	}
+	return false
 }

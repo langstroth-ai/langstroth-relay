@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **ligus-auth** (`cmd/ligus-auth`): optional OIDC sign-in service that mints
+  short-lived `hrt1` relay tokens, with SCIM 2.0 deprovisioning, per-tenant
+  IdPs and workspace grants, device-bound rotating refresh tokens, a distroless
+  image (`deploy/container/Dockerfile.ligus-auth`), a Helm chart
+  (`deploy/helm/ligus-auth`) and compose examples for Pocket ID and Dex. It
+  gates relay access only; workspace membership stays in the signed roster.
+- **Token claims `tid`, `uid`, `did`** (all optional and omitted when empty):
+  tokens minted without them are byte-identical to before.
+- **`LIGUS_RELAY_TENANTS`** (off by default): confine signed tokens to the
+  listed `tid` values.
+- **`LIGUS_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
+  key during a key rotation.
+- `ligus-relay issue --tenant <id>` sets `tid`.
+- Exported `IssueToken`, `VerifyToken`, `ParsePubkey` and `ParseSigningKey`.
+
 ## v0.2.0
 
 Ligus Relay is the relay formerly called `hive-relay`. Ligus (LEE-gus) is short

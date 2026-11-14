@@ -1,0 +1,38 @@
+issuer: https://dex.example.com
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+staticClients:
+  - id: ligus-auth
+    name: Ligus
+    secretEnv: LIGUS_AUTH_DEX_SECRET
+    redirectURIs:
+      - https://auth.example.com/t/acme/callback
+connectors:
+  # GitHub: groups arrive as "<org>:<team>" (and "<org>" with useLoginAsID off).
+  - type: github
+    id: github
+    name: GitHub
+    config:
+      clientID: $GITHUB_CLIENT_ID
+      clientSecret: $GITHUB_CLIENT_SECRET
+      redirectURI: https://dex.example.com/callback
+      orgs:
+        - name: acme
+          teams: [platform, ml]
+      teamNameField: slug
+  # LDAP (uncomment and adapt):
+  # - type: ldap
+  #   id: ldap
+  #   name: LDAP
+  #   config:
+  #     host: ldap.acme.internal:636
+  #     bindDN: cn=dex,ou=svc,dc=acme,dc=internal
+  #     bindPW: $LDAP_BIND_PW
+  #     userSearch: {baseDN: "ou=people,dc=acme,dc=internal", username: uid, idAttr: uid, emailAttr: mail, nameAttr: cn}
+  #     groupSearch: {baseDN: "ou=groups,dc=acme,dc=internal", filter: "(objectClass=groupOfNames)", userMatchers: [{userAttr: DN, groupAttr: member}], nameAttr: cn}

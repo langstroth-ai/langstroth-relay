@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ligus-auth.fullname" . }}
+  labels: {{- include "ligus-auth.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  {{- if eq .Values.store.driver "file" }}
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels: {{- include "ligus-auth.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "ligus-auth.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "ligus-auth.config" . | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ligus-auth
+          image: {{ include "ligus-auth.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve", "--config", "/etc/ligus-auth/config.json"]
+          ports:
+            - {name: http, containerPort: {{ .Values.service.port }}}
+            {{- if .Values.adminToken.existingSecret }}
+            - {name: admin, containerPort: {{ .Values.service.adminPort }}}
+            {{- end }}
+          env:
+            {{- if .Values.adminToken.existingSecret }}
+            - name: LIGUS_AUTH_ADMIN_TOKEN_FILE
+              value: /etc/ligus-auth/admin/{{ .Values.adminToken.key }}
+            {{- end }}
+            {{- if eq .Values.store.driver "postgres" }}
+            - name: LIGUS_AUTH_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.store.databaseUrl.existingSecret }}, key: {{ .Values.store.databaseUrl.key }}}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/ligus-auth/config.json, subPath: config.json, readOnly: true}
+            - {name: signing-key, mountPath: /etc/ligus-auth/key, readOnly: true}
+            {{- if .Values.secretFiles.existingSecret }}
+            - {name: secret-files, mountPath: /etc/ligus-auth/secrets, readOnly: true}
+            {{- end }}
+            {{- if .Values.adminToken.existingSecret }}
+            - {name: admin-token, mountPath: /etc/ligus-auth/admin, readOnly: true}
+            {{- end }}
+            {{- if eq .Values.store.driver "file" }}
+            - {name: state, mountPath: /var/lib/ligus-auth}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap: {name: {{ include "ligus-auth.fullname" . }}}
+        # 0440 + fsGroup: readable by the container user only (ligus-auth
+        # refuses world-readable secret files).
+        - name: signing-key
+          secret:
+            secretName: {{ .Values.signingKey.existingSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.signingKey.key }}, path: signing-key}
+        {{- if .Values.secretFiles.existingSecret }}
+        - name: secret-files
+          secret: {secretName: {{ .Values.secretFiles.existingSecret }}, defaultMode: 0440}
+        {{- end }}
+        {{- if .Values.adminToken.existingSecret }}
+        - name: admin-token
+          secret: {secretName: {{ .Values.adminToken.existingSecret }}, defaultMode: 0440}
+        {{- end }}
+        {{- if eq .Values.store.driver "file" }}
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: {claimName: {{ include "ligus-auth.fullname" . }}}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
