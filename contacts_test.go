@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -726,5 +727,40 @@ func TestContactRejectsInvalidUTF8(t *testing.T) {
 	}
 	if _, _, body := creq(t, "GET", u+"/drop", "", keyHdr(key)); body != `{"items":[],"more":false}` {
 		t.Fatalf("invalid drop stored: %q", body)
+	}
+}
+
+// An IPv6 client is keyed by its /64, but one /48 (a free tunnel-broker
+// allocation) holds 65536 of them. With only the /64 key, one /48 could create
+// 65536 x burst records at once: enough to fill the memory store's
+// LIGUS_RELAY_MAX_CONTACTS for every user, or a Postgres disk. Creates are
+// also limited per /48.
+func TestContactCreateLimitedPerIPv6Slash48(t *testing.T) {
+	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_RATE", "0.001")
+	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_BURST", "2")
+	h := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}}).Handler()
+	put := func(remote string) int {
+		req := httptest.NewRequest("PUT", "/v1/contacts/"+newCID(), strings.NewReader(putBody(`{}`, newWriteKey())))
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	ok := 0
+	for i := 0; i < 200; i++ {
+		if put(fmt.Sprintf("[2001:db8:1:%x::1]:4000", i)) == 200 {
+			ok++
+		}
+	}
+	// 2 per /64 alone would admit 200; the /48 bucket (16x the burst) caps it.
+	if ok > 32 {
+		t.Fatalf("one /48 created %d records by rotating its /64s", ok)
+	}
+	// Another /48, and IPv4 clients, keep their own budget.
+	if st := put("[2001:db8:2::1]:4000"); st != 200 {
+		t.Fatalf("another /48: %d", st)
+	}
+	if st := put("192.0.2.7:4000"); st != 200 {
+		t.Fatalf("ipv4 client: %d", st)
 	}
 }

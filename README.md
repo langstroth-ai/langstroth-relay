@@ -116,7 +116,7 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_CONTACT_DROP_RATE` / `_BURST` | `0.05` / `10` | contact drops per (sender, cid); the account-invite defaults |
 | `LIGUS_RELAY_CONTACT_DROP_CID_RATE` / `_BURST` | `1` / `60` | contact drops per cid, all senders together |
 | `LIGUS_RELAY_CONTACT_WRITE_RATE` / `_BURST` | `0.2` / `10` | contact record updates per cid (counted only after the key matches) |
-| `LIGUS_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address) |
+| `LIGUS_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address; IPv6 by /64, and each IPv6 /48 also gets 16x this rate and burst in total) |
 
 **Relay tunnel and push**
 
