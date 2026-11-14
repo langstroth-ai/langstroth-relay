@@ -56,8 +56,8 @@ Each `LIGUS_RELAY_*` setting below is also read under its legacy
 | `LIGUS_RELAY_TOKEN_PUBKEY` | Ed25519 public key → require **signed** entitlement tokens |
 | `LIGUS_RELAY_ACCESS_TOKENS` | comma-separated static allowlist (coarse gate) |
 | `LIGUS_RELAY_FRIEND_CAP` | max accepted friends per account |
-| `LIGUS_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap for the memory store (default `50000`; `0` = unbounded) |
-| `LIGUS_RELAY_RETENTION_DAYS` | prune memory-store envelopes older than N days (default `0` = age pruning off) |
+| `LIGUS_RELAY_MAX_ENVELOPES` | per-workspace retained-envelope cap (default `50000`; `0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly |
+| `LIGUS_RELAY_RETENTION_DAYS` | prune envelopes older than N days (default `0` = age pruning off); both stores |
 | `LIGUS_RELAY_MAX_STORE_BYTES` | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs). Writes past it answer `507`. Default `0` = unbounded; set it below your memory limit on any relay reachable by untrusted clients, since per-workspace caps multiply by an unbounded number of workspace ids |
 | `LIGUS_RELAY_MAX_LIST_BYTES` | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (default `16777216` = 16 MiB; `0` = unbounded). The keyring keeps its newest rows; at least one row is always returned |
 | `LIGUS_RELAY_MAX_BODY_BYTES` | max JSON request-body size in bytes (default `4194304` = 4 MiB) |
@@ -126,7 +126,7 @@ relay.example.com {
 - **HA / multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
   precedence over the snapshot dir, so every instance shares state (no migration).
 
-#### Envelope retention (memory store)
+#### Envelope retention
 
 The in-memory / snapshot store bounds how many envelopes it keeps per workspace
 so a long-running self-host doesn't grow without limit and eventually OOM. By
@@ -139,9 +139,13 @@ behavior).
 cursor (`?after=seq`). The relay is a cache of *recent* E2EE traffic, not the
 source of truth — pruning below a cursor means a device offline longer than the
 retention window can't replay the gap from the relay and must re-sync from a peer
-that still holds history. Size the bounds above your expected offline window. For
-unbounded, always-catch-up history, use the Postgres backend (disk-bound, not
-retained in RAM) instead.
+that still holds history. Size the bounds above your expected offline window.
+
+The Postgres backend applies the same two settings, hourly rather than on write
+(so a workspace can briefly exceed the cap). Its history is on disk rather than
+in RAM, so it can afford a much larger cap; for unbounded history set
+`LIGUS_RELAY_MAX_ENVELOPES=0` (and leave `LIGUS_RELAY_RETENTION_DAYS` at `0`)
+and watch the database's disk.
 
 ### Envelope paging
 
@@ -221,7 +225,8 @@ alternative when the roster, not the issuer, should decide.
 The relay has a durable user + token store (both backends implement it) and a
 management API, gated by the `AdminAuthorizer` seam. It's **disabled by
 default** (no authorizer → `404`); supply one via `Options{AdminAuth: …}` to
-enable it. Tokens are stored only as SHA-256 hashes; the raw value is returned
+enable it. The open `ligus-relay` binary has no environment switch for it
+(there is no `LIGUS_RELAY_ADMIN_LOGINS`): it needs a downstream build. Tokens are stored only as SHA-256 hashes; the raw value is returned
 once at creation.
 
 - `POST /v1/admin/users` `{name, login?}` → create user + first token (raw once)
