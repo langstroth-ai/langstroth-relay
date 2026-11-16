@@ -62,6 +62,7 @@ type Message struct {
 	CollapseID  string    // optional, ≤ 64 bytes (opaque, host-chosen)
 	Priority    int       // 10 (immediate) or 5 (power-considerate); anything else = 10
 	Expiration  time.Time // zero = no apns-expiration header
+	Topic       string    // apns-topic for this push; "" = Client.Topic
 }
 
 // Result is APNs' answer.
@@ -75,7 +76,9 @@ type Result struct {
 func (r Result) OK() bool { return r.Status == http.StatusOK }
 
 // DeviceGone reports that the device token should be forgotten: 410
-// Unregistered, or a token APNs calls malformed or not for this topic.
+// Unregistered, or a token APNs calls malformed or not for this topic. (A
+// caller that chose the topic itself, rather than from what the device
+// reported, should treat DeviceTokenNotForTopic as its own misconfiguration.)
 func (r Result) DeviceGone() bool {
 	return r.Status == http.StatusGone || r.Reason == "BadDeviceToken" ||
 		r.Reason == "DeviceTokenNotForTopic" || r.Reason == "Unregistered"
@@ -190,7 +193,7 @@ func ValidDeviceToken(s string) bool {
 // is retried once with a fresh provider token. A transport error is returned
 // as err; an APNs rejection is a Result with !OK().
 func (c *Client) Send(ctx context.Context, m Message) (Result, error) {
-	if c.Key == nil || c.KeyID == "" || c.TeamID == "" || c.Topic == "" {
+	if c.Key == nil || c.KeyID == "" || c.TeamID == "" || (c.Topic == "" && m.Topic == "") {
 		return Result{}, errors.New("apns: not configured")
 	}
 	if !ValidDeviceToken(m.DeviceToken) {
@@ -232,7 +235,11 @@ func (c *Client) send(ctx context.Context, m Message, body []byte, freshToken bo
 		prio = 10
 	}
 	req.Header.Set("authorization", "bearer "+tok)
-	req.Header.Set("apns-topic", c.Topic)
+	topic := m.Topic
+	if topic == "" {
+		topic = c.Topic
+	}
+	req.Header.Set("apns-topic", topic)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", strconv.Itoa(prio))
 	req.Header.Set("content-type", "application/json")

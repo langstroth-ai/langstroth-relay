@@ -351,6 +351,9 @@ type relayMsg struct {
 	CT       string          `json:"ct"`
 	Prio     string          `json:"prio"`
 	Collapse string          `json:"collapse"`
+	// Diag: the host asks for the push service's answer in the ack
+	// ("detail"). Only a diagnostic push sets it; plain acks are unchanged.
+	Diag bool `json:"diag"`
 }
 
 // readRelayMsg reads one text message, skipping unknown `t` values. Binary
@@ -631,6 +634,15 @@ func (h *tunnelHub) ack(c *tconn, id, code string) {
 	_ = c.writeJSON(map[string]any{"t": "ack", "id": id, "ok": false, "code": code})
 }
 
+// ackDetail is ack plus "detail", for a host that asked (diag).
+func (h *tunnelHub) ackDetail(c *tconn, id, code, detail string) {
+	msg := map[string]any{"t": "ack", "id": id, "ok": code == "", "detail": truncate(detail, 300)}
+	if code != "" {
+		msg["code"] = code
+	}
+	_ = c.writeJSON(msg)
+}
+
 // parseUnix reads an integer Unix time.
 func parseUnix(raw json.RawMessage) (int64, bool) {
 	var n int64
@@ -737,14 +749,41 @@ func (h *tunnelHub) controlRequest(ctl *hostCtl, m *relayMsg) bool {
 
 func (h *tunnelHub) handlePush(ctl *hostCtl, m relayMsg) {
 	c := ctl.conn
+	// Every push decision is logged at info (never the token or the
+	// ciphertext), so "did the box ask, and what did APNs say" is answerable
+	// from the relay's logs alone.
+	result := func(code, detail string, o *PushOutcome) {
+		attrs := []any{"host", ctl.hostID, "pid", m.PID, "result", resultName(code)}
+		if o != nil {
+			attrs = append(attrs, "service", o.Service, "env", o.Env, "topic", o.Topic, "status", o.Status, "reason", o.Reason)
+			if o.ID != "" {
+				attrs = append(attrs, "apns_id", o.ID)
+			}
+		} else if detail != "" {
+			attrs = append(attrs, "reason", detail)
+		}
+		if code == "" {
+			slog.Info("tunnel push", attrs...)
+		} else {
+			slog.Warn("tunnel push", attrs...)
+		}
+		if !m.Diag {
+			h.ack(c, m.ID, code)
+			return
+		}
+		if o != nil {
+			detail = o.String()
+		}
+		h.ackDetail(c, m.ID, code, detail)
+	}
 	if h.push == nil {
-		h.ack(c, m.ID, "push_unavailable")
+		result("push_unavailable", "this relay has no push sender configured", nil)
 		return
 	}
 	ct, err := b64uDecode(m.CT)
 	if !validTunnelID(m.PID) || err != nil || len(ct) == 0 || len(ct) > 2048 || len(m.Collapse) > 64 ||
 		(m.Prio != "" && m.Prio != "high" && m.Prio != "normal") {
-		h.ack(c, m.ID, "protocol")
+		result("protocol", "malformed push", nil)
 		return
 	}
 	prio := m.Prio
@@ -754,32 +793,51 @@ func (h *tunnelHub) handlePush(ctl *hostCtl, m relayMsg) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if revoked, err := h.store.TunnelPhoneRevoked(ctx, ctl.hostID, m.PID, h.nowUnix()); err != nil || revoked {
-		h.ack(c, m.ID, "revoked")
+		result("revoked", "the phone is revoked", nil)
 		return
 	}
 	if !h.pushLim.allow(ctl.hostID) || !h.pushDayAllow(ctl.hostID) {
-		h.ack(c, m.ID, "rate_limited")
+		result("rate_limited", "the host is over the relay's push rate", nil)
 		return
 	}
 	tok, err := h.store.TunnelPushToken(ctx, ctl.hostID, m.PID)
 	if err != nil {
-		h.ack(c, m.ID, "internal")
+		result("internal", "store unavailable", nil)
 		return
 	}
 	if tok == nil {
-		h.ack(c, m.ID, "no_push_token")
+		result("no_push_token", "no push token: the phone hasn't registered one with this relay (open the app with notifications on)", nil)
 		return
 	}
-	if err := h.push.Send(ctx, ctl.hostID, m.PID, *tok, ct, prio, m.Collapse); err != nil {
+	var outcome *PushOutcome
+	if ds, ok := h.push.(DetailedPushSender); ok {
+		o, e := ds.SendDetailed(ctx, ctl.hostID, m.PID, *tok, ct, prio, m.Collapse)
+		outcome, err = &o, e
+	} else {
+		err = h.push.Send(ctx, ctl.hostID, m.PID, *tok, ct, prio, m.Collapse)
+	}
+	if err != nil {
 		if errors.Is(err, ErrPushTokenGone) {
 			// The push service says the token is dead: forget it, so later
 			// pushes ack no_push_token until the phone re-registers.
 			_ = h.store.SetTunnelPushToken(ctx, ctl.hostID, m.PID, nil, h.nowUnix())
 		}
-		h.ack(c, m.ID, "push_failed")
+		detail := ""
+		if outcome == nil {
+			detail = "the push service refused it"
+		}
+		result("push_failed", detail, outcome)
 		return
 	}
-	h.ack(c, m.ID, "")
+	result("", "", outcome)
+}
+
+// resultName is the log value for an ack code ("" = sent).
+func resultName(code string) string {
+	if code == "" {
+		return "sent"
+	}
+	return code
 }
 
 func (h *tunnelHub) pushDayAllow(hostID string) bool {
@@ -925,7 +983,7 @@ func parseApns(raw json.RawMessage) (tok *PushToken, set bool, ok bool) {
 	}
 	var t PushToken
 	if json.Unmarshal(raw, &t) != nil || t.Token == "" || len(t.Token) > 512 ||
-		(t.Env != "production" && t.Env != "development") {
+		(t.Env != "production" && t.Env != "development") || (t.Topic != "" && !validTopic(t.Topic)) {
 		return nil, false, false
 	}
 	if _, err := hex.DecodeString(t.Token); err != nil {

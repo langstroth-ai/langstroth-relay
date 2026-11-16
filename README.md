@@ -126,7 +126,8 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LIGUS_RELAY_TUNNEL_HOSTS` | empty | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
 | `LIGUS_RELAY_APNS_KEY_FILE` | empty | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
 | `LIGUS_RELAY_APNS_KEY_ID` / `LIGUS_RELAY_APNS_TEAM_ID` | empty | the key's Key ID and your Apple developer Team ID |
-| `LIGUS_RELAY_APNS_TOPIC` | empty | bundle id of the iPhone app build you publish (the APNs topic) |
+| `LIGUS_RELAY_APNS_TOPIC` | empty | bundle id of the iPhone app build you publish (the default APNs topic) |
+| `LIGUS_RELAY_APNS_TOPICS` | empty | more bundle ids this relay may push to, comma-separated (for example the App Store build and a dev build). Either this or `LIGUS_RELAY_APNS_TOPIC` is enough; without `LIGUS_RELAY_APNS_TOPIC` the first one is the default |
 | `LIGUS_RELAY_APNS_ENV` | `auto` | `auto` (the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
 
 Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
@@ -541,10 +542,11 @@ your relay can push to it with the built-in APNs sender:
    LIGUS_RELAY_APNS_KEY_ID=ABC123DEFG \
    LIGUS_RELAY_APNS_TEAM_ID=<your team id> \
    LIGUS_RELAY_APNS_TOPIC=<your app's bundle id> \
+   LIGUS_RELAY_APNS_TOPICS=<your dev build's bundle id> \
    ligus-relay
    ```
 
-   The relay logs `tunnel push via APNs (topic …, env auto)`, and
+   The relay logs `tunnel push via APNs (topics …; default …; env auto)`, and
    `GET /v1/tunnel/info` and the host's `welcome` report `"push": true`. An
    incomplete configuration or a key that doesn't parse is logged and leaves
    push off; the relay still starts.
@@ -556,12 +558,26 @@ The relay forwards the host's ciphertext untouched in the spec §14 payload
 with `apns-push-type: alert`, priority 10 (`high`) or 5 (`normal`),
 `apns-expiration` now + 1 h and the host's opaque collapse id. When APNs says
 a device token is dead (`410 Unregistered`, `BadDeviceToken`,
-`DeviceTokenNotForTopic`) the relay forgets it; the phone sends a fresh one
-on its next connect. One relay serves one topic, so point
-`LIGUS_RELAY_APNS_TOPIC` at the build you use (a dev build and an App Store
-build have different bundle ids). With `LIGUS_RELAY_APNS_ENV=auto` a debug
-build from Xcode (sandbox token) and a TestFlight/App Store build
-(production token) both work.
+`DeviceTokenNotForTopic` for the topic the phone reported) the relay forgets
+it; the phone sends a fresh one on its next connect.
+
+A dev build and an App Store build have different bundle ids. The app reports
+its bundle id with its token (`apns.topic` in the phone's `auth`), and the
+relay pushes with that topic when it is `LIGUS_RELAY_APNS_TOPIC` or listed in
+`LIGUS_RELAY_APNS_TOPICS`; any other topic is refused (the token is kept, so
+adding the topic and restarting is enough). A phone that doesn't report one
+(an older app) gets the default topic, and `DeviceTokenNotForTopic` for it
+leaves its token alone: the relay's default was wrong, not the token. With
+`LIGUS_RELAY_APNS_ENV=auto` a debug build from Xcode (sandbox token) and a
+TestFlight/App Store build (production token) both work.
+
+Every push the relay handles is logged at info as `tunnel push` with
+`result` (`sent`, `no_push_token`, `push_failed`, `rate_limited`, `revoked`,
+`push_unavailable`), and for APNs the `env`, `topic`, HTTP `status`, `reason`
+and `apns_id`. Never the device token or the ciphertext. A host can ask for
+that same detail in the ack (`"diag": true` on its `push`; `ligus remote
+push-test` does): the ack then carries `"detail"`. Without `diag` acks are
+unchanged.
 
 Hosted deployments inject their own `TunnelPolicy` (entitlement: hosts can be
 `pending` — enrollment works, sessions get `4006`; pending hosts unseen for 30

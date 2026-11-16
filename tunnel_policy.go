@@ -37,6 +37,10 @@ type TunnelPolicy interface {
 type PushToken struct {
 	Token string `json:"token"` // hex
 	Env   string `json:"env"`   // "production" | "development"
+	// Topic is the app's bundle id as the phone reported it (optional; a
+	// phone that predates multi-topic relays leaves it out and gets the
+	// relay's default topic). A relay pushes only to allow-listed topics.
+	Topic string `json:"topic,omitempty"`
 }
 
 // PushSender delivers an already-encrypted push (spec §14). nil = push

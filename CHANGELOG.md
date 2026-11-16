@@ -10,6 +10,18 @@ default.
 
 ### Added
 
+- **Push to more than one app build.** `LIGUS_RELAY_APNS_TOPICS` (comma
+  list) allow-lists more bundle ids next to `LIGUS_RELAY_APNS_TOPIC` (which
+  keeps working alone). The phone may report its bundle id with its token
+  (`apns.topic`, optional); the relay pushes with it when allowed and refuses
+  otherwise, keeping the token. A phone that reports none gets the default
+  topic, and `DeviceTokenNotForTopic` for it no longer drops its token.
+  Postgres gains `relay_tunnel_push_tokens.topic` (added in place).
+- **Push results are logged.** Every host push is logged at info as `tunnel
+  push` with its result and, for APNs, env, topic, status, reason and apns-id
+  (never the device token). A host push may set `"diag": true` to get the same
+  as `"detail"` in its ack; acks without it are byte-identical.
+
 - **Contacts, `/v1/contacts/*`.** An opaque, client-signed contact record per
   random contact id (16 bytes, base64url), owned by a 32-byte write-key
   capability whose SHA-256 the relay stores, plus a sealed, append-only drop

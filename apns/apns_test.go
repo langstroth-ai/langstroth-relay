@@ -255,3 +255,32 @@ func TestParseP8(t *testing.T) {
 		t.Fatal("a P-384 key must be refused")
 	}
 }
+
+// A message's own topic (the bundle id the phone reported) overrides the
+// client's default; a client with no default still sends one that has it.
+func TestMessageTopicOverridesDefault(t *testing.T) {
+	var topics []string
+	var mu sync.Mutex
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		topics = append(topics, r.Header.Get("apns-topic"))
+		mu.Unlock()
+	})
+	for _, m := range []Message{{DeviceToken: devTok, Ciphertext: []byte("c")}, {DeviceToken: devTok, Ciphertext: []byte("c"), Topic: "com.example.hive.lab"}} {
+		if _, err := c.Send(context.Background(), m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.Topic = ""
+	if _, err := c.Send(context.Background(), Message{DeviceToken: devTok, Ciphertext: []byte("c")}); err == nil {
+		t.Fatal("no topic anywhere must be 'not configured'")
+	}
+	if _, err := c.Send(context.Background(), Message{DeviceToken: devTok, Ciphertext: []byte("c"), Topic: "com.example.hive.lab"}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(topics, ",") != "com.example.hive,com.example.hive.lab,com.example.hive.lab" {
+		t.Fatalf("topics %v", topics)
+	}
+}
