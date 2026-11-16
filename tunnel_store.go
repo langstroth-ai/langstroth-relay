@@ -264,6 +264,9 @@ CREATE TABLE IF NOT EXISTS relay_tunnel_push_tokens (
   updated_at BIGINT NOT NULL,
   PRIMARY KEY (host_id, pid)
 );
+-- The bundle id the phone reported with its token ('' = an app that predates
+-- multi-topic relays: the relay's default topic).
+ALTER TABLE relay_tunnel_push_tokens ADD COLUMN IF NOT EXISTS topic TEXT NOT NULL DEFAULT '';
 `
 
 func (s *postgresStore) TunnelHost(ctx context.Context, hostID string) (*TunnelHostRecord, error) {
@@ -338,17 +341,17 @@ func (s *postgresStore) SetTunnelPushToken(ctx context.Context, hostID, pid stri
 		return err
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO relay_tunnel_push_tokens (host_id, pid, token, env, updated_at) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (host_id, pid) DO UPDATE SET token = EXCLUDED.token, env = EXCLUDED.env, updated_at = EXCLUDED.updated_at`,
-		hostID, pid, tok.Token, tok.Env, now)
+INSERT INTO relay_tunnel_push_tokens (host_id, pid, token, env, topic, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (host_id, pid) DO UPDATE SET token = EXCLUDED.token, env = EXCLUDED.env, topic = EXCLUDED.topic, updated_at = EXCLUDED.updated_at`,
+		hostID, pid, tok.Token, tok.Env, tok.Topic, now)
 	return err
 }
 
 func (s *postgresStore) TunnelPushToken(ctx context.Context, hostID, pid string) (*PushToken, error) {
 	var t PushToken
 	err := s.pool.QueryRow(ctx,
-		`SELECT token, env FROM relay_tunnel_push_tokens WHERE host_id = $1 AND pid = $2`, hostID, pid).
-		Scan(&t.Token, &t.Env)
+		`SELECT token, env, topic FROM relay_tunnel_push_tokens WHERE host_id = $1 AND pid = $2`, hostID, pid).
+		Scan(&t.Token, &t.Env, &t.Topic)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

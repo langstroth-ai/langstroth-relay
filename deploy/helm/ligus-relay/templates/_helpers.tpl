@@ -181,6 +181,10 @@ spec:
           value: {{ $v.tunnel.apns.teamId | quote }}
         - name: LIGUS_RELAY_APNS_TOPIC
           value: {{ $v.tunnel.apns.topic | quote }}
+        {{- with $v.tunnel.apns.topics }}
+        - name: LIGUS_RELAY_APNS_TOPICS
+          value: {{ join "," . | quote }}
+        {{- end }}
         - name: LIGUS_RELAY_APNS_ENV
           value: {{ $v.tunnel.apns.env | quote }}
         {{- end }}

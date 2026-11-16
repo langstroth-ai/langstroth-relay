@@ -47,6 +47,8 @@ tunnel:
     keyId: ""
     teamId: ""
     topic: ""
+    # More bundle ids this relay may push to (e.g. a dev build), as a list.
+    topics: []
     # auto | sandbox | production
     env: auto
 
