@@ -19,7 +19,9 @@ spec:
         checksum/secrets: {{ include "ligus-auth.secretsChecksum" . }}
         {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
     spec:
+      serviceAccountName: {{ include "ligus-auth.fullname" . }}
       automountServiceAccountToken: false
+      enableServiceLinks: false
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: ligus-auth

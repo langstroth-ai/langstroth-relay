@@ -215,3 +215,45 @@ func TestChartSecretsAreFiles(t *testing.T) {
 		t.Fatal("postgres.enabled without postgres.existingSecret must fail")
 	}
 }
+
+func renderAuth(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not installed")
+	}
+	cmd := exec.Command("helm", append([]string{"template", "t", "deploy/helm/ligus-auth", "--kube-version", "1.30.0",
+		"-f", "deploy/helm/ligus-auth/ci/dex-values.yaml"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// ligus-auth had no NetworkPolicy: its admin port was reachable from every
+// pod, agent-running serve pods included.
+func TestAuthChartNetworkPolicy(t *testing.T) {
+	out, err := renderAuth(t)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	np := ""
+	for _, d := range docs(out) {
+		if strings.Contains(d, "kind: NetworkPolicy\n") {
+			np = d
+		}
+	}
+	if np == "" {
+		t.Fatal("no NetworkPolicy")
+	}
+	if strings.Contains(np, "port: admin") {
+		t.Fatal("admin port admitted by default")
+	}
+	if !strings.Contains(np, "- Egress") || !strings.Contains(np, "169.254.0.0/16") || !strings.Contains(np, "k8s-app: kube-dns") {
+		t.Fatalf("egress must be restricted to DNS and the IdP, never cloud metadata:\n%s", np)
+	}
+	if !strings.Contains(out, "kind: ServiceAccount") || !strings.Contains(out, "enableServiceLinks: false") {
+		t.Fatal("ligus-auth needs its own token-less ServiceAccount and no service links")
+	}
+	out, _ = renderAuth(t, "--set", "networkPolicy.adminIngressFrom[0].podSelector.matchLabels.app=admin-ui")
+	if !strings.Contains(out, "port: admin") {
+		t.Fatal("adminIngressFrom must open the admin port to the listed peers")
+	}
+}

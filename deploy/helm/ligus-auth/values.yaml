@@ -78,6 +78,44 @@ ingress:
   annotations: {}
   tls: []
 
+networkPolicy:
+  enabled: true
+  # Who reaches the public port (8090). Empty = anywhere (clients come through
+  # your ingress controller); list the controller's namespace to narrow it.
+  ingressFrom: []
+  # Who reaches the admin API (8091). Empty = no pod at all (the default):
+  # agent-running serve pods and everything else in the cluster are refused.
+  # kubectl port-forward still works.
+  adminIngressFrom: []
+  # Default-deny egress except DNS, idpEgress and extraEgress.
+  restrictEgress: true
+  # HTTPS to the IdP. NetworkPolicy can't match host names, so the default is
+  # any address on 443 except cloud metadata and private ranges; narrow it to
+  # your IdP's addresses if you can.
+  idpEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16      # cloud instance metadata
+              - 100.100.100.200/32  # Alibaba Cloud metadata
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - {port: 443, protocol: TCP}
+  # The database (store.driver=postgres) and anything else, e.g.
+  #   - to: [{ipBlock: {cidr: 10.0.12.5/32}}]
+  #     ports: [{port: 5432, protocol: TCP}]
+  extraEgress: []
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+
 resources:
   requests: {cpu: 20m, memory: 32Mi}
   limits: {memory: 128Mi}

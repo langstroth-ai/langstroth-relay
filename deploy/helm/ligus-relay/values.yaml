@@ -220,7 +220,11 @@ networkPolicy:
   # through an ingress controller or from workspace namespaces).
   ingressFrom: []
   # Default-deny egress except DNS, the in-chart Postgres and what is listed
-  # in extraEgress (an external database, APNs on 443, ...).
+  # in extraEgress (an external database, APNs on 443, ...). For 443 to the
+  # internet use an ipBlock that excludes cloud metadata and private ranges:
+  #   - to: [{ipBlock: {cidr: 0.0.0.0/0, except: [169.254.0.0/16, 100.100.100.200/32,
+  #                                               10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]}}]
+  #     ports: [{port: 443, protocol: TCP}]
   restrictEgress: true
   extraEgress: []
   # Where DNS egress may go: the cluster resolver's pods. The defaults match
