@@ -42,7 +42,10 @@ spec:
     {{- with $np.idpEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    # The database and anything else.
+    {{- $ctx := include "ligus-auth.dbCtx" . | fromYaml }}
+    {{- $_ := set $ctx "root" . }}
+    {{- include "ligus-postgres.egressRules" $ctx | nindent 4 }}
+    # Anything else.
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

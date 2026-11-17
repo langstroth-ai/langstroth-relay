@@ -49,15 +49,176 @@ adminToken:
   existingSecret: ""
   key: admin-token
 
-# Store: "file" (one replica, state on a volume) or "postgres" (shared).
+# Store: "file" (one replica, state on a volume) or "postgres" (shared;
+# database.mode below picks which Postgres).
 store:
   driver: file
-  # postgres: a Secret with the DSN, mounted as a file
-  # (LIGUS_AUTH_DATABASE_URL_FILE). Use sslmode=verify-full with the server's
-  # CA for any database off the node.
+  # DEPRECATED (use database.mode=external, database.external.*): with
+  # driver=postgres and database.mode empty, a Secret with the DSN.
   databaseUrl:
     existingSecret: ""
     key: database-url
+
+# The Postgres store (README of the ligus-relay chart, "Database"; the same
+# three modes, from the shared ligus-postgres library). Any mode but none
+# sets store.driver=postgres. Empty (default): store.driver=postgres with
+# store.databaseUrl (deprecated) means external, else the file store.
+database:
+  mode: ""
+  name: ligus_auth
+  user: ligus_auth
+  # The chart checks that the cluster serves the operator APIs it renders
+  # (postgresql.cnpg.io/v1, cert-manager.io/v1, monitoring.coreos.com/v1).
+  # helm template and GitOps tools without cluster access see none: pass
+  # --api-versions, or set this to skip the check.
+  skipCapabilityCheck: false
+
+  external:
+    # A Secret holding the full DSN, mounted as a file
+    # (LIGUS_AUTH_DATABASE_URL_FILE).
+    # Use sslmode=verify-full with sslrootcert= pointing at a CA file you
+    # mount (secretFiles.existingSecret is a directory of files), or
+    # sslrootcert=system for a publicly trusted server certificate.
+    existingSecret: ""
+    existingSecretKey: DATABASE_URL
+    # The database's addresses for the egress NetworkPolicy (ipBlock). Must
+    # not contain a cloud metadata address; anything broader than /8 (IPv4)
+    # or /48 (IPv6), and IPv4-mapped or NAT64 IPv6 forms, are refused. Empty: add it to networkPolicy.extraEgress yourself.
+    cidrs: []
+    port: 5432
+
+  cnpg:
+    # 1 for a single instance; 3 (or more) for HA with automatic failover.
+    instances: 1
+    # Postgres image (CloudNativePG's own, by default the operator's); pin a
+    # digest in production. Or imageCatalogRef.
+    imageName: ""
+    imageCatalogRef: {}
+    storage:
+      size: 2Gi
+      storageClass: ""
+    walStorage: {}
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    affinity: {}
+    # null keeps the operator's default (a PDB on the primary, which blocks
+    # node drains with one instance).
+    enablePDB: null
+    # postgresql.conf parameters.
+    parameters: {}
+    # Replaces the default bootstrap (initdb of database.name owned by
+    # database.user), e.g. {recovery: {source: origin}} with externalClusters
+    # to restore from a backup.
+    bootstrap: {}
+    externalClusters: []
+    backups:
+      # Backups are on unless you say otherwise: enabled=false renders only
+      # with acknowledgeNoBackups=true.
+      enabled: true
+      acknowledgeNoBackups: false
+      # barmanObjectStore (in-tree, spec.backup.barmanObjectStore) or plugin
+      # (the Barman Cloud plugin, CloudNativePG 1.26+).
+      method: barmanObjectStore
+      # Passed through verbatim, e.g.
+      #   destinationPath: s3://bucket/ligus-auth
+      #   s3Credentials:
+      #     accessKeyId: {name: ligus-auth-backup-s3, key: ACCESS_KEY_ID}
+      #     secretAccessKey: {name: ligus-auth-backup-s3, key: ACCESS_SECRET_KEY}
+      #   wal: {compression: gzip}
+      barmanObjectStore: {}
+      retentionPolicy: 30d
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        # e.g. {barmanObjectName: ligus-auth-store} (an ObjectStore you create).
+        parameters: {}
+      # Six fields, seconds first (CloudNativePG's cron format).
+      schedule: "0 0 3 * * *"
+      immediate: true
+    podMonitor:
+      enabled: false
+      interval: ""
+      labels: {}
+    networkPolicy:
+      # Ingress to the instances: the ligus-auth pod, the cluster's own
+      # instances, and the operator's namespace (match yours).
+      enabled: true
+      operatorNamespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cnpg-system
+      operatorPodSelector: {}
+      # Who may scrape metrics on 9187, as NetworkPolicy peers.
+      metricsFrom: []
+
+  bundled:
+    image:
+      repository: docker.io/library/postgres
+      # Pinned by tag and digest (required). Stays on Postgres 16: a major
+      # bump needs a pg_upgrade of the existing data volume.
+      tag: 16.16-alpine3.24@sha256:0adbf25a9e96d38823bb813f3ac0ed41fadb665c88f1df7fe6dbfb060cbdc106
+      pullPolicy: IfNotPresent
+    auth:
+      # Required: a Secret with `password` (the role's password) and
+      # `pgpass` (a libpq password-file line for ligus-auth):
+      #   PW=$(openssl rand -hex 24)
+      #   kubectl -n <ns> create secret generic ligus-auth-postgres-auth \
+      #     --from-literal=password=$PW --from-literal=pgpass="*:*:*:ligus_auth:$PW"
+      existingSecret: ""
+      pgpassKey: pgpass
+    tls:
+      # A kubernetes.io/tls Secret with tls.crt, tls.key and the issuing CA
+      # (caKey), for DNS name <release>-ligus-auth-postgres; or
+      # certManager.issuerRef to have cert-manager issue it (use a CA or
+      # self-signed-CA Issuer, so the Secret carries ca.crt).
+      existingSecret: ""
+      caKey: ca.crt
+      certManager:
+        issuerRef: {}
+        #   name: ligus-ca
+        #   kind: Issuer
+        duration: ""
+        renewBefore: ""
+    # Without TLS the chart refuses to render; true accepts plaintext inside
+    # the namespace (development only).
+    allowPlaintextInNamespace: false
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+      # ReadWriteOncePod: never mounted by two pods at once. Use
+      # ReadWriteOnce where the storage provisioner refuses it.
+      accessModes: [ReadWriteOncePod]
+    # postgresql.conf parameters (passed as -c key=value). ssl*, hba_file,
+    # ident_file, config_file, password_encryption and listen_addresses are
+    # the chart's and refused.
+    parameters: {}
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    nodeSelector: {}
+    tolerations: []
+    backups:
+      # pg_dump to a PVC. enabled=false renders only with
+      # acknowledgeNoBackups=true.
+      enabled: true
+      acknowledgeNoBackups: false
+      schedule: "17 3 * * *"
+      timeZone: ""
+      # Dumps kept on the volume (newest first).
+      keep: 7
+      activeDeadlineSeconds: 3600
+      persistence:
+        size: 2Gi
+        storageClass: ""
+        accessModes: [ReadWriteOnce]
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { memory: 512Mi }
+      restore:
+        # A dump file name on the backup volume (ligus_auth-<UTC time>.dump). While
+        # set, the chart runs a restore Job, scales ligus-auth to zero and
+        # suspends the CronJob. Unset it when the Job has succeeded.
+        file: ""
 
 persistence:
   # The file store needs it: without it every session is lost on restart and
@@ -118,9 +279,7 @@ networkPolicy:
               - 192.168.0.0/16
       ports:
         - {port: 443, protocol: TCP}
-  # The database (store.driver=postgres) and anything else, e.g.
-  #   - to: [{ipBlock: {cidr: 10.0.12.5/32}}]
-  #     ports: [{port: 5432, protocol: TCP}]
+  # Anything else. The database's rule comes from database.mode.
   extraEgress: []
   dns:
     namespaceSelector:

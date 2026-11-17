@@ -76,36 +76,193 @@ singlePod:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: "1", memory: 256Mi }
 
-# Store. Exactly one of: postgres.enabled (in-chart, for kind/k3d and tests
-# only), externalDatabase (managed Postgres, recommended), or neither (memory
-# store, topology=single only, optionally snapshotted to a PVC).
+# Store: the relay's PostgreSQL (README, "Database"). database.mode picks one:
+#   external  a managed or separately run Postgres (recommended when you have
+#             one): the DSN comes from a Secret, sslmode=verify-full.
+#   cnpg      a CloudNativePG Cluster in the release namespace (operator
+#             required): TLS verify-full against the operator's CA, 1 or 3+
+#             instances, WAL archiving and scheduled backups.
+#   bundled   one hardened Postgres pod for small self-hosts: TLS, a
+#             non-superuser role, scram-sha-256, a pg_dump CronJob. No HA.
+#   none      the in-memory store (topology=single only).
+# Empty (default): derived from the deprecated keys below (externalDatabase.*
+# means external, postgres.enabled the old development pod), else none.
+database:
+  mode: ""
+  name: relay
+  user: relay
+  # The chart checks that the cluster serves the operator APIs it renders
+  # (postgresql.cnpg.io/v1, cert-manager.io/v1, monitoring.coreos.com/v1).
+  # helm template and GitOps tools without cluster access see none: pass
+  # --api-versions, or set this to skip the check.
+  skipCapabilityCheck: false
+
+  external:
+    # A Secret holding the full DSN, mounted as a file (DATABASE_URL_FILE).
+    # Use sslmode=verify-full with sslrootcert= pointing at a CA file you
+    # mount (config.existingSecret is a directory of files), or
+    # sslrootcert=system for a publicly trusted server certificate.
+    existingSecret: ""
+    existingSecretKey: DATABASE_URL
+    # The database's addresses for the egress NetworkPolicy (ipBlock). Must
+    # not contain a cloud metadata address; anything broader than /8 (IPv4)
+    # or /48 (IPv6), and IPv4-mapped or NAT64 IPv6 forms, are refused. Empty: add it to networkPolicy.extraEgress yourself.
+    cidrs: []
+    port: 5432
+
+  cnpg:
+    # 1 for a single instance; 3 (or more) for HA with automatic failover.
+    instances: 1
+    # Postgres image (CloudNativePG's own, by default the operator's); pin a
+    # digest in production. Or imageCatalogRef.
+    imageName: ""
+    imageCatalogRef: {}
+    storage:
+      size: 10Gi
+      storageClass: ""
+    walStorage: {}
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    affinity: {}
+    # null keeps the operator's default (a PDB on the primary, which blocks
+    # node drains with one instance).
+    enablePDB: null
+    # postgresql.conf parameters.
+    parameters: {}
+    # Replaces the default bootstrap (initdb of database.name owned by
+    # database.user), e.g. {recovery: {source: origin}} with externalClusters
+    # to restore from a backup.
+    bootstrap: {}
+    externalClusters: []
+    backups:
+      # Backups are on unless you say otherwise: enabled=false renders only
+      # with acknowledgeNoBackups=true.
+      enabled: true
+      acknowledgeNoBackups: false
+      # barmanObjectStore (in-tree, spec.backup.barmanObjectStore) or plugin
+      # (the Barman Cloud plugin, CloudNativePG 1.26+).
+      method: barmanObjectStore
+      # Passed through verbatim, e.g.
+      #   destinationPath: s3://bucket/relay
+      #   s3Credentials:
+      #     accessKeyId: {name: relay-backup-s3, key: ACCESS_KEY_ID}
+      #     secretAccessKey: {name: relay-backup-s3, key: ACCESS_SECRET_KEY}
+      #   wal: {compression: gzip}
+      barmanObjectStore: {}
+      retentionPolicy: 30d
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        # e.g. {barmanObjectName: relay-store} (an ObjectStore you create).
+        parameters: {}
+      # Six fields, seconds first (CloudNativePG's cron format).
+      schedule: "0 0 3 * * *"
+      immediate: true
+    podMonitor:
+      enabled: false
+      interval: ""
+      labels: {}
+    networkPolicy:
+      # Ingress to the instances: the relay pods, the cluster's own
+      # instances, and the operator's namespace (match yours).
+      enabled: true
+      operatorNamespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cnpg-system
+      operatorPodSelector: {}
+      # Who may scrape metrics on 9187, as NetworkPolicy peers.
+      metricsFrom: []
+
+  bundled:
+    image:
+      repository: docker.io/library/postgres
+      # Pinned by tag and digest (required). Stays on Postgres 16: a major
+      # bump needs a pg_upgrade of the existing data volume.
+      tag: 16.16-alpine3.24@sha256:0adbf25a9e96d38823bb813f3ac0ed41fadb665c88f1df7fe6dbfb060cbdc106
+      pullPolicy: IfNotPresent
+    auth:
+      # Required: a Secret with `password` (the role's password) and
+      # `pgpass` (a libpq password-file line for the relay):
+      #   PW=$(openssl rand -hex 24)
+      #   kubectl -n <ns> create secret generic relay-postgres-auth \
+      #     --from-literal=password=$PW --from-literal=pgpass="*:*:*:relay:$PW"
+      existingSecret: ""
+      pgpassKey: pgpass
+    tls:
+      # A kubernetes.io/tls Secret with tls.crt, tls.key and the issuing CA
+      # (caKey), for DNS name <release>-ligus-relay-postgres; or
+      # certManager.issuerRef to have cert-manager issue it (use a CA or
+      # self-signed-CA Issuer, so the Secret carries ca.crt).
+      existingSecret: ""
+      caKey: ca.crt
+      certManager:
+        issuerRef: {}
+        #   name: ligus-ca
+        #   kind: Issuer
+        duration: ""
+        renewBefore: ""
+    # Without TLS the chart refuses to render; true accepts plaintext inside
+    # the namespace (development only).
+    allowPlaintextInNamespace: false
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: ""
+      # ReadWriteOncePod: never mounted by two pods at once. Use
+      # ReadWriteOnce where the storage provisioner refuses it.
+      accessModes: [ReadWriteOncePod]
+    # postgresql.conf parameters (passed as -c key=value). ssl*, hba_file,
+    # ident_file, config_file, password_encryption and listen_addresses are
+    # the chart's and refused.
+    parameters: {}
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    nodeSelector: {}
+    tolerations: []
+    backups:
+      # pg_dump to a PVC. enabled=false renders only with
+      # acknowledgeNoBackups=true.
+      enabled: true
+      acknowledgeNoBackups: false
+      schedule: "17 3 * * *"
+      timeZone: ""
+      # Dumps kept on the volume (newest first).
+      keep: 7
+      activeDeadlineSeconds: 3600
+      persistence:
+        size: 5Gi
+        storageClass: ""
+        accessModes: [ReadWriteOnce]
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { memory: 512Mi }
+      restore:
+        # A dump file name on the backup volume (relay-<UTC time>.dump). While
+        # set, the chart runs a restore Job, scales the relay to zero and
+        # suspends the CronJob. Unset it when the Job has succeeded.
+        file: ""
+
+# DEPRECATED (use database.mode=external and database.external.*): still
+# honored when database.mode is empty, with a note at install.
 externalDatabase:
-  # Full DATABASE_URL, mounted as a file (DATABASE_URL_FILE). Prefer
-  # existingSecret. Use sslmode=verify-full with the server's CA
-  # (sslrootcert=/path in a mounted Secret) for any database off the node.
+  # Full DATABASE_URL, rendered into a chart Secret. Prefer existingSecret.
   url: ""
   existingSecret: ""
   existingSecretKey: DATABASE_URL
 
+# DEPRECATED (use database.mode=bundled): postgres.enabled still renders the
+# old development pod unchanged (no TLS, no backups, the role is superuser)
+# when database.mode is empty, with a note at install.
 postgres:
-  # A single-pod Postgres for development and CI. Not for production: no
-  # backups, no HA, no TLS. Use a managed database or an operator instead.
   enabled: false
   image:
     repository: docker.io/library/postgres
-    # Pinned by tag and digest. Stays on Postgres 16: a major bump needs a
-    # pg_upgrade of the existing data volume.
     tag: 16.16-alpine3.24@sha256:0adbf25a9e96d38823bb813f3ac0ed41fadb665c88f1df7fe6dbfb060cbdc106
     pullPolicy: IfNotPresent
   database: relay
   username: relay
-  # Required: a Secret with keys `password` and `DATABASE_URL` (the chart
-  # generates nothing, so helm template, Argo CD and Flux are stable):
-  #   PW=$(openssl rand -hex 24)
-  #   kubectl -n <ns> create secret generic relay-dev-postgres \
-  #     --from-literal=password=$PW \
-  #     --from-literal=DATABASE_URL="postgres://relay:$PW@<release>-ligus-relay-postgres:5432/relay?sslmode=disable"
-  # (sslmode=disable is acceptable only for this in-cluster development pod.)
+  # A Secret with keys `password` and `DATABASE_URL` (sslmode=disable).
   existingSecret: ""
   persistence:
     enabled: true
@@ -242,8 +399,8 @@ networkPolicy:
   # Sources allowed to reach the relay port; empty = any source (clients come
   # through an ingress controller or from workspace namespaces).
   ingressFrom: []
-  # Default-deny egress except DNS, the in-chart Postgres and what is listed
-  # in extraEgress (an external database, APNs on 443, ...). For 443 to the
+  # Default-deny egress except DNS, the chosen database (database.mode) and
+  # what is listed in extraEgress (APNs on 443, ...). For 443 to the
   # internet use an ipBlock that excludes cloud metadata and private ranges:
   #   - to: [{ipBlock: {cidr: 0.0.0.0/0, except: [169.254.0.0/16, 100.100.100.200/32,
   #                                               10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]}}]

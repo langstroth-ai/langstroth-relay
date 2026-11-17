@@ -12,10 +12,9 @@ Ligus relay ({{ (include "ligus-relay.topology" .) }} topology, tunnel {{ .Value
 
 WARNING: no database. State is in memory{{ if .Values.persistence.enabled }} with a snapshot on a PVC{{ end }}; fine for kind/k3d, not for production.
 {{- end }}
-{{- if .Values.postgres.enabled }}
-
-WARNING: postgres.enabled runs a single development Postgres pod. Use a managed database in production.
-{{- end }}
+{{- $ctx := include "ligus-relay.dbCtx" . | fromYaml }}
+{{- $_ := set $ctx "root" . }}
+{{- include "ligus-postgres.notes" $ctx }}
 
 Clients outside the cluster need https://: enable ingress or httpRoute with TLS (idle timeout above 60 s for the tunnel).
 

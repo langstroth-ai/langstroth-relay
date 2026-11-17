@@ -156,7 +156,7 @@ empty: an unreadable file would otherwise read as unset, and an unset
 ```sh
 go test -race ./...                            # unit + HTTP + snapshot + seams (+ chart render tests when helm is installed)
 TEST_DATABASE_URL=postgres://… go test ./...   # also runs Postgres integration
-helm lint deploy/helm/ligus-relay              # the Kubernetes chart
+helm lint --strict deploy/helm/ligus-relay     # the Kubernetes chart (also -f each ci/*-values.yaml)
 ```
 
 ## Upgrading
@@ -211,6 +211,10 @@ relay.example.com {
   migration). Short pairing codes, SSE fan-out and rate limits stay per
   process, so the Helm chart runs exactly one sync instance in 2.0; more than
   one is unsupported.
+- **On Kubernetes** the chart's `database.mode` picks the Postgres: `external`
+  (managed), `cnpg` (a CloudNativePG cluster in the release namespace, HA and
+  PITR) or `bundled` (one hardened pod with TLS and nightly dumps, no HA).
+  See `deploy/helm/ligus-relay/README.md`, "Database".
 
 #### Envelope retention
 

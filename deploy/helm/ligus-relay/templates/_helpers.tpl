@@ -46,33 +46,75 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+The effective database settings (YAML): database.* with the deprecated
+externalDatabase.* and postgres.* keys mapped onto it when database.mode is
+empty. The shape is what the ligus-postgres library expects.
+*/}}
+{{- define "ligus-relay.database" -}}
+{{- $v := .Values -}}
+{{- /* Chart defaults under what was set: an upgrade with --reuse-values
+     carries the previous release's values, which may predate database.*. */ -}}
+{{- $defaults := mergeOverwrite (include "ligus-postgres.defaults" . | fromYaml) (dict "name" "relay" "user" "relay") -}}
+{{- $d := mergeOverwrite (deepCopy $defaults) (deepCopy (default (dict) $v.database)) -}}
+{{- $dep := list -}}
+{{- $legacyExt := or $v.externalDatabase.url $v.externalDatabase.existingSecret -}}
+{{- $_ := set $d.external "secretName" $d.external.existingSecret -}}
+{{- $_ := set $d.external "secretKey" $d.external.existingSecretKey -}}
+{{- $_ := set $d.bundled "legacy" false -}}
+{{- if not $d.mode -}}
+{{- if and $v.postgres.enabled $legacyExt -}}
+{{- fail "set either postgres.enabled or externalDatabase, not both (both are deprecated: use database.mode)" -}}
+{{- else if $legacyExt -}}
+{{- $_ := set $d "mode" "external" -}}
+{{- $_ := set $d.external "secretName" (default (printf "%s-db" (include "ligus-relay.fullname" .)) $v.externalDatabase.existingSecret) -}}
+{{- $_ := set $d.external "secretKey" (ternary $v.externalDatabase.existingSecretKey "DATABASE_URL" (not (empty $v.externalDatabase.existingSecret))) -}}
+{{- $dep = append $dep "externalDatabase.* is deprecated: use database.mode=external with database.external.existingSecret (and database.external.cidrs for the egress policy)." -}}
+{{- else if $v.postgres.enabled -}}
+{{- $_ := set $d "mode" "bundled" -}}
+{{- $_ := set $d "name" $v.postgres.database -}}
+{{- $_ := set $d "user" $v.postgres.username -}}
+{{- $b := $d.bundled -}}
+{{- $_ := set $b "legacy" true -}}
+{{- $_ := set $b "image" $v.postgres.image -}}
+{{- $_ := set $b.auth "existingSecret" $v.postgres.existingSecret -}}
+{{- $_ := set $b "tls" (dict "existingSecret" "" "caKey" "ca.crt" "certManager" (dict "issuerRef" (dict))) -}}
+{{- $_ := set $b "allowPlaintextInNamespace" true -}}
+{{- $_ := set $b "persistence" (merge (dict "accessModes" (list "ReadWriteOnce")) $v.postgres.persistence) -}}
+{{- $_ := set $b "resources" $v.postgres.resources -}}
+{{- $_ := set $b "parameters" (dict) -}}
+{{- $_ := set $b "backups" (merge (dict "enabled" false "acknowledgeNoBackups" true "restore" (dict "file" "")) (omit $b.backups "enabled" "acknowledgeNoBackups" "restore")) -}}
+{{- $dep = append $dep "postgres.enabled is deprecated: it still runs the old development pod (no TLS, no backups, superuser role). Use database.mode=bundled (TLS, pg_dump backups) or database.mode=cnpg; see the README for moving the data." -}}
+{{- else -}}
+{{- $_ := set $d "mode" "none" -}}
+{{- end -}}
+{{- else if or $legacyExt $v.postgres.enabled -}}
+{{- fail "database.mode is set: remove the deprecated externalDatabase.* / postgres.enabled settings (they would be ignored)" -}}
+{{- end -}}
+{{- $_ := set $d "deprecated" $dep -}}
+{{- toYaml $d -}}
+{{- end -}}
+
+{{/* The context dict for the ligus-postgres library (call with the root). */}}
+{{- define "ligus-relay.dbCtx" -}}
+{{- $sel := dict "matchLabels" (dict "app.kubernetes.io/name" (include "ligus-relay.name" .) "app.kubernetes.io/instance" .Release.Name) "matchExpressions" (list (dict "key" "app.kubernetes.io/component" "operator" "In" "values" (list "relay" "sync" "tunnel"))) -}}
+{{- toYaml (dict
+  "db" (include "ligus-relay.database" . | fromYaml)
+  "fullname" (include "ligus-relay.fullname" .)
+  "labels" (include "ligus-relay.labels" .)
+  "dbNameLabel" (include "ligus-relay.name" .)
+  "clientSelector" $sel
+  "mountBase" "/etc/ligus-relay"
+  "dsnFile" "DATABASE_URL"
+  "valuesPrefix" "database"
+  "networkPolicy" .Values.networkPolicy.enabled
+  "restrictEgress" .Values.networkPolicy.restrictEgress
+  "dns" .Values.networkPolicy.dns) -}}
+{{- end -}}
+
 {{/* true when the relay gets a DATABASE_URL */}}
 {{- define "ligus-relay.hasDatabase" -}}
-{{- if or .Values.postgres.enabled .Values.externalDatabase.url .Values.externalDatabase.existingSecret -}}true{{- end -}}
-{{- end -}}
-
-{{- define "ligus-relay.databaseSecretName" -}}
-{{- if .Values.externalDatabase.existingSecret -}}
-{{- .Values.externalDatabase.existingSecret -}}
-{{- else if .Values.postgres.enabled -}}
-{{- .Values.postgres.existingSecret -}}
-{{- else -}}
-{{- printf "%s-db" (include "ligus-relay.fullname" .) -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "ligus-relay.databaseSecretKey" -}}
-{{- if .Values.externalDatabase.existingSecret -}}
-{{- .Values.externalDatabase.existingSecretKey -}}
-{{- else if .Values.postgres.enabled -}}
-DATABASE_URL
-{{- else -}}
-DATABASE_URL
-{{- end -}}
-{{- end -}}
-
-{{- define "ligus-relay.postgresName" -}}
-{{- printf "%s-postgres" (include "ligus-relay.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- if ne (include "ligus-relay.database" . | fromYaml).mode "none" -}}true{{- end -}}
 {{- end -}}
 
 {{/* Fail early on combinations that cannot work. */}}
@@ -86,14 +128,8 @@ DATABASE_URL
 {{- if and (eq .Values.tunnel.mode "allowlist") (empty .Values.tunnel.allowedHosts) -}}
 {{- fail "tunnel.mode=allowlist needs tunnel.allowedHosts" -}}
 {{- end -}}
-{{- if and .Values.postgres.enabled (not .Values.postgres.existingSecret) -}}
-{{- fail (printf "postgres.enabled needs postgres.existingSecret (keys password and DATABASE_URL); the chart generates no passwords, so helm template and GitOps render the same thing every time. Create it with:\n  PW=$(openssl rand -hex 24)\n  kubectl -n %s create secret generic relay-dev-postgres --from-literal=password=$PW --from-literal=DATABASE_URL=\"postgres://%s:$PW@%s:5432/%s?sslmode=disable\"" .Release.Namespace .Values.postgres.username (include "ligus-relay.postgresName" .) .Values.postgres.database) -}}
-{{- end -}}
-{{- if and .Values.postgres.enabled (or .Values.externalDatabase.url .Values.externalDatabase.existingSecret) -}}
-{{- fail "set either postgres.enabled or externalDatabase, not both" -}}
-{{- end -}}
 {{- if and (eq (include "ligus-relay.topology" .) "split") (not (include "ligus-relay.hasDatabase" .)) -}}
-{{- fail "topology=split needs Postgres (postgres.enabled or externalDatabase): two pods cannot share the in-memory store. Use topology=single for a memory store." -}}
+{{- fail "topology=split needs Postgres (database.mode external, cnpg or bundled): two pods cannot share the in-memory store. Use topology=single for a memory store." -}}
 {{- end -}}
 {{- if and .Values.persistence.enabled (include "ligus-relay.hasDatabase" .) -}}
 {{- fail "persistence is the memory-store snapshot; it is not used with a database" -}}
@@ -285,12 +321,9 @@ spec:
         defaultMode: 0400
     {{- end }}
     {{- if include "ligus-relay.hasDatabase" $root }}
-    - name: db
-      secret:
-        secretName: {{ include "ligus-relay.databaseSecretName" $root }}
-        defaultMode: 0400
-        items:
-          - { key: {{ include "ligus-relay.databaseSecretKey" $root }}, path: DATABASE_URL }
+    {{- $ctx := include "ligus-relay.dbCtx" $root | fromYaml }}
+    {{- $_ := set $ctx "root" $root }}
+    {{- include "ligus-postgres.clientVolume" $ctx | nindent 4 }}
     {{- end }}
     {{- if $v.persistence.enabled }}
     - name: data
@@ -339,9 +372,12 @@ podAnnotations). Args: dict root withApns.
 {{- $names := list -}}
 {{- with $v.config.existingSecret }}{{ $names = append $names . }}{{ end -}}
 {{- with $v.metrics.token.existingSecret }}{{ $names = append $names . }}{{ end -}}
-{{- if include "ligus-relay.hasDatabase" $root }}{{ $names = append $names (include "ligus-relay.databaseSecretName" $root) }}{{ end -}}
+{{- $ctx := include "ligus-relay.dbCtx" $root | fromYaml -}}
+{{- $_ := set $ctx "root" $root -}}
+{{- range (include "ligus-postgres.clientSecretNames" $ctx | fromJsonArray) }}{{ $names = append $names . }}{{ end -}}
 {{- if and .withApns $v.tunnel.apns.existingSecret }}{{ $names = append $names $v.tunnel.apns.existingSecret }}{{ end -}}
 {{- $data := dict "rendered" (include (print $root.Template.BasePath "/secret-db.yaml") $root) -}}
+{{- if include "ligus-postgres.builtDSN" $ctx }}{{ $_ := set $data "dsn" (include "ligus-postgres.dsn" $ctx) }}{{ end -}}
 {{- range $n := ($names | uniq | sortAlpha) -}}
 {{- $s := lookup "v1" "Secret" $root.Release.Namespace $n -}}
 {{- $_ := set $data $n (dig "data" (dict) $s) -}}

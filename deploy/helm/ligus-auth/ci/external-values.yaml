@@ -1,0 +1,6 @@
+# CI (with dex-values.yaml): ligus-auth on an external Postgres.
+database:
+  mode: external
+  external:
+    existingSecret: ligus-auth-database
+    cidrs: [10.20.0.16/32]
