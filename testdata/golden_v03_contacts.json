@@ -1,0 +1,267 @@
+[
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "not found\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/not-a-cid"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "invalid contact id\n"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":{\"v\":1,\"name\":\"Ana\"}}"
+    },
+    "status": 401,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "contact key required\n"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":{\"v\":1,\"name\":\"Ana\"}}",
+      "key": "short"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "invalid contact key\n"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":null}",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "record required\n"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":{\"v\":1,\"name\":\"Ana\"}}",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"created\":true,\"expiresAt\":\u003cTS\u003e,\"updatedAt\":\u003cTS\u003e}"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":{\"v\":2,\"name\":\"Ana\"},\"writeKey\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"created\":false,\"expiresAt\":\u003cTS\u003e,\"updatedAt\":\u003cTS\u003e}"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":{\"v\":3}}",
+      "key": "HxAREhMUFRYXGBkaGxwdHh8AAQIDBAUGBwgJCgsMDQ4"
+    },
+    "status": 403,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "contact key does not match\n"
+  },
+  {
+    "req": {
+      "method": "PUT",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "body": "{\"record\":{\"v\":3},\"writeKey\":\"HxAREhMUFRYXGBkaGxwdHh8AAQIDBAUGBwgJCgsMDQ4\"}",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "header and body write keys differ\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "cache": "no-store",
+    "body": "{\"record\":{\"v\":2,\"name\":\"Ana\"},\"updatedAt\":\u003cTS\u003e}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "bearer": "ghp_0123456789abcdef"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "forge tokens are not accepted by the relay\n"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "body": "{\"blob\":{\"sealed\":\"x\"}}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "body": "{\"blob\":\"second\"}"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "POST",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "body": "{\"blob\":null}"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "blob required\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop"
+    },
+    "status": 401,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "contact key required\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "key": "HxAREhMUFRYXGBkaGxwdHh8AAQIDBAUGBwgJCgsMDQ4"
+    },
+    "status": 403,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "contact key does not match\n"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "cache": "no-store",
+    "body": "{\"items\":[{\"seq\":\u003cSEQ\u003e,\"blob\":{\"sealed\":\"x\"},\"createdAt\":\u003cTS\u003e},{\"seq\":\u003cSEQ\u003e,\"blob\":\"second\",\"createdAt\":\u003cTS\u003e}],\"more\":false}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop?after=1",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "cache": "no-store",
+    "body": "{\"items\":[{\"seq\":\u003cSEQ\u003e,\"blob\":{\"sealed\":\"x\"},\"createdAt\":\u003cTS\u003e},{\"seq\":\u003cSEQ\u003e,\"blob\":\"second\",\"createdAt\":\u003cTS\u003e}],\"more\":false}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop?limit=1",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "cache": "no-store",
+    "body": "{\"items\":[{\"seq\":\u003cSEQ\u003e,\"blob\":{\"sealed\":\"x\"},\"createdAt\":\u003cTS\u003e}],\"more\":true}"
+  },
+  {
+    "req": {
+      "method": "DELETE",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 400,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "through=\u003cseq\u003e required\n"
+  },
+  {
+    "req": {
+      "method": "DELETE",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop?through=1",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"deleted\":0,\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "DELETE",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop?through=18446744073709551615",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"deleted\":2,\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw/drop",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "cache": "no-store",
+    "body": "{\"items\":[],\"more\":false}"
+  },
+  {
+    "req": {
+      "method": "DELETE",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "key": "HxAREhMUFRYXGBkaGxwdHh8AAQIDBAUGBwgJCgsMDQ4"
+    },
+    "status": 403,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "contact key does not match\n"
+  },
+  {
+    "req": {
+      "method": "DELETE",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw",
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"ok\":true}"
+  },
+  {
+    "req": {
+      "method": "GET",
+      "path": "/v1/contacts/AAECAwQFBgcICQoLDA0ODw"
+    },
+    "status": 404,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "not found\n"
+  }
+]
