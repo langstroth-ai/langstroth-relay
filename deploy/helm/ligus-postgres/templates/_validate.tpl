@@ -87,6 +87,11 @@
 {{- if and $b.tls.certManager.issuerRef (not $skip) (not ($root.Capabilities.APIVersions.Has "cert-manager.io/v1")) -}}
 {{- fail (printf "%s.bundled.tls.certManager needs cert-manager (API cert-manager.io/v1), which this cluster does not serve; or pass --api-versions cert-manager.io/v1 / set %s.skipCapabilityCheck=true when rendering without cluster access" $p $p) -}}
 {{- end -}}
+{{- range $k, $_ := $b.parameters -}}
+{{- if regexMatch "(?i)^(ssl|ssl_.*|hba_file|ident_file|config_file|password_encryption|listen_addresses)$" $k -}}
+{{- fail (printf "%s.bundled.parameters.%s: the chart sets TLS, pg_hba, password hashing and listening itself; it can't be overridden here" $p $k) -}}
+{{- end -}}
+{{- end -}}
 {{- if not (contains "@sha256:" (toString $b.image.tag)) -}}
 {{- fail (printf "%s.bundled.image.tag must pin a digest (<tag>@sha256:...)" $p) -}}
 {{- end -}}

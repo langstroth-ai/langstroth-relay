@@ -188,7 +188,9 @@ database:
       # ReadWriteOncePod: never mounted by two pods at once. Use
       # ReadWriteOnce where the storage provisioner refuses it.
       accessModes: [ReadWriteOncePod]
-    # postgresql.conf parameters (passed as -c key=value).
+    # postgresql.conf parameters (passed as -c key=value). ssl*, hba_file,
+    # ident_file, config_file, password_encryption and listen_addresses are
+    # the chart's and refused.
     parameters: {}
     resources:
       requests: { cpu: 50m, memory: 128Mi }
