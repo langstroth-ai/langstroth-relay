@@ -38,8 +38,9 @@ deploy/agent/preflight.sh --context $C --namespace $NS --scenario $S --probe --j
 ```
 
 - exit 3: tooling or cluster access. Fix tools yourself; credentials are the human's.
-- `networkpolicy` fail: the CNI does not enforce policy. **STOP**, tell the
-  human; do not disable the policy.
+- `networkpolicy` fail: the CNI does not enforce policy, or the probe could
+  not measure it. Rerun once; if it repeats, **STOP**, tell the human; do not
+  disable the policy or drop `--probe`.
 - `cnpg-operator` fail on a cnpg scenario: **STOP** and ask whether to
   install the cluster-wide operator. Only on a yes:
   `deploy/agent/cnpg-operator.sh install --context $C --json`
@@ -68,7 +69,9 @@ deploy/agent/install.sh --context $C --namespace $NS --scenario $S --release $R 
 
 Use `--build-image` on a local cluster without access to the published
 images, or `--image-repo/--image-tag`. If the chart refuses a value, its
-message names the setting: fix the input, never the safety check.
+message names the setting: fix the input, never the safety check. Exit 4
+(`fail-closed` check) means the values switch off NetworkPolicy, a security
+context or the tunnel default: **STOP** and show the human the check.
 
 ## 5. Verify
 

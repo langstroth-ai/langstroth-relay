@@ -13,8 +13,8 @@ source "$(dirname "$0")/lib.sh"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 [--context CTX] [--namespace NS] [--scenario S] [--probe] [--json]
-  --context    kube context to check (default: the current one; always named in the output)
+usage: $0 --context CTX [--namespace NS] [--scenario S] [--probe] [--json]
+  --context    kube context to check (required; never the current one by default)
   --namespace  target namespace (default: ligus-relay)
   --scenario   one of: $SCENARIOS
   --probe      also prove NetworkPolicy enforcement and RWOP with a throwaway namespace
@@ -38,6 +38,8 @@ while [ $# -gt 0 ]; do
 done
 if [ -n "$SCENARIO" ] && ! valid_scenario "$SCENARIO"; then die_usage "unknown scenario $SCENARIO (one of: $SCENARIOS)"; fi
 
+require_context
+valid --namespace "$NS" "$DNS1123"
 need_tool kubectl "install kubectl >= 1.27"
 need_tool helm "install Helm 3.14+ (Helm 4 works)"
 
@@ -61,11 +63,6 @@ else
 fi
 
 # --- Context and reachability -------------------------------------------------
-if [ -z "$KCTX" ]; then KCTX=$(kubectl config current-context 2>/dev/null || true); fi
-if [ -z "$KCTX" ]; then
-  check kube-context fail "no current kube context" "pass --context, or ask the human which cluster to use"
-  emit; exit 3
-fi
 if ! kubectl config get-contexts "$KCTX" >/dev/null 2>&1; then
   check kube-context fail "context $KCTX not in kubeconfig" "pass an existing --context (kubectl config get-contexts -o name)"
   emit; exit 3
@@ -185,16 +182,23 @@ EOF
   fi
   rwop=proven
   local ip; ip=$(k -n "$pns" get pod srv -o jsonpath='{.status.podIP}')
-  if ! k -n "$pns" exec cli -- wget -qO- -T 3 "http://$ip:8080/" >/dev/null 2>&1; then
-    netpol=probe-error; return
-  fi
+  # Pod networking can lag Ready by a few seconds (OrbStack times out the
+  # first connections): wait for one good round trip before measuring.
+  local _ up=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if k -n "$pns" exec cli -- wget -qO- -T 3 "http://$ip:8080/" >/dev/null 2>&1; then up=1; break; fi
+    sleep 2
+  done
+  if [ "$up" = 0 ]; then netpol=probe-error; return; fi
   k -n "$pns" apply -f - >/dev/null <<EOF
 {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"deny"},"spec":{"podSelector":{},"policyTypes":["Ingress"]}}
 EOF
-  local _
-  for _ in 1 2 3 4 5 6; do
+  # Enforced means three refusals in a row: one flaky timeout proves nothing.
+  local misses=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
     sleep 2
-    if ! k -n "$pns" exec cli -- wget -qO- -T 2 "http://$ip:8080/" >/dev/null 2>&1; then netpol=proven; return; fi
+    if k -n "$pns" exec cli -- wget -qO- -T 2 "http://$ip:8080/" >/dev/null 2>&1; then misses=0; else misses=$((misses+1)); fi
+    if [ "$misses" -ge 3 ]; then netpol=proven; return; fi
   done
   netpol=not-enforced
 }
@@ -205,7 +209,7 @@ case $netpol in
   likely) check networkpolicy pass "$why (run with --probe to prove it)" ;;
   not-enforced) check networkpolicy fail "probe: traffic still flowed under a deny-all policy; the charts' isolation would be silently absent" \
     "use a cluster whose CNI enforces NetworkPolicy (Calico, Cilium, ...); never set networkPolicy.enabled=false to proceed; ask the human" ;;
-  probe-error) check networkpolicy fail "probe pods did not start or could not talk before the policy" "inspect events in a ligus-preflight-* namespace run, or rerun without --probe" ;;
+  probe-error) check networkpolicy fail "probe pods did not start, or could not talk for 30 s before any policy, so enforcement is unproven" "rerun once; if it repeats, check pod networking (kubectl --context $KCTX -n kube-system get pods) and image pulls (busybox from docker.io), and stop and ask the human; never skip the probe or disable NetworkPolicy to proceed" ;;
   *) check networkpolicy warn "$why" "rerun with --probe to prove enforcement before trusting the charts' isolation" ;;
 esac
 

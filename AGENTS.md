@@ -32,9 +32,13 @@ Not sure? Ask the human. Default to `local.sh` for one person and
   with `status` one of `pass`, `warn`, `fail`, `skip`. Logs go to stderr.
   A failed check always says what to do next in `fix`.
 - Exit codes: `0` ok, `1` a check or step failed (read `fix`), `2` usage
-  error, `3` a tool is missing or the cluster is unreachable.
-- Always pass `--context` explicitly; the scripts never act on "whatever is
-  current" silently.
+  error, `3` a tool is missing or the cluster is unreachable, `4` **a human
+  must decide**: the rendered manifest turns off a fail-closed default
+  (`install.sh`), or `teardown.sh --delete-namespace` would take other
+  releases with it. Stop and ask; quote `fix`.
+- `--context` is required (exit 2 without it); the scripts never act on
+  "whatever is current". Flag values are plain tokens (a comma or newline is
+  a usage error: they reach `helm --set`).
 
 ## Kubernetes: exact commands
 
@@ -59,8 +63,10 @@ deploy/agent/verify.sh            --context $C --namespace $NS --release ligus-r
   Inputs only a human has come from files they wrote: `--dsn-file`,
   `--idp-client-secret-file`. Missing ones are reported as `needs-human`.
 - **install** runs preflight, checks the Secrets and the human's values
-  files, renders (`helm template`), server-side dry-runs, then
-  `helm upgrade --install --wait`. Extra settings: `--values FILE` (repeat).
+  files, renders (`helm template`), checks the rendered manifest keeps the
+  fail-closed defaults (NetworkPolicy, no privileged pod, tunnel off; exit 4
+  otherwise; a tunnel the human chose passes with `--human-approved-exposure`),
+  server-side dry-runs, then `helm upgrade --install --wait`. Extra settings: `--values FILE` (repeat).
   Images: `--image-repo/--image-tag`, or `--build-image` to build from this
   checkout (kind/k3d load it; OrbStack and Docker Desktop share the image store).
 - **verify**: release deployed, pods ready, CNPG cluster healthy, `helm test`,
@@ -88,7 +94,7 @@ deploy/agent/teardown.sh --context $C --namespace $NS --release ligus-relay --js
 ```sh
 D=${LIGUS_RELAY_DATA_DIR:-$HOME/.local/state/ligus-relay}
 deploy/agent/local.sh build  --json                 # go build -> bin/ligus-relay
-deploy/agent/local.sh start  --data-dir $D --json   # 127.0.0.1:8443, background
+deploy/agent/local.sh start  --data-dir $D --json   # 127.0.0.1:8443, background (OrbStack also uses 8443: --port 18443)
 deploy/agent/local.sh verify --data-dir $D --json   # health, /metrics gated, loopback
 deploy/agent/local.sh stop   --data-dir $D --json   # data kept
 ```

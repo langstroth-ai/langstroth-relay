@@ -86,8 +86,11 @@ case $ACTION in
     if p=$(running_pid); then
       URL=$(url_of); check start pass "already running (pid $p) at $URL; left unchanged"; emit
     fi
-    case $ADDR in
-      127.*|localhost|::1) ;;
+    # Loopback means a literal 127.x.y.z, localhost or ::1: a host name that
+    # merely starts with "127." can resolve anywhere.
+    if printf '%s' "$ADDR" | grep -Eq '^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|localhost|::1)$'; then loop=1; else loop=0; fi
+    case $loop in
+      1) ;;
       *) [ "$EXPOSE" = 1 ] || { check exposure fail "--addr $ADDR would expose the relay beyond this machine" \
            "exposure (bind address, TLS, firewall) is the human's decision; rerun with --addr only after they chose it, and put TLS in front, passing --human-approved-exposure"
          emit; } ;;
@@ -95,8 +98,10 @@ case $ACTION in
     [ -x "$BIN" ] || { check binary fail "$BIN missing" "deploy/agent/local.sh build (or pass --bin)"; emit; }
     need_tool curl "install curl"
     need_tool openssl "install openssl"
-    if curl -s -o /dev/null "http://$ADDR:$PORT/" 2>/dev/null; then
-      check port fail "something already listens on $ADDR:$PORT" "pick another --port"; emit
+    # Anything accepting connections counts (not only HTTP): otherwise the
+    # bind fails later, or the health check reaches someone else's server.
+    if (exec 3<>"/dev/tcp/$ADDR/$PORT") 2>/dev/null; then
+      check port fail "something already listens on $ADDR:$PORT" "pick another --port (do not stop a process you did not start)"; emit
     fi
     umask 077
     mkdir -p "$DATA_DIR" "$RUN" "$DATA_DIR/secrets"
@@ -124,7 +129,9 @@ case $ACTION in
     if [ "$(code "$URL/v1/health")" = 200 ]; then
       check start pass "running (pid $(cat "$PIDF")) at $URL"
     else
-      check start fail "the relay did not answer /v1/health" "tail -n 50 $RUN/ligus-relay.log"
+      kill "$(cat "$PIDF")" 2>/dev/null || true
+      rm -f "$PIDF" "$RUN/addr"
+      check start fail "the relay did not answer /v1/health: $(tail -n 1 "$RUN/ligus-relay.log" 2>/dev/null)" "read $RUN/ligus-relay.log; on 'address already in use' pick another --port"
     fi
     emit ;;
 

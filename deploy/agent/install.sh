@@ -18,9 +18,9 @@ source "$(dirname "$0")/lib.sh"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 --scenario S [--context CTX] [--namespace NS] [--release R]
+usage: $0 --scenario S --context CTX [--namespace NS] [--release R]
           [--values FILE]... [--image-repo REPO] [--image-tag TAG] [--build-image]
-          [--timeout 10m] [--dry-run] [--skip-preflight] [--json]
+          [--timeout 10m] [--dry-run] [--skip-preflight] [--human-approved-exposure] [--json]
   scenarios: $SCENARIOS
 EOF
 }
@@ -35,6 +35,7 @@ BUILD=0
 TIMEOUT=10m
 DRY=0
 SKIP_PRE=0
+EXPOSE=0
 while [ $# -gt 0 ]; do
   case $1 in
     --context) KCTX=${2:?}; shift 2 ;;
@@ -48,6 +49,7 @@ while [ $# -gt 0 ]; do
     --timeout) TIMEOUT=${2:?}; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --skip-preflight) SKIP_PRE=1; shift ;;
+    --human-approved-exposure) EXPOSE=1; shift ;;
     --json) JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage; die_usage "unknown argument $1" ;;
@@ -63,25 +65,33 @@ FULL=$(fullname "$CHARTNAME" "$RELEASE")
 DBMODE=$(scenario_dbmode "$SCENARIO")
 for f in "${EXTRA[@]+"${EXTRA[@]}"}"; do [ -r "$f" ] || die_usage "values file $f not readable"; done
 
+require_context
+valid --namespace "$NS" "$DNS1123"
+valid --release "$RELEASE" "$DNS1123"
+valid --image-repo "$IMG_REPO" "$IMAGE_REPO_RE"
+valid --image-tag "$IMG_TAG" "$IMAGE_TAG_RE"
+valid --timeout "$TIMEOUT" '[0-9]+(ms|s|m|h)([0-9]+(ms|s|m|h))*'
 need_tool kubectl "install kubectl"
 need_tool helm "install Helm 3.14+"
-[ -n "$KCTX" ] || KCTX=$(kubectl config current-context 2>/dev/null || true)
-[ -n "$KCTX" ] || { log "no kube context; pass --context"; exit 3; }
 
 STEP=""
 REVISION=""
 OBJECTS=0
-finish() { # ok detail fix
+NEXT=""
+finish() { # ok detail fix [exit-code]
+  local nxt=${NEXT:-deploy/agent/verify.sh --context $KCTX --namespace $NS --release $RELEASE --json}
+  [ "$1" = true ] || nxt=""
   if [ "$JSON" = 1 ]; then
-    printf '{"tool":"install","ok":%s,"context":%s,"namespace":%s,"release":%s,"scenario":%s,"chart":%s,"dry_run":%s,"step":%s,"revision":%s,"rendered_objects":%s,"detail":%s,"fix":%s,"next":%s}\n' \
+    printf '{"tool":"install","ok":%s,"context":%s,"namespace":%s,"release":%s,"scenario":%s,"chart":%s,"dry_run":%s,"step":%s,"revision":%s,"rendered_objects":%s,"detail":%s,"fix":%s,"next":%s,"checks":%s}\n' \
       "$1" "$(json_escape "$KCTX")" "$(json_escape "$NS")" "$(json_escape "$RELEASE")" "$(json_escape "$SCENARIO")" \
       "$(json_escape "$CHARTNAME")" "$([ "$DRY" = 1 ] && echo true || echo false)" "$(json_escape "$STEP")" \
       "$(json_escape "$REVISION")" "$OBJECTS" "$(json_escape "$2")" "$(json_escape "${3-}")" \
-      "$(json_escape "deploy/agent/verify.sh --context $KCTX --namespace $NS --release $RELEASE --json")"
+      "$(json_escape "$nxt")" "$(checks_json)"
   else
     log "$([ "$1" = true ] && echo OK || echo FAILED) [$STEP] $2${3:+ -> $3}"
   fi
-  [ "$1" = true ] && exit 0 || exit 1
+  [ "$1" = true ] && exit 0
+  exit "${4:-1}"
 }
 
 # 1. Preflight -------------------------------------------------------------------
@@ -163,6 +173,10 @@ if ! out=$(h template "$RELEASE" "$CHART" -n "$NS" "${ARGS[@]}" "${apiv[@]+"${ap
   finish false "helm template refused the values" "read the chart's message above; it names the setting. Do not disable a safety check to get past it; ask the human"
 fi
 OBJECTS=$(printf '%s\n' "$out" | grep -c '^kind:' || true)
+STEP=fail-closed
+if ! check_rendered "$EXPOSE" <<<"$out"; then  # not a pipe: the check must land in CHECKS
+  finish false "the rendered manifest turns off a fail-closed default (checks[] names which)" "stop and ask the human; never change the safety settings to get past this" 4
+fi
 
 # 6. Server-side dry run --------------------------------------------------------
 STEP=server-dry-run
@@ -170,7 +184,7 @@ if ! out=$(h upgrade --install "$RELEASE" "$CHART" -n "$NS" "${ARGS[@]}" --dry-r
   log "$out"
   finish false "the API server rejected the rendered objects" "read the error above (admission, PSA, quota, missing CRD)"
 fi
-if [ "$DRY" = 1 ]; then finish true "dry run passed: $OBJECTS objects render and the API server accepts them"; fi
+if [ "$DRY" = 1 ]; then NEXT="the same install.sh command without --dry-run"; finish true "dry run passed: $OBJECTS objects render and the API server accepts them"; fi
 
 # 7. Install ------------------------------------------------------------------------
 STEP=install

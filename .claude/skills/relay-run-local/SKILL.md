@@ -27,7 +27,8 @@ deploy/agent/local.sh start --data-dir "$D" [--port 8443] --json
 `start` generates a metrics token into `$D/secrets/` (mode 700, never
 printed), starts the relay in the background on `127.0.0.1`, and waits for
 `/v1/health`. Run again: it reports the running relay and changes nothing.
-A port in use: pick another `--port`.
+A port in use (OrbStack listens on 8443): pick another `--port`, for
+example `--port 18443`, and use it in the URL you report.
 
 ## 3. Verify
 

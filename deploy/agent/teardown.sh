@@ -12,7 +12,7 @@
 # 2 usage, 3 tool/cluster.
 source "$(dirname "$0")/lib.sh"
 
-usage() { echo "usage: $0 [--context CTX] --namespace NS [--release R] [--delete-data] [--delete-secrets] [--delete-namespace] [--json]" >&2; }
+usage() { echo "usage: $0 --context CTX --namespace NS [--release R] [--delete-data] [--delete-secrets] [--delete-namespace] [--json]" >&2; }
 NS=${LIGUS_NAMESPACE:-}
 RELEASE=${LIGUS_RELEASE:-}
 DEL_DATA=0 DEL_SEC=0 DEL_NS=0
@@ -32,9 +32,11 @@ done
 [ -n "$NS" ] || { usage; die_usage "--namespace is required"; }
 case $NS in default|kube-system|kube-public|kube-node-lease) [ "$DEL_NS" = 1 ] && die_usage "refusing to delete namespace $NS" ;; esac
 RELEASE=${RELEASE:-ligus-relay}
+require_context
+valid --namespace "$NS" "$DNS1123"
+valid --release "$RELEASE" "$DNS1123"
 need_tool kubectl "install kubectl"
 need_tool helm "install Helm"
-[ -n "$KCTX" ] || KCTX=$(kubectl config current-context 2>/dev/null || true)
 k get --raw /version >/dev/null 2>&1 || { log "cluster for context $KCTX unreachable"; exit 3; }
 
 if ! k get namespace "$NS" >/dev/null 2>&1; then
@@ -51,7 +53,12 @@ else
     check uninstall pass "no release $RELEASE in $NS"
   fi
   FULL=$(fullname "${chart:-ligus-relay}" "$RELEASE")
-  if [ "$DEL_NS" = 1 ] && [ "$(k get namespace "$NS" -o jsonpath='{.metadata.labels.ligus\.ai/created-by}' 2>/dev/null)" != bootstrap-secrets ]; then
+  others=$(h -n "$NS" list -q -a 2>/dev/null | grep -vx "$RELEASE" | tr '\n' ' ' || true)
+  if [ "$DEL_NS" = 1 ] && [ -n "$others" ]; then
+    check namespace fail "namespace $NS still holds other Helm releases ($others); refusing to delete it with theirs" \
+      "tear those down first, or rerun without --delete-namespace; the human decides"
+    HUMAN=1
+  elif [ "$DEL_NS" = 1 ] && [ "$(k get namespace "$NS" -o jsonpath='{.metadata.labels.ligus\.ai/created-by}' 2>/dev/null)" != bootstrap-secrets ]; then
     check namespace fail "namespace $NS was not created by bootstrap-secrets.sh; refusing to delete it" \
       "rerun without --delete-namespace (add --delete-data/--delete-secrets if the human agreed); the human deletes the namespace"
   elif [ "$DEL_NS" = 1 ]; then
@@ -61,7 +68,7 @@ else
       check namespace fail "namespace $NS did not finish deleting" "kubectl --context $KCTX get namespace $NS -o yaml (look for stuck finalizers; do not remove finalizers without the human)"
     fi
   else
-    pvcs=$(k -n "$NS" get pvc -o name 2>/dev/null | grep -- "$FULL" || true)
+    pvcs=$(k -n "$NS" get pvc -o name 2>/dev/null | release_pvcs "$FULL")
     if [ "$DEL_DATA" = 1 ] && [ -n "$pvcs" ]; then
       # shellcheck disable=SC2086
       k -n "$NS" delete $pvcs --wait=true >/dev/null && check data pass "deleted $(echo $pvcs | wc -w | tr -d ' ') PVC(s)"
@@ -85,4 +92,5 @@ if [ "$JSON" = 1 ]; then
   printf '{"tool":"teardown","ok":%s,"context":%s,"namespace":%s,"release":%s,"checks":%s}\n' \
     "$ok" "$(json_escape "$KCTX")" "$(json_escape "$NS")" "$(json_escape "$RELEASE")" "$(checks_json)"
 fi
+[ "${HUMAN:-0}" = 1 ] && exit 4
 exit "$FAILED"

@@ -11,7 +11,7 @@
 # Exit: 0 healthy, 1 a check failed (see "fix"), 2 usage, 3 tool/cluster.
 source "$(dirname "$0")/lib.sh"
 
-usage() { echo "usage: $0 [--context CTX] --namespace NS [--release R] [--skip-helm-test] [--json]" >&2; }
+usage() { echo "usage: $0 --context CTX --namespace NS [--release R] [--skip-helm-test] [--json]" >&2; }
 
 NS=${LIGUS_NAMESPACE:-}
 RELEASE=${LIGUS_RELEASE:-}
@@ -29,10 +29,12 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$NS" ] || { usage; die_usage "--namespace is required"; }
 RELEASE=${RELEASE:-ligus-relay}
+require_context
+valid --namespace "$NS" "$DNS1123"
+valid --release "$RELEASE" "$DNS1123"
 need_tool kubectl "install kubectl"
 need_tool helm "install Helm"
 need_tool curl "install curl"
-[ -n "$KCTX" ] || KCTX=$(kubectl config current-context 2>/dev/null || true)
 
 TMP=$(mktemp -d); chmod 700 "$TMP"
 PF=""

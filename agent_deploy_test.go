@@ -227,3 +227,129 @@ func TestAgentScenariosRender(t *testing.T) {
 		t.Errorf("team-cnpg rendered without a backup destination:\n%.300s", out)
 	}
 }
+
+// The scripts never fall back to the current kube context.
+func TestAgentScriptsRequireContext(t *testing.T) {
+	runs := map[string][]string{
+		"preflight.sh":         {"--namespace", "x", "--json"},
+		"bootstrap-secrets.sh": {"--scenario", "eval-memory", "--namespace", "x", "--json"},
+		"install.sh":           {"--scenario", "eval-memory", "--namespace", "x", "--json"},
+		"verify.sh":            {"--namespace", "x", "--json"},
+		"teardown.sh":          {"--namespace", "x", "--json"},
+		"cnpg-operator.sh":     {"status", "--json"},
+	}
+	for s, args := range runs {
+		code, _, stderr := agentScript(t, nil, s, args...)
+		if code != 2 || !strings.Contains(stderr, "--context is required") {
+			t.Errorf("%s without --context: exit %d, want 2 (%s)", s, code, strings.TrimSpace(stderr))
+		}
+	}
+}
+
+// Flag values reach helm --set: a comma would add keys (proven:
+// --image-tag 'dev,networkPolicy.enabled=false' rendered no NetworkPolicy).
+func TestAgentInstallRefusesInjectedValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"--image-tag", "dev,networkPolicy.enabled=false"},
+		{"--image-repo", "x,tunnel.mode=open"},
+		{"--release", "r,networkPolicy.enabled=false"},
+		{"--namespace", "ns\nx"},
+	} {
+		all := append([]string{"--context", "c", "--scenario", "eval-memory", "--json"}, args...)
+		if code, _, _ := agentScript(t, nil, "install.sh", all...); code != 2 {
+			t.Errorf("install.sh %v: exit %d, want 2", args, code)
+		}
+	}
+}
+
+func libCall(t *testing.T, stdin, script string) (int, string) {
+	t.Helper()
+	cmd := exec.Command("bash", "-c", "source deploy/agent/lib.sh; "+script)
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.Output()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode(), string(out)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return 0, string(out)
+}
+
+// teardown --delete-data matches this release's PVC names exactly.
+func TestAgentTeardownPVCsAreThisReleasesOnly(t *testing.T) {
+	in := strings.Join([]string{
+		"persistentvolumeclaim/ligus-relay-data",
+		"persistentvolumeclaim/data-ligus-relay-postgres-0",
+		"persistentvolumeclaim/ligus-relay-db-1",
+		"persistentvolumeclaim/ligus-relay-b-data",
+		"persistentvolumeclaim/data-ligus-relay-b-postgres-0",
+		"persistentvolumeclaim/other-ligus-relay-data",
+	}, "\n") + "\n"
+	_, out := libCall(t, in, "release_pvcs ligus-relay")
+	got := strings.Fields(out)
+	want := []string{"persistentvolumeclaim/ligus-relay-data", "persistentvolumeclaim/data-ligus-relay-postgres-0", "persistentvolumeclaim/ligus-relay-db-1"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("release_pvcs ligus-relay = %v, want %v", got, want)
+	}
+}
+
+// install stops (exit 4) when values switch off a fail-closed default.
+func TestAgentRenderedFailClosed(t *testing.T) {
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed")
+	}
+	render := func(extra ...string) string {
+		args := append([]string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0",
+			"-f", "deploy/agent/values/eval-memory.yaml", "--set", "config.existingSecret=t-env"}, extra...)
+		out, err := exec.Command(helm, args...).Output()
+		if err != nil {
+			t.Fatalf("helm template %v: %v", extra, err)
+		}
+		return string(out)
+	}
+	if code, _ := libCall(t, render(), "check_rendered"); code != 0 {
+		t.Fatal("the eval-memory defaults must pass check_rendered")
+	}
+	if code, _ := libCall(t, render("--set", "networkPolicy.enabled=false"), "check_rendered"); code == 0 {
+		t.Fatal("networkPolicy.enabled=false passed check_rendered")
+	}
+	open := render("--set", "tunnel.mode=open")
+	if code, _ := libCall(t, open, "check_rendered"); code == 0 {
+		t.Fatal("tunnel.mode=open passed check_rendered without the human's approval")
+	}
+	if code, _ := libCall(t, open, "check_rendered 1"); code != 0 {
+		t.Fatal("tunnel.mode=open with --human-approved-exposure must pass")
+	}
+}
+
+// A host name that only looks like loopback is still exposure.
+func TestAgentLocalLoopbackIsLiteral(t *testing.T) {
+	dir := t.TempDir()
+	code, stdout, _ := agentScript(t, nil, "local.sh", "start", "--data-dir", filepath.Join(dir, "x"), "--addr", "127.0.0.1.nip.io", "--json")
+	r := parseOne(t, "local", stdout)
+	if code != 1 || len(r.Checks) != 1 || r.Checks[0].Name != "exposure" {
+		t.Fatalf("start --addr 127.0.0.1.nip.io: exit %d, %s", code, stdout)
+	}
+}
+
+// Only the deploy skills' SKILL.md files under .claude/ can be committed.
+func TestAgentGitignoreKeepsClaudeDirPrivate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	ignored := func(p string) bool {
+		return exec.Command("git", "check-ignore", "-q", "--no-index", p).Run() == nil
+	}
+	for _, p := range []string{".claude/skills/relay-deploy-k8s/SKILL.md", ".claude/skills/relay-run-local/SKILL.md"} {
+		if ignored(p) {
+			t.Errorf("%s must be tracked", p)
+		}
+	}
+	for _, p := range []string{".claude/settings.json", ".claude/skills/private/SKILL.md", ".claude/skills/relay-run-local/notes.md", ".claude/worktrees/x"} {
+		if !ignored(p) {
+			t.Errorf("%s must be ignored", p)
+		}
+	}
+}

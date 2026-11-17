@@ -18,7 +18,7 @@ source "$(dirname "$0")/lib.sh"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 --scenario S [--context CTX] [--namespace NS] [--release R]
+usage: $0 --scenario S --context CTX [--namespace NS] [--release R]
           [--dsn-file PATH] [--idp-client-secret-file PATH] [--json]
   scenarios: $SCENARIOS
 EOF
@@ -50,10 +50,11 @@ RELEASE=${RELEASE:-$CHARTNAME}
 FULL=$(fullname "$CHARTNAME" "$RELEASE")
 DBMODE=$(scenario_dbmode "$SCENARIO")
 
+require_context
+valid --namespace "$NS" "$DNS1123"
+valid --release "$RELEASE" "$DNS1123"
 need_tool kubectl "install kubectl"
 need_tool openssl "install openssl"
-[ -n "$KCTX" ] || KCTX=$(kubectl config current-context 2>/dev/null || true)
-[ -n "$KCTX" ] || { log "no kube context; pass --context"; exit 3; }
 k get --raw /version >/dev/null 2>&1 || { log "cluster for context $KCTX unreachable"; exit 3; }
 
 TMP=$(mktemp -d)

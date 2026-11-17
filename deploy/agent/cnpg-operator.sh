@@ -23,10 +23,10 @@ while [ $# -gt 0 ]; do
     *) die_usage "unknown argument $1" ;;
   esac
 done
-case $ACTION in status|install|uninstall) ;; *) die_usage "usage: $0 status|install|uninstall [--context CTX] [--json]" ;; esac
+case $ACTION in status|install|uninstall) ;; *) die_usage "usage: $0 status|install|uninstall --context CTX [--json]" ;; esac
+require_context
 need_tool kubectl "install kubectl"
 need_tool helm "install Helm"
-[ -n "$KCTX" ] || KCTX=$(kubectl config current-context 2>/dev/null || true)
 k get --raw /version >/dev/null 2>&1 || { log "cluster for context $KCTX unreachable"; exit 3; }
 
 crd=0; k get crd clusters.postgresql.cnpg.io >/dev/null 2>&1 && crd=1

@@ -7,7 +7,9 @@
 #   - idempotent: running twice leaves the same state;
 #   - --json prints exactly one JSON object on stdout; human logs go to stderr;
 #   - exit codes: 0 ok, 1 a check or step failed (see "fix" in the output),
-#     2 usage error, 3 a required tool is missing or the cluster is unreachable;
+#     2 usage error, 3 a required tool is missing or the cluster is unreachable,
+#     4 a human must decide (a fail-closed default is off, or the step would
+#     touch something these scripts did not create): stop and ask;
 #   - no secret value is ever printed, logged or passed on a command line.
 
 set -o errexit -o nounset -o pipefail
@@ -65,10 +67,54 @@ need_tool() {
 }
 
 # kubectl/helm bound to one context, so a script never acts on whatever
-# context happens to be current when it was started.
+# context happens to be current when it was started. Every cluster script
+# calls require_context after parsing its flags.
 KCTX=""
-k() { if [ -n "$KCTX" ]; then kubectl --context "$KCTX" "$@"; else kubectl "$@"; fi; }
-h() { if [ -n "$KCTX" ]; then helm --kube-context "$KCTX" "$@"; else helm "$@"; fi; }
+k() { kubectl --context "$KCTX" "$@"; }
+h() { helm --kube-context "$KCTX" "$@"; }
+require_context() {
+  [ -n "$KCTX" ] || die_usage "--context is required; the scripts never use the current context (kubectl config get-contexts -o name lists them; confirm the cluster with the human)"
+  valid --context "$KCTX" '[A-Za-z0-9@:._/-]+'
+}
+
+# valid FLAG VALUE REGEX: flag values reach helm --set, labels and messages,
+# so they must be plain tokens (a comma in a --set value adds another key).
+valid() {
+  [ -z "$2" ] && return 0
+  printf '%s' "$2" | LC_ALL=C grep -Eq "^($3)\$" && [ "$(printf '%s' "$2" | wc -l | tr -d ' ')" = 0 ] \
+    || die_usage "$1: invalid value (allowed: $3)"
+}
+DNS1123='[a-z0-9]([-a-z0-9]*[a-z0-9])?'
+IMAGE_REPO_RE='[A-Za-z0-9][A-Za-z0-9._/:-]*'
+IMAGE_TAG_RE='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
+
+# release_pvcs FULL: from "persistentvolumeclaim/NAME" lines on stdin, the
+# ones this release's charts create (exact names, never a prefix match: a
+# release named ligus-relay must not take ligus-relay-b's data with it).
+release_pvcs() {
+  grep -E "^persistentvolumeclaim/($1|$1-data|data-$1-postgres-[0-9]+|$1-db-[0-9]+(-wal)?)\$" || true
+}
+
+# check_rendered [human-approved-exposure]: reads a rendered manifest on
+# stdin and records a "fail-closed" check. Returns 1 when a default that
+# must stay on is off; the caller stops with exit 4 for the human.
+check_rendered() {
+  local f bad="" n off
+  f=$(cat)
+  printf '%s\n' "$f" | grep -q '^kind: NetworkPolicy' || bad="$bad no NetworkPolicy (networkPolicy.enabled);"
+  printf '%s\n' "$f" | grep -qE '^[[:space:]]*(privileged|hostNetwork|hostPID|hostIPC|allowPrivilegeEscalation): true' \
+    && bad="$bad a privileged or host-namespace pod (security contexts);"
+  n=$(printf '%s\n' "$f" | grep -c 'name: LIGUS_RELAY_TUNNEL$' || true)
+  off=$(printf '%s\n' "$f" | grep -A1 'name: LIGUS_RELAY_TUNNEL$' | grep -c 'value: "off"' || true)
+  if [ "$n" != "$off" ] && [ "${1:-0}" != 1 ]; then
+    bad="$bad the tunnel is on (tunnel.mode: exposure is the human's decision; after they chose it, rerun with --human-approved-exposure);"
+  fi
+  if [ -n "$bad" ]; then
+    check fail-closed fail "the values turn off fail-closed defaults:$bad" "stop and ask the human; they make and own that change"
+    return 1
+  fi
+  check fail-closed pass "NetworkPolicy present, no privileged pod, tunnel off or approved"
+}
 
 # Scenario -> chart and values file. Scenarios are documented in AGENTS.md.
 scenario_chart() {
