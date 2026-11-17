@@ -5,7 +5,7 @@ import "net/http"
 // statusPage serves a small, self-contained landing page at "/". The relay is a
 // headless JSON API — this exists purely so a human who pastes the URL into a
 // browser sees something intentional ("it's online, and it's an endpoint, not a
-// site to log into") instead of a bare 401 from the entitlement gate. It's
+// site to log into") instead of a bare 401 from the access gate. It's
 // public (no token), like /v1/health.
 func (s *Server) statusPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

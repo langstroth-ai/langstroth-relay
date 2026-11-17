@@ -540,7 +540,7 @@ func (h *tunnelHub) admitHost(ctx context.Context, m *relayMsg, nonce []byte) (*
 	return &hostCtl{hostID: m.HostID, gone: make(chan struct{}), poke: make(chan struct{}, 1)}, nil
 }
 
-// watchStatus re-checks entitlement every StatusTTL (or at once when poked by
+// watchStatus re-checks admission status every StatusTTL (or at once when poked by
 // refreshStatus), tells the host when it changes and refreshes last_seen (for
 // pending-host GC).
 func (h *tunnelHub) watchStatus(ctl *hostCtl, last HostStatus, stop <-chan struct{}) {
@@ -1017,10 +1017,10 @@ func (h *tunnelHub) admitSession(ctx context.Context, c *tconn, hostID string, n
 	if !ok {
 		return terr(tcProtocol, "malformed apns")
 	}
-	// 3. Entitlement.
+	// 3. Admission status.
 	st, err := h.hostStatus(ctx, hostID, false)
 	if err != nil || !st.Active {
-		return terr(tcNotEntitled, "this host has no active relay entitlement")
+		return terr(tcNotEntitled, "this host is not active on this relay")
 	}
 	// 4.–8.
 	return h.openAndSplice(c, hostID, cred.PID, "session", "", h.maxSessions(st), func() {

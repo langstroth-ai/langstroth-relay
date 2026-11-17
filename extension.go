@@ -9,16 +9,16 @@ import (
 
 // Extension lets a downstream binary run the standard relay with extra pieces
 // (MainWith). It can't change what the open relay does: storage, env, the
-// entitlement gate and every open route stay exactly as in cmd/ligus-relay. It
+// access gate and every open route stay exactly as in cmd/ligus-relay. It
 // can only
 //
-//   - set the tunnel seams (TunnelPolicy, PushSender, billing label), which
+//   - set the tunnel seams (TunnelPolicy, PushSender, tunnel info label), which
 //     otherwise come from HIVE_RELAY_TUNNEL;
 //   - serve extra routes under path prefixes the relay doesn't use;
 //   - add subcommands (the built-in ones win).
 //
-// A hosted build that shares an app with the open relay must stay a strict
-// superset of it; this type is how the relay guarantees that.
+// A downstream build must stay a strict superset of the open relay; this
+// type is how the relay guarantees that.
 type Extension struct {
 	// Commands are extra subcommands: name → run(args after the name).
 	Commands map[string]func(args []string) error
@@ -37,7 +37,7 @@ type Addon struct {
 	TunnelBilling string
 	// Routes are served beside the relay, keyed by path prefix (it must start
 	// with "/v1/" and end with "/"). A prefix that overlaps a relay route is
-	// refused. These requests don't pass the relay's entitlement gate.
+	// refused. These requests don't pass the relay's access gate.
 	Routes map[string]http.Handler
 	// Started runs once the Server exists, before the listener opens (for
 	// example to wire Server.RefreshTunnelStatus).

@@ -5,7 +5,7 @@
 //
 // Run the server (default):   ligus-relay
 // Generate an issuer keypair: ligus-relay keygen
-// Mint an entitlement token:  ligus-relay issue --key <priv-hex> --sub <id> [...]
+// Mint an access token:       ligus-relay issue --key <priv-hex> --sub <id> [...]
 package main
 
 import "github.com/ligus-ai/relay"

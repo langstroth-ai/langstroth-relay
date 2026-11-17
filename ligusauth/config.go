@@ -138,7 +138,7 @@ type TenantConfig struct {
 	// the iOS app's custom scheme). Loopback http://127.0.0.1 and
 	// http://[::1] redirects on any port are always allowed (RFC 8252).
 	RedirectURIs []string `json:"redirect_uris"`
-	// Entitlement fields copied into every minted token.
+	// Claim fields copied into every minted token.
 	Plan          string   `json:"plan"`
 	Caps          []string `json:"caps"`
 	Turn          bool     `json:"turn"`

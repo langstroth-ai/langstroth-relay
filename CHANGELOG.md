@@ -187,14 +187,14 @@ security changes below say otherwise.
   superset of the open relay; `Server.RefreshTunnelStatus`.
 - Relay-managed team membership (roster, claim, invites, join) behind
   `LIGUS_RELAY_MEMBERSHIP`, with a membership identity key
-  (`LIGUS_RELAY_MEMBERSHIP_PUBKEY`) independent of the entitlement gate.
+  (`LIGUS_RELAY_MEMBERSHIP_PUBKEY`) independent of the access gate.
 - `ligus-relay bootstrap-agent` to stand up a remote agent with one line.
 - Durable users and tokens with an admin API (disabled unless a downstream
   build supplies an `AdminAuthorizer`), and a public status page at `/`.
 - Bounded envelope pages (`X-Hive-Next-After` / `X-Hive-More`).
 - SSE push (`GET /v1/workspaces/{id}/events`), idempotent envelope push,
   structured request logs and `/metrics`.
-- Workspace reads require the same entitlement as writes.
+- Workspace reads require the same access token as writes.
 - Postgres: retention, pooler-safe statements, primary pinning, text-bound
   blobs.
 - Helm chart (`deploy/helm/ligus-relay`, chart version 0.2.0) and a non-root

@@ -6,7 +6,7 @@
 // are off by default since v0.3 (github_routes.go). It never sees plaintext.
 //
 // This is a Go port of the reference Rust relay (crates/hive-relay), preserving
-// the JSON /v1 wire contract and the hrt1 entitlement-token format byte-for-byte
+// the JSON /v1 wire contract and the hrt1 access-token format byte-for-byte
 // so existing clients and issued tokens keep working.
 package relay
 
@@ -284,7 +284,7 @@ type Store interface {
 	IssueToken(ctx context.Context, userID, label, tokenHash string, now int64) (TokenRecord, error)
 	ListTokens(ctx context.Context) ([]TokenRecord, error)
 	RevokeToken(ctx context.Context, tokenID string, now int64) error
-	// ResolveToken maps a presented token's hash to entitlement claims iff it is
+	// ResolveToken maps a presented token's hash to access claims iff it is
 	// live (not revoked, owning user enabled). Stamps last-used best-effort.
 	ResolveToken(ctx context.Context, tokenHash string, now int64) (*TokenClaims, bool, error)
 
