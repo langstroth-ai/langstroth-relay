@@ -342,3 +342,17 @@ func TestChartTunnelPodServesOnlyTunnel(t *testing.T) {
 		t.Fatal("relay-sync must serve every route")
 	}
 }
+
+// A LoadBalancer or NodePort Service publishes the relay as surely as an
+// Ingress does, so it gets the same guards: no unauthenticated /metrics and
+// an explicit decision on client addresses.
+func TestChartPublicServiceTypeNeedsTheSameGuards(t *testing.T) {
+	for _, typ := range []string{"LoadBalancer", "NodePort"} {
+		if renderChartErr(t, "--set", "service.type="+typ) == "" {
+			t.Errorf("service.type=%s rendered with an open /metrics and no clientIP decision", typ)
+		}
+		if msg := renderChartErr(t, "--set", "service.type="+typ, "--set", "metrics.token.existingSecret=mt", "--set", "clientIP.allowSharedBucket=true"); msg != "" {
+			t.Errorf("service.type=%s with a metrics token must render: %s", typ, msg)
+		}
+	}
+}

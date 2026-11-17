@@ -190,8 +190,9 @@ service:
   port: 8443
 
 metrics:
-  # /metrics is open unless LIGUS_RELAY_METRICS_TOKEN is set. With ingress or
-  # httpRoute it would be public, so the chart then requires a token Secret
+  # /metrics is open unless LIGUS_RELAY_METRICS_TOKEN is set. With ingress,
+  # httpRoute or a LoadBalancer/NodePort service.type it would be public, so
+  # the chart then requires a token Secret
   # here (mounted as LIGUS_RELAY_METRICS_TOKEN_FILE) unless
   # allowPublicUnauthenticated.
   token:

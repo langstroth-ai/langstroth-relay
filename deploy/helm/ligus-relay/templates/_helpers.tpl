@@ -109,15 +109,16 @@ DATABASE_URL
 {{- if or (gt (int .Values.sync.replicas) 1) .Values.sync.autoscaling.enabled -}}
 {{- fail "relay-sync runs exactly one replica in 2.0: short pairing codes, SSE fan-out and rate limits live in one process, so a second replica breaks pairing (README, Scaling). Set sync.replicas=1 and sync.autoscaling.enabled=false" -}}
 {{- end -}}
-{{- $public := or .Values.ingress.enabled .Values.httpRoute.enabled -}}
+{{- /* A LoadBalancer or NodePort Service publishes the relay like an Ingress does. */ -}}
+{{- $public := or .Values.ingress.enabled .Values.httpRoute.enabled (ne (toString .Values.service.type) "ClusterIP") -}}
 {{- if and .Values.ingress.enabled (not .Values.ingress.tls.secretName) (not .Values.ingress.tls.terminatedUpstream) -}}
 {{- fail "ingress.enabled needs TLS: clients require https://. Set ingress.tls.secretName, or ingress.tls.terminatedUpstream=true when a load balancer in front terminates TLS" -}}
 {{- end -}}
 {{- if and $public (not .Values.clientIP.trustedProxies) (not .Values.clientIP.allowSharedBucket) -}}
-{{- fail "behind an ingress or gateway set clientIP.trustedProxies to the exact addresses it connects from (never the whole pod CIDR); without it every client shares one rate-limit bucket. clientIP.allowSharedBucket=true accepts that" -}}
+{{- fail "behind an ingress, gateway or a LoadBalancer/NodePort Service set clientIP.trustedProxies to the exact addresses it connects from (never the whole pod CIDR); without it every client shares one rate-limit bucket. clientIP.allowSharedBucket=true accepts that" -}}
 {{- end -}}
 {{- if and $public (not .Values.metrics.token.existingSecret) (not .Values.metrics.allowPublicUnauthenticated) -}}
-{{- fail "with ingress or httpRoute /metrics would be public: set metrics.token.existingSecret (LIGUS_RELAY_METRICS_TOKEN), or metrics.allowPublicUnauthenticated=true" -}}
+{{- fail "with ingress, httpRoute or a LoadBalancer/NodePort service.type /metrics would be public: set metrics.token.existingSecret (LIGUS_RELAY_METRICS_TOKEN), or metrics.allowPublicUnauthenticated=true" -}}
 {{- end -}}
 {{- if .Values.sync.pdb.enabled -}}
 {{- fail "sync.pdb: a PodDisruptionBudget on a single relay-sync replica only blocks node drains; relay-sync HA is unsupported in 2.0" -}}
