@@ -173,11 +173,15 @@ config:
 
 # Client addresses for rate limits, abuse blocks and logs. Empty (default):
 # the TCP peer, so behind an ingress every client shares the ingress's
-# address and one rate-limit bucket. Set trustedProxies to the CIDRs your
-# ingress controller or load balancer connects from (for example the
-# controller's pod CIDR); only then is `header` read, and only from them.
+# address and one rate-limit bucket (ten bad pairing guesses from anyone lock
+# pairing for everyone). With ingress or httpRoute enabled the chart refuses
+# an empty list unless allowSharedBucket: list exactly the addresses your
+# ingress controller or load balancer connects from (its pods' IPs or the
+# LB's subnet), never the whole pod CIDR. Only then is `header` read, and
+# only from them.
 clientIP:
   trustedProxies: []
+  allowSharedBucket: false
   # X-Forwarded-For when empty; or X-Real-IP, CF-Connecting-IP, ...
   header: ""
 
@@ -186,30 +190,51 @@ service:
   port: 8443
 
 metrics:
+  # /metrics is open unless LIGUS_RELAY_METRICS_TOKEN is set. With ingress or
+  # httpRoute it would be public, so the chart then requires a token Secret
+  # here (mounted as LIGUS_RELAY_METRICS_TOKEN_FILE) unless
+  # allowPublicUnauthenticated.
+  token:
+    existingSecret: ""
+    key: token
+  allowPublicUnauthenticated: false
   serviceMonitor:
     enabled: false
     interval: 30s
     labels: {}
-    # Set when LIGUS_RELAY_METRICS_TOKEN is set: Secret name and key holding it.
+    # Secret name and key holding LIGUS_RELAY_METRICS_TOKEN; defaults to
+    # metrics.token.
     bearerTokenSecret:
       name: ""
       key: ""
 
-# Clients require https://. Terminate TLS at the Ingress or Gateway; its idle
-# timeout must exceed 60 s for the tunnel WebSockets.
+# Clients require https://, so the chart refuses an Ingress without TLS:
+# set tls.secretName (cert-manager or your own), or terminatedUpstream: true
+# when a load balancer in front terminates TLS.
 ingress:
   enabled: false
   className: ""
+  # User annotations win over the streaming defaults below.
   annotations: {}
+  # Annotations for long-lived connections: tunnel WebSockets and SSE idle
+  # longer than the 60 s defaults of ingress-nginx and AWS ALB, and nginx
+  # must not buffer SSE. Harmless on other controllers.
+  streamingDefaults: true
   host: relay.example.com
   tls:
     secretName: ""
+    terminatedUpstream: false
 
 httpRoute:
   enabled: false
   parentRefs: []
   hostnames: []
   annotations: {}
+  # Per-rule timeouts (Gateway API): long enough for tunnel WebSockets and
+  # SSE. "0s" disables them on implementations that support it.
+  timeouts:
+    request: 3600s
+    backendRequest: 3600s
 
 networkPolicy:
   enabled: true

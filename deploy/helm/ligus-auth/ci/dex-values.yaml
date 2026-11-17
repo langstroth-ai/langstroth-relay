@@ -1,5 +1,6 @@
 config:
   public_url: https://auth.example.com
+  trusted_proxies: ["10.244.0.15/32"]
   tenants:
     - id: home
       oidc:
@@ -22,3 +23,5 @@ ingress:
   enabled: true
   className: nginx
   host: auth.example.com
+  tls:
+    secretName: auth-example-tls

@@ -21,6 +21,8 @@ config:
   access_ttl: "15m"
   refresh_idle_ttl: "168h"
   session_max_age: "720h"
+  # Exact addresses of your ingress controller or load balancer (never the
+  # whole pod CIDR); required with ingress.enabled.
   trusted_proxies: []
   tenants: []
   # - id: home
@@ -75,12 +77,20 @@ service:
   port: 8090
   adminPort: 8091
 
+# Clients require https://: an Ingress without tls.secretName fails unless
+# tls.terminatedUpstream (a load balancer in front terminates TLS). With an
+# Ingress, config.trusted_proxies must list the exact addresses the
+# controller connects from (else every client shares one rate-limit bucket)
+# unless ingress.allowSharedBucket.
 ingress:
   enabled: false
   className: ""
   host: ""
   annotations: {}
-  tls: []
+  tls:
+    secretName: ""
+    terminatedUpstream: false
+  allowSharedBucket: false
 
 networkPolicy:
   enabled: true

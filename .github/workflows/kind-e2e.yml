@@ -32,7 +32,14 @@ jobs:
           helm template t $c >/dev/null
           helm template t $c -f $c/ci/split-postgres-values.yaml >/dev/null
           helm template t $c -f $c/ci/single-memory-values.yaml >/dev/null
-          helm template t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true --set metrics.serviceMonitor.enabled=true >/dev/null
+          pub="--set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true"
+          helm template t $c $pub --set metrics.serviceMonitor.enabled=true --set ingress.tls.secretName=relay-tls \
+            --set clientIP.trustedProxies[0]=10.0.0.5/32 --set metrics.token.existingSecret=relay-metrics >/dev/null
+          # Must refuse a public relay without TLS, without trusted proxies, or
+          # with an unauthenticated /metrics.
+          refuse t $c $pub --set clientIP.trustedProxies[0]=10.0.0.5/32 --set metrics.token.existingSecret=m
+          refuse t $c $pub --set ingress.tls.secretName=t --set metrics.token.existingSecret=m
+          refuse t $c $pub --set ingress.tls.secretName=t --set clientIP.trustedProxies[0]=10.0.0.5/32
           # Must refuse: split topology without a database; relay-sync HA
           # (unsupported in 2.0); the dev Postgres without its Secret.
           refuse t $c --set topology=split
@@ -55,6 +62,8 @@ jobs:
           refuse t $a -f $a/ci/dex-values.yaml --set replicas=2
           refuse t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db --set replicas=2
           refuse t $a -f $a/ci/dex-values.yaml --set persistence.enabled=false
+          refuse t $a -f $a/ci/dex-values.yaml --set ingress.tls.secretName=
+          refuse t $a -f $a/ci/dex-values.yaml --set config.trusted_proxies=null
 
   e2e:
     runs-on: ubuntu-latest

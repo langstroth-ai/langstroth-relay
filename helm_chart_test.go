@@ -295,3 +295,39 @@ func TestChartsRefuseUnsupportedHA(t *testing.T) {
 		t.Fatalf("ligus-auth with Postgres must use Recreate: %v", err)
 	}
 }
+
+// A public relay: TLS required, streaming timeouts and no SSE buffering by
+// default, trusted proxies required, /metrics behind a token.
+func TestChartPublicRelayDefaults(t *testing.T) {
+	pub := []string{"--set", "externalDatabase.url=postgres://u:p@db/r", "--set", "ingress.enabled=true", "--set", "httpRoute.enabled=true"}
+	good := append(append([]string{}, pub...), "--set", "ingress.tls.secretName=relay-tls",
+		"--set", "clientIP.trustedProxies[0]=10.0.0.5/32", "--set", "metrics.token.existingSecret=mt",
+		"--set", "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-read-timeout=7200")
+	out := renderChart(t, good...)
+	ing := ""
+	for _, d := range docs(out) {
+		if strings.Contains(d, "kind: Ingress\n") {
+			ing = d
+		}
+	}
+	for _, want := range []string{`proxy-buffering: "off"`, `proxy-send-timeout: "3600"`, `proxy-read-timeout: "7200"`, "idle_timeout.timeout_seconds=3600", "secretName: relay-tls"} {
+		if !strings.Contains(ing, want) {
+			t.Errorf("ingress lacks %s:\n%s", want, ing)
+		}
+	}
+	if !strings.Contains(out, "request: 3600s") || !strings.Contains(out, "LIGUS_RELAY_METRICS_TOKEN_FILE") {
+		t.Error("httpRoute timeouts or the metrics token file missing")
+	}
+	drop := map[string]bool{"ingress.tls.secretName=relay-tls": true, "clientIP.trustedProxies[0]=10.0.0.5/32": true, "metrics.token.existingSecret=mt": true}
+	for k := range drop {
+		args := []string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0"}
+		for i := 0; i < len(good); i += 2 {
+			if good[i+1] != k {
+				args = append(args, good[i], good[i+1])
+			}
+		}
+		if err := exec.Command("helm", args...).Run(); err == nil {
+			t.Errorf("rendered a public relay without %s", k)
+		}
+	}
+}

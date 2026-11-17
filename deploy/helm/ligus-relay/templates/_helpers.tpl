@@ -109,6 +109,16 @@ DATABASE_URL
 {{- if or (gt (int .Values.sync.replicas) 1) .Values.sync.autoscaling.enabled -}}
 {{- fail "relay-sync runs exactly one replica in 2.0: short pairing codes, SSE fan-out and rate limits live in one process, so a second replica breaks pairing (README, Scaling). Set sync.replicas=1 and sync.autoscaling.enabled=false" -}}
 {{- end -}}
+{{- $public := or .Values.ingress.enabled .Values.httpRoute.enabled -}}
+{{- if and .Values.ingress.enabled (not .Values.ingress.tls.secretName) (not .Values.ingress.tls.terminatedUpstream) -}}
+{{- fail "ingress.enabled needs TLS: clients require https://. Set ingress.tls.secretName, or ingress.tls.terminatedUpstream=true when a load balancer in front terminates TLS" -}}
+{{- end -}}
+{{- if and $public (not .Values.clientIP.trustedProxies) (not .Values.clientIP.allowSharedBucket) -}}
+{{- fail "behind an ingress or gateway set clientIP.trustedProxies to the exact addresses it connects from (never the whole pod CIDR); without it every client shares one rate-limit bucket. clientIP.allowSharedBucket=true accepts that" -}}
+{{- end -}}
+{{- if and $public (not .Values.metrics.token.existingSecret) (not .Values.metrics.allowPublicUnauthenticated) -}}
+{{- fail "with ingress or httpRoute /metrics would be public: set metrics.token.existingSecret (LIGUS_RELAY_METRICS_TOKEN), or metrics.allowPublicUnauthenticated=true" -}}
+{{- end -}}
 {{- if .Values.sync.pdb.enabled -}}
 {{- fail "sync.pdb: a PodDisruptionBudget on a single relay-sync replica only blocks node drains; relay-sync HA is unsupported in 2.0" -}}
 {{- end -}}
@@ -177,6 +187,10 @@ spec:
         - name: LIGUS_RELAY_SECRETS_DIR
           value: /etc/ligus-relay/secrets
         {{- end }}
+        {{- if $v.metrics.token.existingSecret }}
+        - name: LIGUS_RELAY_METRICS_TOKEN_FILE
+          value: /etc/ligus-relay/metrics/token
+        {{- end }}
         {{- if include "ligus-relay.hasDatabase" $root }}
         - name: DATABASE_URL_FILE
           value: /etc/ligus-relay/db/DATABASE_URL
@@ -219,8 +233,13 @@ spec:
         failureThreshold: 3
       resources:
         {{- toYaml .resources | nindent 8 }}
-      {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "ligus-relay.hasDatabase" $root) }}
+      {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "ligus-relay.hasDatabase" $root) $v.metrics.token.existingSecret }}
       volumeMounts:
+        {{- if $v.metrics.token.existingSecret }}
+        - name: metrics-token
+          mountPath: /etc/ligus-relay/metrics
+          readOnly: true
+        {{- end }}
         {{- if $v.config.existingSecret }}
         - name: secrets
           mountPath: /etc/ligus-relay/secrets
@@ -241,8 +260,16 @@ spec:
           readOnly: true
         {{- end }}
       {{- end }}
-  {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "ligus-relay.hasDatabase" $root) }}
+  {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "ligus-relay.hasDatabase" $root) $v.metrics.token.existingSecret }}
   volumes:
+    {{- with $v.metrics.token.existingSecret }}
+    - name: metrics-token
+      secret:
+        secretName: {{ . }}
+        defaultMode: 0400
+        items:
+          - { key: {{ $v.metrics.token.key }}, path: token }
+    {{- end }}
     # 0400: with fsGroup the kubelet adds group read (0440, group 65532).
     {{- with $v.config.existingSecret }}
     - name: secrets
@@ -304,6 +331,7 @@ podAnnotations). Args: dict root withApns.
 {{- $v := $root.Values -}}
 {{- $names := list -}}
 {{- with $v.config.existingSecret }}{{ $names = append $names . }}{{ end -}}
+{{- with $v.metrics.token.existingSecret }}{{ $names = append $names . }}{{ end -}}
 {{- if include "ligus-relay.hasDatabase" $root }}{{ $names = append $names (include "ligus-relay.databaseSecretName" $root) }}{{ end -}}
 {{- if and .withApns $v.tunnel.apns.existingSecret }}{{ $names = append $names $v.tunnel.apns.existingSecret }}{{ end -}}
 {{- $data := dict "rendered" (include (print $root.Template.BasePath "/secret-db.yaml") $root) -}}

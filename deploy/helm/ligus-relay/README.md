@@ -75,8 +75,9 @@ of silently serving from memory.
 | `persistence.enabled` | `false` | Memory-store snapshot PVC (`single` only) |
 | `config.env` | `{}` | Plain `LIGUS_RELAY_*` settings (membership mode, retention, ...) |
 | `config.existingSecret` | empty | Secret-valued settings, one key per setting name (`LIGUS_RELAY_ACCESS_TOKENS`, `LIGUS_RELAY_METRICS_TOKEN`, `LIGUS_RELAY_TOKEN_PUBKEY`, ...), mounted 0400 as a directory the relay reads (`LIGUS_RELAY_SECRETS_DIR`); never env |
-| `clientIP.trustedProxies` / `clientIP.header` | empty, `X-Forwarded-For` | Proxies whose forwarding header names the client (see Scaling) |
-| `ingress.*`, `httpRoute.*` | off | TLS at the edge; idle timeout must exceed 60 s |
+| `clientIP.trustedProxies` / `clientIP.header` / `allowSharedBucket` | empty, `X-Forwarded-For`, off | Exact addresses of the ingress or LB whose forwarding header names the client (never the whole pod CIDR; see Scaling) |
+| `ingress.*`, `httpRoute.*` | off | TLS required (`ingress.tls.secretName`, or `tls.terminatedUpstream` behind a TLS load balancer). `ingress.streamingDefaults` (on) sets 3600 s nginx/ALB timeouts and `proxy-buffering: off`; `httpRoute.timeouts` 3600 s. Requires `clientIP.trustedProxies` (or `allowSharedBucket`) and `metrics.token` (or `metrics.allowPublicUnauthenticated`) |
+| `metrics.token.existingSecret` / `key` | empty, `token` | `LIGUS_RELAY_METRICS_TOKEN` as a file; the ServiceMonitor uses it too |
 | `metrics.serviceMonitor.*` | off | Prometheus Operator; set `bearerTokenSecret` when a metrics token is configured |
 | `networkPolicy.enabled` | `true` | Ingress to 8443 from `ingressFrom` (empty = anywhere) |
 | `networkPolicy.restrictEgress` | `true` | Egress only to DNS, the in-chart Postgres and `extraEgress` (add your database and, for APNs, 443) |
@@ -102,7 +103,9 @@ also refuses APNs settings outside `tunnel.apns.*`.
   [Reloader](https://github.com/stakater/Reloader) or bump `podAnnotations`.
 - The chart generates no Secrets, so every render is the same.
 - Clients require `https://` outside the cluster: terminate TLS at the Ingress
-  or Gateway (cert-manager).
+  or Gateway (cert-manager); the chart refuses an Ingress without TLS.
+- `/metrics` is open unless a metrics token is set, so a public relay must
+  have one.
 
 ## Scaling
 
