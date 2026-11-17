@@ -57,3 +57,39 @@ func TestPGConcurrentMigrations(t *testing.T) {
 		t.Errorf("concurrent migration failed: %v", err)
 	}
 }
+
+// Through a transaction-pooling PgBouncer the migration must not leave its
+// advisory lock held on a server connection (a session lock's unlock lands
+// on another one). LIGUS_AUTH_TEST_PGBOUNCER_URL: the same database through
+// PgBouncer, pool_mode=transaction.
+func TestPGMigrationLeavesNoLockBehindAPooler(t *testing.T) {
+	dsn, pooled := os.Getenv("LIGUS_AUTH_TEST_DATABASE_URL"), os.Getenv("LIGUS_AUTH_TEST_PGBOUNCER_URL")
+	if dsn == "" || pooled == "" {
+		t.Skip("set LIGUS_AUTH_TEST_DATABASE_URL and LIGUS_AUTH_TEST_PGBOUNCER_URL to run")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	key := uint64(migrationLockKey)
+	hi, lo := int64(key>>32), int64(key&0xffffffff)
+	// The default schema: PgBouncer doesn't carry a search_path startup
+	// parameter onto its server connections. Migrations are idempotent.
+	for i := 0; i < 10; i++ {
+		st, err := NewPostgresStore(ctx, pooled)
+		if err != nil {
+			t.Fatalf("boot %d through the pooler: %v", i, err)
+		}
+		st.Close()
+		var held int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted
+			AND classid = $1::bigint::oid AND objid = $2::bigint::oid`, hi, lo).Scan(&held); err != nil {
+			t.Fatal(err)
+		}
+		if held != 0 {
+			t.Fatalf("boot %d left the migration lock held by %d server session(s)", i, held)
+		}
+	}
+}

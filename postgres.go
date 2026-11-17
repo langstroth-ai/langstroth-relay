@@ -107,31 +107,43 @@ func (s *postgresStore) Ping(ctx context.Context) error { return s.pool.Ping(ctx
 // while migrating ("ligusrly" in ASCII). ligus-auth uses its own key.
 const migrationLockKey int64 = 0x6c69677573726c79
 
+// migrateLockWait bounds how long startup waits for the migration lock (a
+// pod hung while holding it); the orchestrator restarts a pod that gives up.
+var migrateLockWait = 2 * time.Minute
+
 // migrate creates the schema (idempotent — safe to run on every boot and from
 // every instance). Concurrent CREATE ... IF NOT EXISTS from several pods
 // starting at once race in the catalog (duplicate pg_type rows), so the DDL
-// runs under a session advisory lock on one connection. Migrations are
-// additive (expand/contract): a release never drops or renames what the
-// previous release still reads.
+// runs in one transaction under a transaction-scoped advisory lock. Not a
+// session lock: behind a transaction-pooling PgBouncer (Fly Managed Postgres,
+// most hosted Postgres) each statement outside a transaction may land on a
+// different server connection, so a session lock taken by one statement and
+// released by another leaks on the first, and every later boot waits on it.
+// A transaction pins one server connection and COMMIT/ROLLBACK releases the
+// lock. The wait is bounded (migrateLockWait): a pod that gives up exits and
+// is restarted. Migrations are additive (expand/contract): a release never
+// drops or renames what the previous release still reads.
 func (s *postgresStore) migrate(ctx context.Context) error {
-	conn, err := s.pool.Acquire(ctx)
+	ctx, cancel := context.WithTimeout(ctx, migrateLockWait)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
-		return fmt.Errorf("migration lock: %w", err)
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	// lock_timeout too, in case a pooler swallows the cancel request.
+	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = %d", migrateLockWait.Milliseconds())); err != nil {
+		return err
 	}
-	defer func() {
-		// Unlock even when ctx is done; a dropped connection releases it too.
-		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockKey)
-	}()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("migration lock (another pod migrating, or hung holding it): %w", err)
+	}
 	for _, q := range []string{schemaSQL, tunnelSchemaSQL, contactsSchemaSQL} {
-		if _, err := conn.Exec(ctx, q); err != nil {
+		if _, err := tx.Exec(ctx, q); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 const schemaSQL = `

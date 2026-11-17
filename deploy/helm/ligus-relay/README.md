@@ -142,8 +142,11 @@ hops; a header from any other peer is ignored.
   (`sslrootcert=` pointing at a mounted file). The relay holds ciphertext only,
   but the database also holds push tokens and pairing state: keep its dumps
   apart from the APNs key (together they are a push channel to every phone).
-- **Migrations** run at startup under a Postgres advisory lock, so pods
-  starting together can't race. They are additive (expand/contract): a release
+- **Migrations** run at startup in one transaction under a transaction-scoped
+  Postgres advisory lock, so pods starting together can't race; it is safe
+  behind a transaction-pooling PgBouncer (a session lock would leak there).
+  A pod waits at most two minutes for the lock, then exits and is restarted.
+  They are additive (expand/contract): a release
   never drops or renames what the previous release still reads, so an old and
   a new pod can overlap during an upgrade and you can roll back one release.
 - **Upgrade order:** the relay first, then ligus-auth, then the workspaces
