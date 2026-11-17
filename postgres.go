@@ -103,17 +103,35 @@ func (s *postgresStore) Close() error { s.pool.Close(); return nil }
 // (pool exhaustion, a dropped primary, etc.).
 func (s *postgresStore) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
+// migrationLockKey is the pg_advisory_lock key every relay process takes
+// while migrating ("ligusrly" in ASCII). ligus-auth uses its own key.
+const migrationLockKey int64 = 0x6c69677573726c79
+
 // migrate creates the schema (idempotent — safe to run on every boot and from
-// every instance).
+// every instance). Concurrent CREATE ... IF NOT EXISTS from several pods
+// starting at once race in the catalog (duplicate pg_type rows), so the DDL
+// runs under a session advisory lock on one connection. Migrations are
+// additive (expand/contract): a release never drops or renames what the
+// previous release still reads.
 func (s *postgresStore) migrate(ctx context.Context) error {
-	if _, err := s.pool.Exec(ctx, schemaSQL); err != nil {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, tunnelSchemaSQL); err != nil {
-		return err
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
 	}
-	_, err := s.pool.Exec(ctx, contactsSchemaSQL)
-	return err
+	defer func() {
+		// Unlock even when ctx is done; a dropped connection releases it too.
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockKey)
+	}()
+	for _, q := range []string{schemaSQL, tunnelSchemaSQL, contactsSchemaSQL} {
+		if _, err := conn.Exec(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const schemaSQL = `

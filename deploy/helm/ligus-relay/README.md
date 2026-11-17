@@ -1,4 +1,8 @@
-# ligus-relay Helm chart
+# ligus-relay Helm chart (preview)
+
+> **Preview.** This chart and the relay image are not published to a registry
+> yet: build the image yourself and install the chart from a checkout (relay
+> v0.3.0 or later). Values may change before they are published.
 
 The Ligus relay on Kubernetes: content-blind, end-to-end encrypted sync, plus
 the phone tunnel. The relay never holds a workspace key, a device key or
@@ -127,6 +131,34 @@ balancer connects from. The relay then reads `X-Forwarded-For` (or
 `clientIP.header`) from those peers only, walking right to left past trusted
 hops; a header from any other peer is ignored.
 
+## Backups and upgrades
+
+- **Back up Postgres, not pods.** Use your database's point-in-time recovery
+  (WAL archiving: a managed database's PITR, or CloudNativePG / pgBackRest)
+  and connect with `sslmode=verify-full` and the server's CA
+  (`sslrootcert=` pointing at a mounted file). The relay holds ciphertext only,
+  but the database also holds push tokens and pairing state: keep its dumps
+  apart from the APNs key (together they are a push channel to every phone).
+- **Migrations** run at startup under a Postgres advisory lock, so pods
+  starting together can't race. They are additive (expand/contract): a release
+  never drops or renames what the previous release still reads, so an old and
+  a new pod can overlap during an upgrade and you can roll back one release.
+- **Upgrade order:** the relay first, then ligus-auth, then the workspaces
+  (`ligus` chart), with each serve image pinned to the desktop release your
+  members run. relay-sync and the tunnel use `Recreate`: expect a few seconds
+  without sync, and hosts reconnecting their tunnels.
+- **Turning on `LIGUS_RELAY_WORKSPACE_SCOPE=strict`:** issue
+  workspace-scoped tokens first, roll them out to every client, then flip to
+  `strict`; the reverse order locks out clients with unscoped tokens.
+- The workspaces' serve and worker volumes hold identities and keys: the
+  `ligus` chart's docs say not to back them up (revoke and re-enrol instead).
+
+## Explicitly unsupported in 2.0
+
+- More than one relay-sync replica, autoscaling, or tunnel/ligus-auth HA.
+- Mutually distrusting tenants on one relay, ligus-auth or cluster.
+- The in-chart Postgres (`postgres.enabled`) for anything but development.
+
 ## Image
 
 `deploy/container/Dockerfile` builds the non-root distroless image used here,
@@ -142,5 +174,7 @@ volume) is unchanged for hosts that mount root-owned volumes.
 
 ## CI
 
-`.github/workflows/kind-e2e.yml` builds the image, installs the chart on kind
-in both topologies under Pod Security `restricted` and runs `helm test`.
+`.github/workflows/kind-e2e.yml` renders every documented combination and the
+refusals, builds the image, installs the chart on kind in both topologies
+under Pod Security `restricted` and runs `helm test`. `helm_chart_test.go`
+(`go test`, needs helm) checks the rendered security properties.
