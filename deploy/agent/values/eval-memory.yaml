@@ -1,0 +1,8 @@
+# Scenario eval-memory: one relay pod, in-memory store snapshotted to a PVC.
+# For trying the relay on a laptop cluster (kind, k3d, OrbStack, Docker
+# Desktop). Not for a team: no database, one replica, no HA.
+# Secrets (made by bootstrap-secrets.sh): <fullname>-env (metrics token).
+topology: single
+persistence:
+  enabled: true
+  size: 256Mi

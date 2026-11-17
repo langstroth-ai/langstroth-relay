@@ -6,3 +6,6 @@
 
 # Never commit APNs auth keys.
 *.p8
+
+# deploy/agent/local.sh build output
+/bin/

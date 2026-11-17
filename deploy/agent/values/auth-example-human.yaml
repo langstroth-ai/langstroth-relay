@@ -1,0 +1,24 @@
+# EXAMPLE of the values file the human writes for an auth-* scenario (copy
+# it outside the repository, fill it in, pass it with --values). It holds no
+# secrets: the IdP client secret goes in a file loaded by
+# bootstrap-secrets.sh --idp-client-secret-file, mounted at
+# /etc/ligus-auth/secrets/idp-client-secret.
+config:
+  public_url: https://auth.example.com
+  trusted_proxies: ["10.244.0.15/32"]   # exact ingress controller addresses
+  tenants:
+    - id: home
+      oidc:
+        issuer: https://id.example.com
+        client_id: ligus-auth
+        client_secret_file: /etc/ligus-auth/secrets/idp-client-secret
+      idp_groups: true
+      workspaces: ["<workspace-uuid>"]
+      grants:
+        ligus-users: ["<workspace-uuid>"]
+ingress:
+  enabled: true
+  className: nginx
+  host: auth.example.com
+  tls:
+    secretName: auth-example-tls

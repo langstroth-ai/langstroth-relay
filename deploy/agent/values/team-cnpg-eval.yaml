@@ -1,0 +1,15 @@
+# Scenario team-cnpg-eval: the relay on a one-instance CloudNativePG cluster
+# with backups explicitly acknowledged OFF. For evaluating the cnpg path only;
+# never use it for data you want to keep (use team-cnpg). Needs the CNPG
+# operator (preflight checks for it; the human decides whether to install it).
+database:
+  mode: cnpg
+  cnpg:
+    instances: 1
+    storage:
+      size: 1Gi
+    backups:
+      enabled: false
+      acknowledgeNoBackups: true
+tunnel:
+  mode: "off"

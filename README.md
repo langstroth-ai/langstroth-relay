@@ -29,6 +29,19 @@ This is the production relay (Go). It speaks the same JSON `/v1` contract and
 (`crates/hive-relay`), which is now kept only as an in-process test fixture for
 the Rust client (in the Ligus app repo).
 
+## Deploying with an agent
+
+A coding agent (Claude Code, Codex, Copilot CLI, ...) can deploy the relay
+on Kubernetes or run it locally without guessing. [AGENTS.md](AGENTS.md)
+has the decision table (local binary, `eval-memory`, `team-bundled`,
+`team-external`, `team-cnpg`, `ligus-auth`), the exact commands, the hard
+rules (no secrets in chat or values files, never weaken fail-closed defaults)
+and the steps only a human can do. The scripts in `deploy/agent/`
+(`preflight`, `bootstrap-secrets`, `install`, `verify`, `teardown`,
+`cnpg-operator`, `local`) are non-interactive, idempotent and print JSON with
+`--json`. Step-by-step skills: `.claude/skills/relay-deploy-k8s` and
+`.claude/skills/relay-run-local`.
+
 ## Run
 
 ```sh

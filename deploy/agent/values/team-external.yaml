@@ -1,0 +1,10 @@
+# Scenario team-external: the relay on a managed or separately run Postgres.
+# The DSN (sslmode=verify-full) is written by the HUMAN to a file and loaded
+# with bootstrap-secrets.sh --dsn-file; the database's address range goes in
+# an extra values file (database.external.cidrs) for the egress policy.
+database:
+  mode: external
+  external:
+    cidrs: []   # e.g. [10.20.0.15/32]; provided by the human
+tunnel:
+  mode: "off"

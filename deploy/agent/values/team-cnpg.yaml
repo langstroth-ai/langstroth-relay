@@ -1,0 +1,21 @@
+# Scenario team-cnpg: production-shaped relay on CloudNativePG: three
+# instances with automatic failover, WAL archiving and scheduled backups.
+# Needs the CNPG operator, and an object store the HUMAN provides: fill in
+# database.cnpg.backups (destinationPath, credentials Secret names) in an
+# extra values file passed with --values. Install refuses to render without
+# it (backups are on and need a destination).
+database:
+  mode: cnpg
+  cnpg:
+    instances: 3
+    storage:
+      size: 10Gi
+    backups:
+      enabled: true
+      # barmanObjectStore:            # provided by the human, e.g.
+      #   destinationPath: s3://bucket/relay
+      #   s3Credentials:
+      #     accessKeyId: {name: relay-backup-s3, key: ACCESS_KEY_ID}
+      #     secretAccessKey: {name: relay-backup-s3, key: ACCESS_SECRET_KEY}
+tunnel:
+  mode: "off"

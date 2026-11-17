@@ -1,0 +1,16 @@
+# Scenario team-bundled: a small team on Kubernetes without a managed
+# Postgres. Split topology (relay-sync + relay-tunnel) on the chart's single
+# hardened Postgres pod: TLS (verify-full), a non-superuser role,
+# scram-sha-256, a nightly pg_dump CronJob. No database HA.
+# Secrets (made by bootstrap-secrets.sh): <fullname>-env, -postgres-auth,
+# -postgres-tls (a CA made for this release; or use cert-manager instead).
+database:
+  mode: bundled
+  bundled:
+    persistence:
+      size: 5Gi
+# The tunnel (phone to home host) stays off until the human decides who may
+# register hosts: tunnel.mode=allowlist with tunnel.allowedHosts, or open
+# with a token gate. See AGENTS.md, "Human decisions".
+tunnel:
+  mode: "off"
