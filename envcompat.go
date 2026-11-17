@@ -1,6 +1,9 @@
 package relay
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -91,11 +94,84 @@ func resolveSetting(name string, lookup func(string) string, read func(string) (
 		}
 	}
 	if dir := strings.TrimSpace(lookup(secretsDirEnv)); dir != "" && canonical != secretsDirEnv && !strings.ContainsAny(canonical, "/\\") {
-		if v, err := read(filepath.Join(dir, canonical)); err == nil {
+		v, err := read(filepath.Join(dir, canonical))
+		if err == nil {
 			return v
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			// Unreadable is not unset: secretFilesConfigError stops the
+			// process at startup; this is for a file that changed later.
+			warn(canonical+"@dir", "cannot read setting file", "var", canonical, "dir", secretsDirEnv, "err", err)
 		}
 	}
 	return ""
+}
+
+// secretFilesConfigError refuses to start when a secret file the relay was
+// pointed at can't be read or is empty: every <NAME>_FILE among the relay's
+// settings (and DATABASE_URL_FILE), and every file in LIGUS_RELAY_SECRETS_DIR.
+// getenv treats an unreadable file as unset, and for the access gate
+// (LIGUS_RELAY_TOKEN_PUBKEY, LIGUS_RELAY_ACCESS_TOKENS) unset means open, for
+// DATABASE_URL the in-memory store: a wrong file mode or a typo'd path must
+// stop the relay instead.
+func secretFilesConfigError(lookup func(string) string) error {
+	var names []string
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			names = append(names, k)
+		}
+	}
+	return checkSecretFiles(lookup, names)
+}
+
+func checkSecretFiles(lookup func(string) string, names []string) error {
+	seen := map[string]bool{}
+	check := func(label, path string) error {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("%s: cannot read %s: %w", label, path, err)
+		}
+		if strings.TrimSpace(string(b)) == "" {
+			return fmt.Errorf("%s: %s is empty", label, path)
+		}
+		return nil
+	}
+	for _, k := range names {
+		if seen[k] || !strings.HasSuffix(k, "_FILE") {
+			continue
+		}
+		seen[k] = true
+		if !strings.HasPrefix(k, envPrefix) && !strings.HasPrefix(k, legacyEnvPrefix) && k != "DATABASE_URL_FILE" {
+			continue
+		}
+		if p := strings.TrimSpace(lookup(k)); p != "" {
+			if err := check(k, p); err != nil {
+				return err
+			}
+		}
+	}
+	dir := strings.TrimSpace(lookup(secretsDirEnv))
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("%s: %w", secretsDirEnv, err)
+	}
+	for _, e := range entries {
+		// A mounted Secret's ..data / ..<timestamp> entries.
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			continue
+		}
+		if err := check(secretsDirEnv+"/"+e.Name(), p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveEnv(name string, lookup func(string) string, warn func(key, msg string, args ...any)) string {

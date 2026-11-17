@@ -145,7 +145,11 @@ unset in the environment is read from the file named by `X_FILE` (for example
 `$LIGUS_RELAY_SECRETS_DIR/X` (canonical `LIGUS_RELAY_*` name), so secrets can
 be mounted files instead of environment variables. The environment wins over
 `X_FILE`, which wins over the directory; one trailing newline is trimmed.
-`LIGUS_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key).
+`LIGUS_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key). The
+relay refuses to start when any `LIGUS_RELAY_*_FILE` or `DATABASE_URL_FILE`
+it is given, or any file in `LIGUS_RELAY_SECRETS_DIR`, can't be read or is
+empty: an unreadable file would otherwise read as unset, and an unset
+`LIGUS_RELAY_TOKEN_PUBKEY` means an open relay.
 
 ## Test
 

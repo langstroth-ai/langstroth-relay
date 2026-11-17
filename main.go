@@ -62,6 +62,9 @@ func MainWith(ext Extension) {
 		}
 	}
 
+	// Before anything reads a setting: an unreadable secret file would
+	// otherwise read as unset (an open access gate, the memory store).
+	fatalIf(secretFilesConfigError(os.Getenv))
 	fatalIf(entitlementConfigError())
 	fatalIf(routesConfigError(getenv))
 	fatalIf(apnsWithoutTunnelError(getenv))

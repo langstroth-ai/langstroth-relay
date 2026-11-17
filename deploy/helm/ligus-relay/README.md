@@ -101,7 +101,10 @@ also refuses APNs settings outside `tunnel.apns.*`.
 - No secret in the environment: the database URL, `config.existingSecret` and
   the APNs key are files mounted `0400` (with `fsGroup` the kubelet adds group
   read: `0440`, group 65532). The relay reads any setting `X` from `X_FILE` or
-  from `$LIGUS_RELAY_SECRETS_DIR/X` when `X` itself is unset.
+  from `$LIGUS_RELAY_SECRETS_DIR/X` when `X` itself is unset, and refuses to
+  start when one of those files can't be read or is empty (a wrong
+  `fsGroup` or `runAsUser` then fails the rollout instead of opening the
+  access gate).
 - `checksum/secrets` rolls the pods when a Secret they read changes. It uses
   `lookup`, a constant under `helm template`; with Argo CD or Flux use
   [Reloader](https://github.com/stakater/Reloader) or bump `podAnnotations`.
