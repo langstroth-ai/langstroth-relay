@@ -331,3 +331,14 @@ func TestChartPublicRelayDefaults(t *testing.T) {
 		}
 	}
 }
+
+// The tunnel pod serves only the tunnel; relay-sync never gets the setting.
+func TestChartTunnelPodServesOnlyTunnel(t *testing.T) {
+	out := renderChart(t, "--set", "externalDatabase.url=postgres://u:p@db/r", "--set", "tunnel.mode=open")
+	if !strings.Contains(docOfKind(out, "Deployment", "-tunnel"), "LIGUS_RELAY_ROUTES") {
+		t.Fatal("tunnel pod must set LIGUS_RELAY_ROUTES=tunnel")
+	}
+	if strings.Contains(docOfKind(out, "Deployment", "-sync"), "LIGUS_RELAY_ROUTES") {
+		t.Fatal("relay-sync must serve every route")
+	}
+}

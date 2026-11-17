@@ -133,6 +133,12 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
 memory+snapshot; else in-memory only.
 
+**Pod roles.** `LIGUS_RELAY_ROUTES=tunnel` serves only `/v1/tunnel/*`,
+`/v1/health` and `/metrics` (the Helm chart sets it on the tunnel pod, so
+pairing has one store, on relay-sync). APNs settings on a process whose tunnel
+is off are refused at startup: push only goes out through the tunnel, so keep
+the APNs key on the tunnel pod alone.
+
 **Settings from files.** Any setting `X` above (and `DATABASE_URL`) that is
 unset in the environment is read from the file named by `X_FILE` (for example
 `DATABASE_URL_FILE`, `LIGUS_RELAY_ACCESS_TOKENS_FILE`), else from the file

@@ -179,6 +179,12 @@ spec:
       env:
         - name: LIGUS_RELAY_TUNNEL
           value: {{ .tunnelMode | quote }}
+        {{- if eq .component "tunnel" }}
+        # Only /v1/tunnel/*, /v1/health and /metrics here: pairing and the
+        # rest belong to relay-sync's single store.
+        - name: LIGUS_RELAY_ROUTES
+          value: tunnel
+        {{- end }}
         {{- if and (ne .tunnelMode "off") (eq $v.tunnel.mode "allowlist") }}
         - name: LIGUS_RELAY_TUNNEL_HOSTS
           value: {{ join "," $v.tunnel.allowedHosts | quote }}
