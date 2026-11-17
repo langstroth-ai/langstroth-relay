@@ -1,0 +1,11 @@
+# Scenario auth-cnpg-eval: ligus-auth on a one-instance CloudNativePG cluster,
+# backups acknowledged OFF. Evaluation only.
+database:
+  mode: cnpg
+  cnpg:
+    instances: 1
+    storage:
+      size: 1Gi
+    backups:
+      enabled: false
+      acknowledgeNoBackups: true

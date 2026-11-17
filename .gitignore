@@ -6,3 +6,16 @@
 
 # Never commit APNs auth keys.
 *.p8
+
+# deploy/agent/local.sh build output
+/bin/
+
+# Agent state stays private: only the two deploy skills' SKILL.md files under
+# .claude/ are committed (settings, other skills, notes and worktrees are not).
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/relay-deploy-k8s/
+!.claude/skills/relay-run-local/
+.claude/skills/relay-*/*
+!.claude/skills/relay-*/SKILL.md
