@@ -32,9 +32,21 @@ jobs:
           helm template t $c >/dev/null
           helm template t $c -f $c/ci/split-postgres-values.yaml >/dev/null
           helm template t $c -f $c/ci/single-memory-values.yaml >/dev/null
-          helm template t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true --set metrics.serviceMonitor.enabled=true --set sync.autoscaling.enabled=true --set sync.pdb.enabled=true >/dev/null
-          # Must refuse: split topology without a database.
+          pub="--set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true"
+          helm template t $c $pub --set metrics.serviceMonitor.enabled=true --set ingress.tls.secretName=relay-tls \
+            --set clientIP.trustedProxies[0]=10.0.0.5/32 --set metrics.token.existingSecret=relay-metrics >/dev/null
+          # Must refuse a public relay without TLS, without trusted proxies, or
+          # with an unauthenticated /metrics.
+          refuse t $c $pub --set clientIP.trustedProxies[0]=10.0.0.5/32 --set metrics.token.existingSecret=m
+          refuse t $c $pub --set ingress.tls.secretName=t --set metrics.token.existingSecret=m
+          refuse t $c $pub --set ingress.tls.secretName=t --set clientIP.trustedProxies[0]=10.0.0.5/32
+          # Must refuse: split topology without a database; relay-sync HA
+          # (unsupported in 2.0); the dev Postgres without its Secret.
           refuse t $c --set topology=split
+          refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.replicas=2
+          refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.autoscaling.enabled=true
+          refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.pdb.enabled=true
+          refuse t $c --set postgres.enabled=true
       - name: ligus-auth chart
         run: |
           set -e
@@ -42,11 +54,16 @@ jobs:
           a=deploy/helm/ligus-auth
           helm lint --strict $a -f $a/ci/dex-values.yaml
           helm template t $a -f $a/ci/dex-values.yaml >/dev/null
-          helm template t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db --set replicas=2 >/dev/null
-          # Must refuse: no public_url / no signing key / file store with 2 replicas.
+          helm template t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db >/dev/null
+          # Must refuse: no public_url / no signing key / more than one replica
+          # with either store (unsupported in 2.0) / file store without a volume.
           refuse t $a
           refuse t $a -f $a/ci/dex-values.yaml --set signingKey.existingSecret=
           refuse t $a -f $a/ci/dex-values.yaml --set replicas=2
+          refuse t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db --set replicas=2
+          refuse t $a -f $a/ci/dex-values.yaml --set persistence.enabled=false
+          refuse t $a -f $a/ci/dex-values.yaml --set ingress.tls.secretName=
+          refuse t $a -f $a/ci/dex-values.yaml --set config.trusted_proxies=null
 
   e2e:
     runs-on: ubuntu-latest
@@ -81,7 +98,17 @@ jobs:
         run: |
           kubectl create namespace ligus-relay
           kubectl label namespace ligus-relay pod-security.kubernetes.io/enforce=restricted
+          # The in-chart dev Postgres reads its password and DSN from a
+          # Secret the operator creates (the chart generates none).
+          PW=$(openssl rand -hex 24)
+          kubectl -n ligus-relay create secret generic relay-dev-postgres \
+            --from-literal=password="$PW" \
+            --from-literal=DATABASE_URL="postgres://relay:$PW@ligus-relay-postgres:5432/relay?sslmode=disable"
+          # Settings delivered as files (LIGUS_RELAY_SECRETS_DIR).
+          kubectl -n ligus-relay create secret generic relay-env \
+            --from-literal=LIGUS_RELAY_METRICS_TOKEN="$(openssl rand -hex 16)"
           helm install ligus-relay deploy/helm/ligus-relay -n ligus-relay \
+            --set config.existingSecret=relay-env \
             -f deploy/helm/ligus-relay/ci/${{ matrix.values }} --wait --timeout 5m
       - name: helm test
         run: helm test ligus-relay -n ligus-relay --logs
@@ -90,7 +117,14 @@ jobs:
           svc=$(kubectl -n ligus-relay get svc -l app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
           kubectl -n ligus-relay port-forward svc/$svc 8443:8443 &
           for i in $(seq 30); do curl -fsS http://127.0.0.1:8443/v1/health && break; sleep 1; done
-          curl -fsS http://127.0.0.1:8443/metrics | grep -q relay_requests_total
+          # The metrics token came from the mounted secrets directory: without
+          # it /metrics is refused, with it it answers.
+          tok=$(kubectl -n ligus-relay get secret relay-env -o jsonpath='{.data.LIGUS_RELAY_METRICS_TOKEN}' | base64 -d)
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8443/metrics)" != 200
+          curl -fsS -H "Authorization: Bearer $tok" http://127.0.0.1:8443/metrics | grep -q relay_requests_total
+          # No secret reaches the pod environment.
+          pod=$(kubectl -n ligus-relay get pod -l app.kubernetes.io/name=ligus-relay,app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
+          if kubectl -n ligus-relay get pod "$pod" -o yaml | grep -q secretKeyRef; then echo "::error::secret in env"; exit 1; fi
       - name: diagnostics
         if: failure()
         run: |

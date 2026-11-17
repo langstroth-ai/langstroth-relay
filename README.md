@@ -133,6 +133,24 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
 memory+snapshot; else in-memory only.
 
+**Pod roles.** `LIGUS_RELAY_ROUTES=tunnel` serves only `/v1/tunnel/*`,
+`/v1/health` and `/metrics` (the Helm chart sets it on the tunnel pod, so
+pairing has one store, on relay-sync). APNs settings on a process whose tunnel
+is off are refused at startup: push only goes out through the tunnel, so keep
+the APNs key on the tunnel pod alone.
+
+**Settings from files.** Any setting `X` above (and `DATABASE_URL`) that is
+unset in the environment is read from the file named by `X_FILE` (for example
+`DATABASE_URL_FILE`, `LIGUS_RELAY_ACCESS_TOKENS_FILE`), else from the file
+`$LIGUS_RELAY_SECRETS_DIR/X` (canonical `LIGUS_RELAY_*` name), so secrets can
+be mounted files instead of environment variables. The environment wins over
+`X_FILE`, which wins over the directory; one trailing newline is trimmed.
+`LIGUS_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key). The
+relay refuses to start when any `LIGUS_RELAY_*_FILE` or `DATABASE_URL_FILE`
+it is given, or any file in `LIGUS_RELAY_SECRETS_DIR`, can't be read or is
+empty: an unreadable file would otherwise read as unset, and an unset
+`LIGUS_RELAY_TOKEN_PUBKEY` means an open relay.
+
 ## Test
 
 ```sh
@@ -188,8 +206,11 @@ relay.example.com {
 
 - **Single instance:** mount a volume at `/data` and set `LIGUS_RELAY_DATA_DIR=/data`
   (JSON snapshot store; survives restarts). Nothing to back up but that volume.
-- **HA / multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
-  precedence over the snapshot dir, so every instance shares state (no migration).
+- **Multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
+  precedence over the snapshot dir, so every instance shares stored state (no
+  migration). Short pairing codes, SSE fan-out and rate limits stay per
+  process, so the Helm chart runs exactly one sync instance in 2.0; more than
+  one is unsupported.
 
 #### Envelope retention
 

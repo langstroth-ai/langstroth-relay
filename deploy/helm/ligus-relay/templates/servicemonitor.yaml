@@ -17,12 +17,12 @@ spec:
     - port: http
       path: /metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}
-      {{- with .Values.metrics.serviceMonitor.bearerTokenSecret }}
-      {{- if .name }}
+      {{- $b := .Values.metrics.serviceMonitor.bearerTokenSecret }}
+      {{- $name := default .Values.metrics.token.existingSecret $b.name }}
+      {{- if $name }}
       authorization:
         credentials:
-          name: {{ .name }}
-          key: {{ .key }}
-      {{- end }}
+          name: {{ $name }}
+          key: {{ ternary $b.key .Values.metrics.token.key (not (empty $b.name)) }}
       {{- end }}
 {{- end }}

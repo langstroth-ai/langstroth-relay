@@ -16,10 +16,6 @@ WARNING: no database. State is in memory{{ if .Values.persistence.enabled }} wit
 
 WARNING: postgres.enabled runs a single development Postgres pod. Use a managed database in production.
 {{- end }}
-{{- if and (eq (include "ligus-relay.topology" .) "split") (or .Values.sync.autoscaling.enabled (gt (int .Values.sync.replicas) 1)) }}
-
-WARNING: more than one relay-sync replica. Short pairing codes, SSE nudges and rate limits are per process today (see README, Scaling).
-{{- end }}
 
 Clients outside the cluster need https://: enable ingress or httpRoute with TLS (idle timeout above 60 s for the tunnel).
 

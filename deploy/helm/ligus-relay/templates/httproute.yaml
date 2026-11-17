@@ -26,10 +26,18 @@ spec:
       backendRefs:
         - name: {{ $tunnelSvc }}
           port: {{ .Values.service.port }}
+      {{- with .Values.httpRoute.timeouts }}
+      timeouts:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- end }}
     - matches:
         - path: { type: PathPrefix, value: / }
       backendRefs:
         - name: {{ $syncSvc }}
           port: {{ .Values.service.port }}
+      {{- with .Values.httpRoute.timeouts }}
+      timeouts:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- end }}
