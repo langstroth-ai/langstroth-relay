@@ -32,7 +32,7 @@ func Main() { MainWith(Extension{}) }
 // MainWith runs the relay binary with a downstream Extension. Everything the
 // open binary does is unchanged: subcommands, storage selection
 // (DATABASE_URL / HIVE_RELAY_DATA_DIR / HIVE_RELAY_REQUIRE_DB), the address
-// ($PORT / HIVE_RELAY_ADDR), every env knob, the entitlement gate, the /v1
+// ($PORT / HIVE_RELAY_ADDR), every env knob, the access gate, the /v1
 // sync and admin routes, snapshot flushing, pruning and graceful shutdown. An
 // extension only supplies the tunnel seams and extra routes (see Extension).
 // MainWith(Extension{}) is exactly Main().

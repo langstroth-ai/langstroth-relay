@@ -119,8 +119,8 @@ func TestExtensionPrefixValidation(t *testing.T) {
 	}
 }
 
-// TestTunnelInfoBillingOpenBuild pins what the iOS app relies on to hide its
-// paywall: a self-hosted relay with HIVE_RELAY_TUNNEL=open says billing none.
+// TestTunnelInfoBillingOpenBuild pins the tunnel info wire value the iOS app
+// reads: a self-hosted relay with HIVE_RELAY_TUNNEL=open says billing none.
 func TestTunnelInfoBillingOpenBuild(t *testing.T) {
 	t.Setenv("HIVE_RELAY_TUNNEL", "open")
 	a, err := Assemble(context.Background(), newMemoryStore(), Extension{})

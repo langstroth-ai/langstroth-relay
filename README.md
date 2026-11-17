@@ -25,7 +25,7 @@ off by default since v0.3, removed in v0.4.
 > metric names are protocol identifiers from the project's former name.
 
 This is the production relay (Go). It speaks the same JSON `/v1` contract and
-`hrt1` entitlement-token format as the original Rust reference relay
+`hrt1` access-token format as the original Rust reference relay
 (`crates/hive-relay`), which is now kept only as an in-process test fixture for
 the Rust client (in the Ligus app repo).
 
@@ -50,7 +50,7 @@ go run ./cmd/ligus-relay            # serves on :8443 (in-memory)
 go build -o ligus-relay ./cmd/ligus-relay && ./ligus-relay
 ```
 
-Operator commands (mint/verify signed entitlement tokens — the serving relay
+Operator commands (mint/verify signed access tokens — the serving relay
 only ever *verifies*):
 
 ```sh
@@ -74,7 +74,7 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `DATABASE_URL` | empty | shared **Postgres** store → horizontal scaling / HA (no data migration) |
 | `LIGUS_RELAY_DATA_DIR` | empty | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
 | `LIGUS_RELAY_REQUIRE_DB` | off | `1`: refuse to start without `DATABASE_URL` instead of falling back to memory |
-| `LIGUS_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** entitlement tokens. A key that doesn't parse denies every token |
+| `LIGUS_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** access tokens. A key that doesn't parse denies every token |
 | `LIGUS_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
 | `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
 | `LIGUS_RELAY_TOKEN_PUBKEY_NEXT` | empty | A second issuer public key accepted next to `LIGUS_RELAY_TOKEN_PUBKEY` while the issuer rotates its key. Needs `LIGUS_RELAY_TOKEN_PUBKEY`; a key that doesn't parse denies every token |
@@ -192,7 +192,7 @@ docker run -d -p 8443:8443 -v ligus-data:/data -e LIGUS_RELAY_DATA_DIR=/data lig
 curl localhost:8443/v1/health           # → ok
 ```
 
-### Managed platforms
+### Container platforms
 
 No lock-in — it's a standard container. The binary honors `$PORT` (else
 `$LIGUS_RELAY_ADDR`, else `0.0.0.0:8443`), so most PaaS work with zero config:
@@ -325,7 +325,7 @@ Ownership is a capability: on the first write the client sends a `writeKey`
 (32 random bytes, base64url without padding); the relay stores only its
 SHA-256 and compares hashes. Whoever holds the key may update or delete the
 record and read or empty the drop box. Anyone who knows the `cid` may read the
-record and drop into the box. Every route goes through the entitlement gate.
+record and drop into the box. Every route goes through the access gate.
 
 | Method | Path | Auth | Request | Response |
 |---|---|---|---|---|
@@ -406,15 +406,15 @@ rotations can't push a workspace's real rotations out. One rotation is capped at
 
 Gating applies symmetrically to **reads and writes**: both `GET`
 (envelopes / keyring / presence / candidates) and `POST` on a workspace require
-the same entitlement (`enforceRead` mirrors `enforceWrite`). Under a token-gated
+the same access token (`enforceRead` mirrors `enforceWrite`). Under a token-gated
 policy an unauthenticated read is `401`; under the open policy reads stay open,
 just like writes. This is a coarse, content-blind token gate — it checks the
-presented entitlement, never the body — so workspace ciphertext + keyring are no
+presented token, never the body — so workspace ciphertext + keyring are no
 longer readable by anyone who merely learns a workspace id. Clients already send
 their access token on every request, so no client change is needed.
 
 **Per-workspace token scope (opt-in, `LIGUS_RELAY_WORKSPACE_SCOPE`).** The
-token gate is coarse: any entitled caller may read and write any workspace.
+token gate is coarse: any admitted caller may read and write any workspace.
 Signed tokens can carry an optional `workspaces` claim (`ligus-relay issue …
 --workspace <id> [--workspace <id>]`, `*` = any). With
 `LIGUS_RELAY_WORKSPACE_SCOPE=claims` a token that carries the claim is confined
@@ -428,7 +428,7 @@ the `hrt1` format is unchanged, but a relay that doesn't enforce it (older, or
 this on. Relay-managed membership (`LIGUS_RELAY_MEMBERSHIP=1`) is the
 alternative when the roster, not the issuer, should decide.
 
-**Deferred (known, needs a product decision — not implemented here):**
+**Deferred (known, needs a design decision — not implemented here):**
 - *High-entropy workspace ids.* Clients today derive a workspace id from a
   possibly-guessable room *name*. Making ids high-entropy (so an id can't be
   guessed at all) is a client-side + invite-model change, not a relay change.
@@ -513,7 +513,7 @@ impersonate either side. The protocol is open; the spec lives in the Ligus repo
 **Off by default.** A relay upgraded to this version does not become a public
 tunnel provider. Enable it with `LIGUS_RELAY_TUNNEL=open` (any host may
 register) or `LIGUS_RELAY_TUNNEL=allowlist` + `LIGUS_RELAY_TUNNEL_HOSTS=<host_id>,…`.
-When the relay's entitlement gate is configured (`LIGUS_RELAY_TOKEN_PUBKEY` /
+When the relay's access gate is configured (`LIGUS_RELAY_TOKEN_PUBKEY` /
 `LIGUS_RELAY_ACCESS_TOKENS`), a host's first registration must also present a
 token that passes it (`ligus remote enable --reg-token …`).
 
@@ -546,12 +546,12 @@ tunnel socket is closed with `4011 shutting_down` (wired via
 single relay instance for the tunnel, or route `/v1/tunnel/connect?host=H` and
 `/v1/tunnel/accept` to the instance holding H's control connection.
 
-**Self-hosting the tunnel.** `LIGUS_RELAY_TUNNEL=open` gives your own relay the
-same remote access the paid hosted relay offers, for free: every registered
-host is `active`. `GET /v1/tunnel/info` then reports `"billing":"none"`, and
-the Ligus app uses that to skip its subscription paywall (it shows "ask the
-relay operator" on `4006` instead). Only the hosted build reports
-`"billing":"appstore"`.
+**Self-hosting the tunnel.** `LIGUS_RELAY_TUNNEL=open` turns on remote access
+on your own relay: every registered host is `active`. `GET /v1/tunnel/info`
+then reports `"billing":"none"`, and the Ligus app shows "ask the relay
+operator" when a session is refused with `4006`. The `billing` field is a
+protocol value kept for wire compatibility; this relay always reports
+`"none"`.
 
 **Push on a self-hosted relay.** Without a `PushSender` host pushes are acked
 `push_unavailable`, and `ligus serve` falls back to ntfy when it's configured.
@@ -617,9 +617,10 @@ that same detail in the ack (`"diag": true` on its `push`; `ligus remote
 push-test` does): the ack then carries `"detail"`. Without `diag` acks are
 unchanged.
 
-Hosted deployments inject their own `TunnelPolicy` (entitlement: hosts can be
-`pending` — enrollment works, sessions get `4006`; pending hosts unseen for 30
-days are forgotten) and an APNs `PushSender`, through `MainWith` (below).
+A downstream build can inject its own `TunnelPolicy` (host admission: hosts
+can be `pending` — enrollment works, sessions get `4006`; pending hosts unseen
+for 30 days are forgotten) and an APNs `PushSender`, through `MainWith`
+(below).
 
 ## Extending (seams)
 
@@ -628,9 +629,9 @@ This package is a complete relay on its own. It also exposes extension points
 `New(Options{...})` without forking.
 
 A downstream binary that must behave exactly like `cmd/ligus-relay` plus a few
-additions (for example a hosted build that shares an app with the open relay)
+additions (for example site-specific routes or a custom tunnel policy)
 calls `relay.MainWith(relay.Extension{...})` instead of `relay.Main()`.
-Storage, env, the entitlement gate, every open route, subcommands and shutdown
+Storage, env, the access gate, every open route, subcommands and shutdown
 are the open binary's; the extension can only set the tunnel seams, serve extra
 routes under `/v1/<name>/` prefixes the relay doesn't use, and add
 subcommands. If its setup fails, the relay logs it and serves as the open
@@ -642,18 +643,26 @@ Seams:
 - **`Store`** — durable backend (in-memory/snapshot or Postgres built in);
   includes the user/token store behind the admin API.
 - **`EntitlementVerifier`** — admission policy (open / allowlist / signed from
-  env, `StoreEntitlementVerifier` for managed tokens, or your own).
+  env, `StoreEntitlementVerifier` for tokens managed over the admin API, or
+  your own).
 - **`AdminAuthorizer`** — gates `/v1/admin/*` user management (`nil` = disabled).
 - **`WriteGuard`** — optional pre-write authorization hook (`nil` = content-blind).
-- **`Hooks`** — optional lifecycle observers (e.g. audit / accounting; no-op by
+- **`Hooks`** — optional lifecycle observers (e.g. audit / metrics; no-op by
   default).
 - **`TunnelPolicy`** / **`PushSender`** — relay-tunnel host admission and
-  entitlement (`nil` = `LIGUS_RELAY_TUNNEL` env policy), and end-to-end
+  access (`nil` = `LIGUS_RELAY_TUNNEL` env policy), and end-to-end
   encrypted push delivery (`nil` = the built-in APNs sender when
   `LIGUS_RELAY_APNS_*` is set, else unavailable). The sender itself is the
   importable `github.com/ligus-ai/relay/apns` package; a sender that wraps
   `relay.ErrPushTokenGone` makes the relay forget that phone's token. A `Store` that also implements
   `TunnelStore` keeps tunnel state durable (both built-in backends do).
+
+## Questions and issues
+
+Self-hosting is the way to run this relay; there is no hosted service. For
+relay questions, bugs and ideas, open an issue or discussion on
+[langstroth-ai/langstroth-relay](https://github.com/langstroth-ai/langstroth-relay);
+for the Ligus app, use [langstroth-ai/ligus](https://github.com/langstroth-ai/ligus).
 
 ## License
 

@@ -70,8 +70,8 @@ type Options struct {
 	// nil → the built-in APNs sender when HIVE_RELAY_APNS_* is set
 	// (push_apns.go), else push unavailable.
 	PushSender PushSender
-	// TunnelBilling is advertised by GET /v1/tunnel/info: "none" (default) or
-	// "appstore".
+	// TunnelBilling is the "billing" field of GET /v1/tunnel/info, a wire value
+	// kept for client compatibility: "none" (default) or "appstore".
 	TunnelBilling string
 	// GitHubRoutes registers the deprecated GitHub social routes (directory,
 	// account, friends) for 1.x clients. Also enabled by env
@@ -80,7 +80,7 @@ type Options struct {
 }
 
 // Server holds the durable Store plus the ephemeral, instance-local pieces
-// (short pairing codes), the entitlement verifier, and the optional seams.
+// (short pairing codes), the access verifier, and the optional seams.
 type Server struct {
 	store       Store
 	entitlement EntitlementVerifier
@@ -90,9 +90,9 @@ type Server struct {
 	adminAuth   AdminAuthorizer // nil = admin API disabled
 	membership  bool            // relay-managed team membership: routes + guard
 	// Optional signed-identity verifier for membership (HIVE_RELAY_MEMBERSHIP_PUBKEY).
-	// Decoupled from the entitlement gate: it lets the relay read a caller's
+	// Decoupled from the access gate: it lets the relay read a caller's
 	// identity (a signed hrt1 token's Sub) for membership enforcement WITHOUT
-	// forcing the entitlement to entSigned — so teams can run on an OPEN relay
+	// forcing the access policy to entSigned — so teams can run on an OPEN relay
 	// (collaboration stays open; only claimed workspaces require a member token).
 	memberVerifier ed25519.PublicKey
 	friendCap      *int
@@ -204,8 +204,8 @@ func New(o Options) *Server {
 	s.verify = s.verifyGitHub
 	tunnelPolicy := o.TunnelPolicy
 	if tunnelPolicy == nil {
-		// The registration token must pass the relay's own entitlement gate when
-		// one is configured (hrt1 / access tokens); open entitlement admits any.
+		// The registration token must pass the relay's own access gate when
+		// one is configured (hrt1 / access tokens); the open policy admits any.
 		tunnelPolicy = tunnelPolicyFromEnv(s.entitlement)
 	}
 	if tunnelPolicy != nil {
@@ -227,7 +227,7 @@ func New(o Options) *Server {
 		if s.readGuard == nil {
 			s.readGuard = membershipGuard{store: s.store}
 		}
-		// Optional identity verifier, independent of the entitlement policy.
+		// Optional identity verifier, independent of the access policy.
 		if pk := strings.TrimSpace(getenv("HIVE_RELAY_MEMBERSHIP_PUBKEY")); pk != "" {
 			if vk, ok := parsePubkey(pk); ok {
 				s.memberVerifier = vk
@@ -240,7 +240,7 @@ func New(o Options) *Server {
 }
 
 // claimsCtxKey carries the verified token claims from the gate to the handlers
-// (so a WriteGuard can read plan/RBAC without re-verifying).
+// (so a WriteGuard can read claims/RBAC without re-verifying).
 type claimsCtxKey struct{}
 
 func claimsFrom(ctx context.Context) *TokenClaims {
@@ -252,7 +252,7 @@ func nowUnix() int64 { return time.Now().Unix() }
 
 // Handler builds the /v1 router. Keep relayPrefixes (extension.go) covering
 // every path registered here. Everything except /v1/health sits behind the
-// entitlement gate (a no-op when the policy is Open, i.e. self-hosted).
+// access gate (a no-op when the policy is Open, i.e. self-hosted).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	m := newMetrics()
@@ -297,7 +297,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerContacts(mux)
 
 	// User/token management — gated by the AdminAuthorizer seam (not the relay
-	// entitlement token), so these bypass the entitlement gate below.
+	// access token), so these bypass the access gate below.
 	mux.HandleFunc("POST /v1/admin/users", s.adminCreateUser)
 	mux.HandleFunc("GET /v1/admin/users", s.adminListUsers)
 	mux.HandleFunc("POST /v1/admin/users/{id}/tokens", s.adminIssueToken)
@@ -313,7 +313,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // RefreshTunnelStatus tells the relay that hostID's TunnelPolicy status may
-// have changed (for example, a hosted build bound a purchase to it). The cached
+// have changed (for example, a downstream policy changed its admission). The cached
 // status is dropped, so the next phone connect asks the policy again, and a
 // connected host is re-checked at once and sent {"t":"status"} if it changed.
 // Without this, a change takes effect within the 60 s status cache. A no-op
@@ -333,7 +333,7 @@ func (s *Server) ShutdownTunnels() {
 	}
 }
 
-// gate rejects /v1/* (except health) unless the caller is entitled, and stashes
+// gate rejects /v1/* (except health) unless the caller is admitted, and stashes
 // the verified claims in the request context for downstream enforcement.
 func (s *Server) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -341,7 +341,7 @@ func (s *Server) gate(next http.Handler) http.Handler {
 			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") {
 			// The tunnel authenticates hosts and phones itself (signed
 			// challenges + host-signed credentials); a host's registration
-			// token is checked against this same entitlement (tunnel_policy.go).
+			// token is checked against this same access policy (tunnel_policy.go).
 			// The status page, health, and metrics are public; the admin API runs
 			// its own AdminAuthorizer (an operator credential, not a relay token).
 			next.ServeHTTP(w, r)
@@ -352,10 +352,10 @@ func (s *Server) gate(next http.Handler) http.Handler {
 			http.Error(w, "relay requires a valid access token", http.StatusUnauthorized)
 			return
 		}
-		// If the entitlement carried no identity (e.g. the open policy) but a
+		// If the access token carried no identity (e.g. the open policy) but a
 		// membership identity key is configured, try to read a signed identity
 		// from the same bearer — so membership can enforce per-caller without the
-		// entitlement gate having to fail-close every tokenless client.
+		// access gate having to fail-close every tokenless client.
 		if claims == nil && s.memberVerifier != nil {
 			if c, valid := verifyToken(bearerToken(r), s.memberVerifier); valid && (c.Exp == 0 || int64(c.Exp) > nowUnix()) {
 				claims = &c
@@ -383,18 +383,18 @@ func (s *Server) enforceWrite(w http.ResponseWriter, r *http.Request, workspace 
 }
 
 // enforceRead authorizes a workspace *read* (envelopes / keyring / presence /
-// candidates). It requires the same relay entitlement the write path requires:
+// candidates). It requires the same relay access check the write path requires:
 // under a token-gated policy (allowlist or signed hrt1) the caller must present
 // a valid token — exactly the credential existing clients already attach to
 // every GET — and under the open policy (self-host default) reads stay open,
 // mirroring content-blind write forwarding. The check is content-blind: it
-// inspects only the presented entitlement token, never the body.
+// inspects only the presented access token, never the body.
 //
-// The top-level entitlement gate (see gate) already vets every /v1 route, so
+// The top-level access gate (see gate) already vets every /v1 route, so
 // this is the explicit, handler-level read-authorization point — closing S5's
 // read half by construction and guarding against a future router refactor that
 // might move a read off the gate. Returns false (after writing 401) when the
-// entitlement is missing or invalid.
+// access token is missing or invalid.
 func (s *Server) enforceRead(w http.ResponseWriter, r *http.Request, workspace string) bool {
 	// Per-client read rate (keyed like the write limiter), so one client can't
 	// loop the list routes and keep the store busy for everyone else.
@@ -495,7 +495,7 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 	}
 	// Per-(workspace,writer) quota: bound how fast one identity can churn this
 	// workspace's retention window so it can't rapidly evict another member's
-	// history (P1-6). Content-blind — keyed on the entitlement subject or client
+	// history (P1-6). Content-blind — keyed on the token subject or client
 	// IP, never the body.
 	id := r.PathValue("id")
 	if !s.wsWriterLimit.allow(id + "|" + writerTag(r.Context(), clientKey(r))) {
@@ -522,7 +522,7 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 //
 //   - An explicit client-supplied id wins (Idempotency-Key, or the hive-native
 //     X-Hive-Event-Id), letting a client name the event directly. It is scoped
-//     to the writer (entitlement subject, else client address), so one writer
+//     to the writer (token subject, else client address), so one writer
 //     can't claim another's key and turn that writer's push into a silent
 //     duplicate.
 //   - Absent a header, we hash the opaque sealed body (sha256). A re-push resends
@@ -600,7 +600,7 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	// And per client (the entitlement subject when there is one, else the
+	// And per client (the token subject when there is one, else the
 	// client address), so one client can't hold every slot.
 	releaseClient, ok := s.sseClient.acquire(writerTag(r.Context(), clientKey(r)))
 	if !ok {

@@ -27,7 +27,7 @@ import (
 //
 // The admin API itself is gated by the AdminAuthorizer seam (see seams.go) —
 // the open build leaves it unset (admin API disabled); a downstream build
-// (e.g. hive-relay-enterprise) supplies a GitHub-admin-allowlist authorizer.
+// supplies an authorizer (for example a GitHub-admin allowlist).
 
 // UserRecord is a person who may hold relay access tokens.
 type UserRecord struct {
@@ -78,7 +78,7 @@ func constantTimeEq(a, b string) bool {
 
 // StoreEntitlementVerifier admits a bearer token iff it hashes to a live
 // (non-revoked, enabled-user) token in the store. Claims carry the owning
-// user as Sub and "team" as the plan, so a WriteGuard / Hooks can attribute
+// user as Sub and "team" as the plan claim (a fixed wire value), so a WriteGuard / Hooks can attribute
 // activity to a person — the same shape the per-person env tokens produced.
 type StoreEntitlementVerifier struct {
 	Store Store

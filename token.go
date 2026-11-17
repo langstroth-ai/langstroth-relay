@@ -18,7 +18,7 @@ import (
 // first two parts joined by "."), so claims can't be altered without the key.
 const tokenPrefix = "hrt1"
 
-// TokenClaims are carried by a signed entitlement token. Forward-compatible:
+// TokenClaims are carried by a signed access token. Forward-compatible:
 // unknown fields are ignored on decode, and the relay ignores any capability it
 // does not yet enforce. Field names match the Rust issuer's serde output.
 type TokenClaims struct {
@@ -276,7 +276,7 @@ func entitlementFromEnv() entitlementPolicy {
 func EntitlementFromEnv() EntitlementVerifier { return entitlementFromEnv() }
 
 // Allow reports whether a presented bearer token is admitted at nowUnix. The
-// returned claims are non-nil only for signed tokens (for per-plan enforcement).
+// returned claims are non-nil only for signed tokens (for claim-based enforcement).
 // It satisfies EntitlementVerifier.
 func (p entitlementPolicy) Allow(token string, nowUnix int64) (*TokenClaims, bool) {
 	switch p.kind {

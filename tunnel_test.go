@@ -819,7 +819,7 @@ func TestTunnel_HostAuth(t *testing.T) {
 	})
 }
 
-// stubPolicy reports a fixed status (the hosted build's seam).
+// stubPolicy reports a fixed status (the downstream TunnelPolicy seam).
 type stubPolicy struct {
 	mu sync.Mutex
 	st HostStatus

@@ -21,11 +21,11 @@ import (
 // HIVE_RELAY_TOKEN_PUBKEY.
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `ligus-relay — hosted rendezvous + forwarding relay
+	fmt.Fprint(os.Stderr, `ligus-relay — self-hostable rendezvous + forwarding relay
 
 Run the server (default):   ligus-relay
 Generate an issuer keypair: ligus-relay keygen
-Mint an entitlement token:  ligus-relay issue --key <priv-hex> --sub <id> \
+Mint an access token:       ligus-relay issue --key <priv-hex> --sub <id> \
                               [--plan team] [--exp-days 365] [--max-members 50] \
                               [--turn] [--cap remove_member --cap rotate_key]
                               [--workspace <id> ...]  (scope; see LIGUS_RELAY_WORKSPACE_SCOPE)
@@ -56,7 +56,7 @@ func cmdKeygen() error {
 	return nil
 }
 
-// cmdIssue signs an entitlement token for a customer.
+// cmdIssue signs an access token for a user or device.
 func cmdIssue(args []string) error {
 	var (
 		keyHex  string

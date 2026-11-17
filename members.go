@@ -63,7 +63,7 @@ func membershipFromEnv() bool {
 }
 
 // callerAccount is the token subject the roster is keyed on. Empty when the
-// entitlement carries no identity (open policy) — mutations then 401.
+// access token carries no identity (open policy) — mutations then 401.
 func callerAccount(claims *TokenClaims) string {
 	if claims == nil {
 		return ""

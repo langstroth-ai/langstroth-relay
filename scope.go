@@ -9,7 +9,7 @@ import (
 
 // Per-workspace token scope (opt-in).
 //
-// The entitlement gate is coarse: any admitted token reads and writes every
+// The access gate is coarse: any admitted token reads and writes every
 // workspace. LIGUS_RELAY_WORKSPACE_SCOPE narrows that with an optional
 // "workspaces" claim in signed hrt1 tokens:
 //
@@ -72,7 +72,7 @@ const (
 )
 
 // scoped wraps every /v1/workspaces/{id}/... handler: it bounds the id length
-// and applies the workspace scope check. It runs after the entitlement gate,
+// and applies the workspace scope check. It runs after the access gate,
 // which put the verified claims in the context.
 func (s *Server) scoped(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

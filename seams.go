@@ -10,7 +10,7 @@ import (
 // This package is a complete, self-hostable relay on its own (see cmd/ligus-relay).
 // The interfaces below are extension points: a downstream build can implement
 // them and pass them to New(Options{...}) to add custom authorization,
-// accounting, or storage without forking. The default (nil) implementations
+// auditing, or storage without forking. The default (nil) implementations
 // yield a fully-working relay; nothing here gates core function or security.
 //
 // The four seams:
@@ -21,12 +21,12 @@ import (
 //                            signed tokens from env). Swap in a custom policy.
 //   - WriteGuard          — optional pre-write authorization hook. Default nil =
 //                            content-blind forwarding.
-//   - Hooks               — optional lifecycle observers (e.g. audit / accounting).
+//   - Hooks               — optional lifecycle observers (e.g. audit / metrics).
 //                            Default nil = no-op.
 
 // EntitlementVerifier decides whether a presented bearer token is admitted at
 // nowUnix. The returned claims (non-nil for signed tokens) let downstream
-// enforcement read per-plan limits + RBAC capabilities.
+// enforcement read token claims (limits, RBAC capabilities).
 type EntitlementVerifier interface {
 	Allow(token string, nowUnix int64) (*TokenClaims, bool)
 }
@@ -42,8 +42,8 @@ type WriteGuard interface {
 // ReadGuard runs before any workspace read (envelopes / keyring / candidates /
 // presence), mirroring WriteGuard. Return a non-nil error to reject the read
 // (mapped to 403). Default nil = the open relay's content-blind read-openness is
-// unchanged (reads are gated only by the entitlement, exactly as before). A
-// downstream build (e.g. the enterprise binary) can set one to enforce workspace
+// unchanged (reads are gated only by the access gate, exactly as before). A
+// downstream build (e.g. an access-controlled deployment) can set one to enforce workspace
 // membership on reads from the verified claims — the read-side analogue of
 // WriteGuard — WITHOUT this package changing the open relay's behavior.
 type ReadGuard interface {
@@ -51,7 +51,7 @@ type ReadGuard interface {
 }
 
 // AdminAuthorizer gates the user/token management API (/v1/admin/*). It runs
-// instead of the entitlement gate for those routes — an operator manages access
+// instead of the access gate for those routes — an operator manages access
 // tokens with their own credential, not a relay token. Return (adminID, true)
 // to admit. Default nil = the admin API is disabled (404). A downstream build
 // supplies one (e.g. a GitHub-admin allowlist) to enable durable, no-redeploy

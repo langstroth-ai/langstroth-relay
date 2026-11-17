@@ -16,7 +16,7 @@ import (
 const (
 	// Per-(workspace,writer) envelope-append rate. Bounds how fast one identity
 	// can churn a single workspace's retention window, so it can't rapidly evict
-	// another member's history (P1-6). writer = entitlement Sub (token-gated) or
+	// another member's history (P1-6). writer = token Sub (token-gated) or
 	// client IP (open relay). Tokens/sec + burst.
 	defaultWSWriterRate  = 20.0
 	defaultWSWriterBurst = 200.0
@@ -61,7 +61,7 @@ const (
 	// an ingress without LIGUS_RELAY_TRUSTED_PROXIES share one address.
 	defaultReadRate  = 100.0
 	defaultReadBurst = 400.0
-	// Concurrent SSE streams per client (entitlement subject, else address);
+	// Concurrent SSE streams per client (token subject, else address);
 	// LIGUS_RELAY_MAX_SSE still caps the instance.
 	defaultMaxSSEPerClient = 100
 
@@ -102,7 +102,7 @@ func plausibleGitHubToken(tok string) bool {
 }
 
 // writerTag identifies the writing identity for the per-(workspace,writer)
-// append quota without breaking content-blindness: it uses the entitlement
+// append quota without breaking content-blindness: it uses the access token
 // subject when a signed token is present, else the client IP. It never inspects
 // the request body.
 func writerTag(ctx context.Context, ip string) string {

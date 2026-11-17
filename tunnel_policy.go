@@ -11,9 +11,9 @@ import (
 
 // Tunnel seams (spec §15.1). The open build wires TunnelPolicyFromEnv and, when
 // HIVE_RELAY_APNS_* is configured, the built-in APNs PushSender (push_apns.go);
-// a hosted downstream build injects its own through Options.
+// a downstream build can inject its own through Options.
 
-// HostStatus is a registered host's entitlement. !Active means "pending": the
+// HostStatus is a registered host's admission status. !Active means "pending": the
 // host may hold its control connection and enroll phones, but phone sessions
 // are refused with not_entitled (4006).
 type HostStatus struct {
@@ -22,13 +22,13 @@ type HostStatus struct {
 	MaxSessions int
 }
 
-// TunnelPolicy admits host registrations and reports entitlement. The relay
+// TunnelPolicy admits host registrations and reports admission status. The relay
 // caches Status results for at most 60 s.
 type TunnelPolicy interface {
 	// Register runs the first time a host_id completes the control handshake.
 	// A non-nil error refuses the registration (unauthorized, 4001).
 	Register(ctx context.Context, hostID string, hostPub ed25519.PublicKey, regToken string) error
-	// Status reports the host's entitlement. An error refuses the host outright
+	// Status reports the host's admission status. An error refuses the host outright
 	// (control: 4001; phone connect: 4006).
 	Status(ctx context.Context, hostID string) (HostStatus, error)
 }
@@ -53,7 +53,7 @@ type PushSender interface {
 // on the HIVE_RELAY_TUNNEL_HOSTS allowlist.
 var ErrTunnelHostNotAllowed = errors.New("tunnel: host is not on the allowlist")
 
-// ErrTunnelRegistrationToken is returned when the relay's entitlement gate is
+// ErrTunnelRegistrationToken is returned when the relay's access gate is
 // configured and the hello's registration token doesn't pass it.
 var ErrTunnelRegistrationToken = errors.New("tunnel: registration token rejected")
 
@@ -69,7 +69,7 @@ type envTunnelPolicy struct {
 	mode  string
 	hosts map[string]bool // allowlist mode
 	// ent, when non-nil, must admit the hello's registration token (reuses the
-	// relay's hrt1 / access-token gate). The open entitlement admits anything.
+	// relay's hrt1 / access-token gate). The open policy admits anything.
 	ent EntitlementVerifier
 }
 
