@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ligus-postgres
+description: Shared Postgres helpers for the Ligus charts (external, CloudNativePG or a bundled single instance). A library chart; not installable on its own.
+type: library
+version: 0.1.0
+home: https://github.com/ligus-ai/relay

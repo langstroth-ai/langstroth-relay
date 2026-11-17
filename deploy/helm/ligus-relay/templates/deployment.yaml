@@ -1,4 +1,8 @@
 {{- $fullname := include "ligus-relay.fullname" . -}}
+{{- $ctx := include "ligus-relay.dbCtx" . | fromYaml -}}
+{{- $_ := set $ctx "root" . -}}
+{{- /* Zero while a bundled-Postgres restore runs, so nothing writes during it. */ -}}
+{{- $replicas := ternary 0 1 (eq (include "ligus-postgres.restoring" $ctx) "true") -}}
 {{- if eq (include "ligus-relay.topology" .) "single" }}
 apiVersion: apps/v1
 kind: Deployment
@@ -10,7 +14,7 @@ metadata:
 spec:
   # Exactly one: the tunnel's control connections and (without a database)
   # the store itself are in process.
-  replicas: 1
+  replicas: {{ $replicas }}
   strategy:
     type: Recreate
   selector:
@@ -29,7 +33,7 @@ metadata:
 spec:
   # One replica, and Recreate: a rolling update would briefly run two
   # pairing-code and rate-limit stores.
-  replicas: 1
+  replicas: {{ $replicas }}
   strategy:
     type: Recreate
   selector:
@@ -49,7 +53,7 @@ metadata:
 spec:
   # Exactly one replica, and Recreate: live host control sockets are in
   # process, so a rolling update would split hosts and phones across pods.
-  replicas: 1
+  replicas: {{ $replicas }}
   strategy:
     type: Recreate
   selector:

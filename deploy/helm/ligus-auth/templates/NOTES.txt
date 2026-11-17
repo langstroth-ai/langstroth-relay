@@ -11,3 +11,6 @@ consider LIGUS_RELAY_WORKSPACE_SCOPE=strict and LIGUS_RELAY_TENANTS.
 
 ligus-auth gates relay access only. People still need an Admin's signed
 MemberAdded to join a workspace.
+{{- $ctx := include "ligus-auth.dbCtx" . | fromYaml }}
+{{- $_ := set $ctx "root" . }}
+{{- include "ligus-postgres.notes" $ctx }}

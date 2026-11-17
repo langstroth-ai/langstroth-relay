@@ -48,6 +48,19 @@ default.
   downstream `Store` without it keeps compiling and serves `404` on contacts.
 - `/v1/contacts/` joins the reserved extension prefixes.
 - Helm chart: `contacts.*` and `githubRoutes` values.
+- **Helm charts: one database choice, `database.mode`** (ligus-relay and
+  ligus-auth, from a shared `deploy/helm/ligus-postgres` library chart):
+  `external` (a Postgres you run; DSN Secret, egress `cidrs`), `cnpg` (a
+  CloudNativePG `Cluster` in the release namespace: TLS `verify-full` against
+  the operator's CA, 1 or 3+ instances, WAL archiving and scheduled backups
+  to object storage, optional PodMonitor; needs the operator) and `bundled`
+  (one hardened Postgres 16 pod: digest-pinned, Pod Security `restricted`,
+  `ReadWriteOncePod`, TLS required from a Secret or cert-manager, a
+  non-superuser role with `scram-sha-256`, a `pg_dump` CronJob with
+  retention and a values-driven restore). For `cnpg` and `bundled` the DSN
+  carries no password: pgx reads a mounted `pgpass` file and CA. Backups can
+  only be turned off with `acknowledgeNoBackups`. The egress NetworkPolicy
+  allows only the chosen database. See the chart README, "Database".
 
 ### Deprecated, and off by default
 
@@ -63,6 +76,12 @@ default.
   *Upgrade:* a relay serving Hive/Ligus 1.x clients that use
   invite-by-handle, friends or the account inbox must set
   `LIGUS_RELAY_GITHUB_ROUTES=on` until those clients are gone.
+
+- **Helm: `postgres.enabled`, `externalDatabase.*` (ligus-relay) and
+  `store.databaseUrl` (ligus-auth)** are deprecated aliases for
+  `database.mode` (`bundled` in its old development form, `external`). They
+  render exactly as before when `database.mode` is empty, with a note at
+  install; the README has the move from `postgres.enabled` to a real mode.
 
 ### Also in this release
 

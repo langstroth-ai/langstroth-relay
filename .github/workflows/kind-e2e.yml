@@ -23,7 +23,14 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v3.22.1
-      - run: helm lint --strict deploy/helm/ligus-relay
+      - name: lint every documented values file
+        run: |
+          set -e
+          c=deploy/helm/ligus-relay
+          helm lint --strict $c
+          # One per database mode (external, cnpg, bundled) and the
+          # deprecated in-chart Postgres.
+          for f in $c/ci/*-values.yaml; do helm lint --strict $c -f "$f"; done
       - name: render every documented combination
         run: |
           set -e
@@ -47,12 +54,31 @@ jobs:
           refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.autoscaling.enabled=true
           refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.pdb.enabled=true
           refuse t $c --set postgres.enabled=true
+          # Database modes: cnpg needs the operator API (or an explicit
+          # skip) and backups (or an explicit acknowledgment); bundled needs
+          # its Secret and TLS (or explicit plaintext) and a pinned digest;
+          # external needs its Secret and a narrow, metadata-free CIDR.
+          helm template t $c --api-versions postgresql.cnpg.io/v1 --set database.mode=cnpg \
+            --set database.cnpg.backups.enabled=false --set database.cnpg.backups.acknowledgeNoBackups=true >/dev/null
+          refuse t $c --set database.mode=cnpg --set database.cnpg.backups.enabled=false --set database.cnpg.backups.acknowledgeNoBackups=true
+          refuse t $c --set database.mode=cnpg --set database.skipCapabilityCheck=true
+          refuse t $c --set database.mode=cnpg --set database.skipCapabilityCheck=true --set database.cnpg.backups.enabled=false
+          refuse t $c --set database.mode=bundled
+          refuse t $c --set database.mode=bundled --set database.bundled.auth.existingSecret=a
+          refuse t $c --set database.mode=bundled --set database.bundled.auth.existingSecret=a --set database.bundled.tls.existingSecret=t --set database.bundled.image.tag=16
+          refuse t $c --set database.mode=bundled --set database.bundled.auth.existingSecret=a --set database.bundled.tls.existingSecret=t --set database.bundled.backups.enabled=false
+          helm template t $c --set database.mode=bundled --set database.bundled.auth.existingSecret=a --set database.bundled.allowPlaintextInNamespace=true >/dev/null
+          refuse t $c --set database.mode=external
+          refuse t $c --set database.mode=external --set database.external.existingSecret=d --set database.external.cidrs[0]=0.0.0.0/0
+          refuse t $c --set database.mode=external --set database.external.existingSecret=d --set database.external.cidrs[0]=169.254.0.0/16
+          refuse t $c --set database.mode=external --set database.external.existingSecret=d --set postgres.enabled=true
       - name: ligus-auth chart
         run: |
           set -e
           refuse() { if helm template "$@" >/dev/null 2>&1; then echo "chart rendered but must refuse: $*"; exit 1; fi; }
           a=deploy/helm/ligus-auth
           helm lint --strict $a -f $a/ci/dex-values.yaml
+          for m in cnpg bundled external; do helm lint --strict $a -f $a/ci/dex-values.yaml -f $a/ci/$m-values.yaml; done
           helm template t $a -f $a/ci/dex-values.yaml >/dev/null
           helm template t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db >/dev/null
           # Must refuse: no public_url / no signing key / more than one replica
@@ -64,6 +90,9 @@ jobs:
           refuse t $a -f $a/ci/dex-values.yaml --set persistence.enabled=false
           refuse t $a -f $a/ci/dex-values.yaml --set ingress.tls.secretName=
           refuse t $a -f $a/ci/dex-values.yaml --set config.trusted_proxies=null
+          refuse t $a -f $a/ci/dex-values.yaml --set store.driver=postgres
+          refuse t $a -f $a/ci/dex-values.yaml --set database.mode=cnpg
+          refuse t $a -f $a/ci/dex-values.yaml --set database.mode=bundled --set database.bundled.auth.existingSecret=a
 
   e2e:
     runs-on: ubuntu-latest
@@ -71,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        values: [split-postgres-values.yaml, single-memory-values.yaml]
+        values: [split-postgres-values.yaml, single-memory-values.yaml, bundled-values.yaml]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -104,6 +133,18 @@ jobs:
           kubectl -n ligus-relay create secret generic relay-dev-postgres \
             --from-literal=password="$PW" \
             --from-literal=DATABASE_URL="postgres://relay:$PW@ligus-relay-postgres:5432/relay?sslmode=disable"
+          # The bundled Postgres (bundled-values.yaml): the role's password
+          # and pgpass line, and a server certificate from a throwaway CA.
+          kubectl -n ligus-relay create secret generic relay-postgres-auth \
+            --from-literal=password="$PW" --from-literal=pgpass="*:*:*:relay:$PW"
+          n=ligus-relay-postgres; d=$(mktemp -d)
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
+            -subj /CN=ci-postgres-ca -keyout $d/ca.key -out $d/ca.crt
+          openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj /CN=$n -keyout $d/tls.key -out $d/tls.csr
+          printf 'subjectAltName=DNS:%s,DNS:%s.ligus-relay,DNS:%s.ligus-relay.svc\nextendedKeyUsage=serverAuth\n' $n $n $n > $d/ext
+          openssl x509 -req -in $d/tls.csr -CA $d/ca.crt -CAkey $d/ca.key -CAcreateserial -days 2 -extfile $d/ext -out $d/tls.crt
+          kubectl -n ligus-relay create secret generic relay-postgres-tls \
+            --from-file=$d/tls.crt --from-file=$d/tls.key --from-file=$d/ca.crt
           # Settings delivered as files (LIGUS_RELAY_SECRETS_DIR).
           kubectl -n ligus-relay create secret generic relay-env \
             --from-literal=LIGUS_RELAY_METRICS_TOKEN="$(openssl rand -hex 16)"
@@ -125,6 +166,22 @@ jobs:
           # No secret reaches the pod environment.
           pod=$(kubectl -n ligus-relay get pod -l app.kubernetes.io/name=ligus-relay,app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
           if kubectl -n ligus-relay get pod "$pod" -o yaml | grep -q secretKeyRef; then echo "::error::secret in env"; exit 1; fi
+      - name: bundled Postgres backup and restore
+        if: matrix.values == 'bundled-values.yaml'
+        run: |
+          set -e
+          ns=ligus-relay
+          kubectl -n $ns create job --from=cronjob/ligus-relay-postgres-backup ci-backup
+          kubectl -n $ns wait --for=condition=Complete job/ci-backup --timeout=5m
+          kubectl -n $ns logs job/ci-backup
+          f=$(kubectl -n $ns logs job/ci-backup | sed -n 's|^wrote /backups/\([^ ]*\) .*|\1|p')
+          helm upgrade ligus-relay deploy/helm/ligus-relay -n $ns --reuse-values \
+            --set database.bundled.backups.restore.file="$f" --wait --timeout 5m
+          kubectl -n $ns wait --for=condition=Complete "$(kubectl -n $ns get job -o name | grep postgres-restore-)" --timeout=5m
+          test "$(kubectl -n $ns get deploy ligus-relay-sync -o jsonpath='{.spec.replicas}')" = 0
+          helm upgrade ligus-relay deploy/helm/ligus-relay -n $ns --reuse-values \
+            --set database.bundled.backups.restore.file= --wait --timeout 5m
+          helm test ligus-relay -n $ns --logs
       - name: diagnostics
         if: failure()
         run: |

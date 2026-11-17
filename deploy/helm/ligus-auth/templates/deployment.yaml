@@ -1,10 +1,14 @@
+{{- $ctx := include "ligus-auth.dbCtx" . | fromYaml -}}
+{{- $_ := set $ctx "root" . -}}
+{{- $pg := eq (include "ligus-auth.storeDriver" .) "postgres" -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "ligus-auth.fullname" . }}
   labels: {{- include "ligus-auth.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  # Zero while a bundled-Postgres restore runs, so nothing writes during it.
+  replicas: {{ ternary 0 1 (eq (include "ligus-postgres.restoring" $ctx) "true") }}
   # Recreate with either store: two pods would split sign-in and device-code
   # flows (per process) during a rolling update.
   strategy:
@@ -38,10 +42,10 @@ spec:
             - name: LIGUS_AUTH_ADMIN_TOKEN_FILE
               value: /etc/ligus-auth/admin/{{ .Values.adminToken.key }}
             {{- end }}
-            {{- if eq .Values.store.driver "postgres" }}
+            {{- if $pg }}
             # The DSN is a file, never an environment variable.
             - name: LIGUS_AUTH_DATABASE_URL_FILE
-              value: /etc/ligus-auth/db/database-url
+              value: {{ include "ligus-postgres.dsnPath" $ctx }}
             {{- end }}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
@@ -58,10 +62,9 @@ spec:
             {{- if .Values.adminToken.existingSecret }}
             - {name: admin-token, mountPath: /etc/ligus-auth/admin, readOnly: true}
             {{- end }}
-            {{- if eq .Values.store.driver "postgres" }}
+            {{- if $pg }}
             - {name: db, mountPath: /etc/ligus-auth/db, readOnly: true}
-            {{- end }}
-            {{- if eq .Values.store.driver "file" }}
+            {{- else }}
             - {name: state, mountPath: /var/lib/ligus-auth}
             {{- end }}
       volumes:
@@ -84,15 +87,9 @@ spec:
         - name: admin-token
           secret: {secretName: {{ .Values.adminToken.existingSecret }}, defaultMode: 0400}
         {{- end }}
-        {{- if eq .Values.store.driver "postgres" }}
-        - name: db
-          secret:
-            secretName: {{ .Values.store.databaseUrl.existingSecret }}
-            defaultMode: 0400
-            items:
-              - {key: {{ .Values.store.databaseUrl.key }}, path: database-url}
-        {{- end }}
-        {{- if eq .Values.store.driver "file" }}
+        {{- if $pg }}
+        {{- include "ligus-postgres.clientVolume" $ctx | nindent 8 }}
+        {{- else }}
         - name: state
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim: {claimName: {{ include "ligus-auth.fullname" . }}}

@@ -39,26 +39,262 @@ kind load docker-image ligus-relay:dev
 
 kubectl create namespace ligus-relay
 kubectl label namespace ligus-relay pod-security.kubernetes.io/enforce=restricted
-# The development Postgres's password and DSN (the chart generates none).
+# The bundled Postgres's password and pgpass line (the chart generates none).
 PW=$(openssl rand -hex 24)
-kubectl -n ligus-relay create secret generic relay-dev-postgres \
-  --from-literal=password=$PW \
-  --from-literal=DATABASE_URL="postgres://relay:$PW@ligus-relay-postgres:5432/relay?sslmode=disable"
+kubectl -n ligus-relay create secret generic relay-postgres-auth \
+  --from-literal=password=$PW --from-literal=pgpass="*:*:*:relay:$PW"
 helm install ligus-relay deploy/helm/ligus-relay -n ligus-relay \
   --set image.repository=ligus-relay --set image.tag=dev \
-  --set postgres.enabled=true --set postgres.existingSecret=relay-dev-postgres
+  --set database.mode=bundled \
+  --set database.bundled.auth.existingSecret=relay-postgres-auth \
+  --set database.bundled.allowPlaintextInNamespace=true
 helm test ligus-relay -n ligus-relay
 ```
+
+`allowPlaintextInNamespace` keeps this quick start free of certificates; drop
+it and give the bundled Postgres a certificate (below) for anything you keep.
 
 Use the release name `ligus-relay` to get Service names `ligus-relay-sync` and
 `ligus-relay-tunnel`; other release names are prefixed.
 
-`postgres.enabled` runs one development Postgres pod (no backups, no TLS
-(`sslmode=disable`), no HA); it is unsupported in production. For anything you keep, use a managed database or an operator such as
-CloudNativePG and pass it as `externalDatabase.existingSecret` (a Secret with a
-`DATABASE_URL` key, `sslmode=verify-full` and the server's CA). With a database configured the chart sets
-`LIGUS_RELAY_REQUIRE_DB=1`, so a pod with a missing or broken URL fails instead
-of silently serving from memory.
+With a database configured the chart sets `LIGUS_RELAY_REQUIRE_DB=1`, so a pod
+with a missing or broken URL fails instead of silently serving from memory.
+
+## Database
+
+The relay's PostgreSQL is one choice, `database.mode`:
+
+| `database.mode` | What runs | Connection | HA | Backups | Use it for |
+|---|---|---|---|---|---|
+| `external` | nothing: you point at a Postgres you run (RDS, Cloud SQL, Crunchy Bridge, a VM) | your DSN from a Secret; use `sslmode=verify-full` | the provider's | the provider's PITR | production, when you have a managed Postgres |
+| `cnpg` | a [CloudNativePG](https://cloudnative-pg.io) `Cluster` in the release namespace | TLS `verify-full` against the operator's CA; non-TLS refused | `instances: 3` (or more): streaming replicas, automatic failover | WAL archiving + `ScheduledBackup` to object storage (PITR) | production in-cluster |
+| `bundled` | one hardened Postgres pod (StatefulSet) | TLS `verify-full` (your certificate or cert-manager), `scram-sha-256` | none: one pod, one volume | `pg_dump` CronJob to a PVC, with retention and a restore switch | small self-hosts |
+| `none` | nothing (memory store) | | | | kind/k3d, `topology=single` only |
+
+Every mode keeps secrets out of the environment. For `cnpg` and `bundled` the
+DSN (a ConfigMap) carries no password: it names a `pgpass` file and the server
+CA, both projected `0400` from Secrets into `/etc/ligus-relay/db` next to it,
+and the relay (pgx) reads them itself:
+
+```
+postgres://relay@<host>:5432/relay?sslmode=verify-full&sslrootcert=/etc/ligus-relay/db/ca.crt&passfile=/etc/ligus-relay/db/pgpass
+```
+
+Only the keys the relay needs are projected: `pgpass` and `ca.crt`, never the
+CA's private key or the server's key.
+
+The relay's egress NetworkPolicy allows only the chosen database: the
+cluster's or the bundled pod's labels for `cnpg` and `bundled`, and
+`database.external.cidrs` (an `ipBlock`) for `external`. The chart refuses
+external CIDRs broader than `/8` or containing a cloud metadata address
+(`169.254.169.254`, `100.100.100.200`); the DNS rule and the metadata
+exclusions are unchanged.
+
+Migrations run in one transaction under a transaction-scoped advisory lock,
+in every mode (see Backups and upgrades). This was verified against a
+CloudNativePG cluster and through its PgBouncer `Pooler` in transaction mode
+(`TestPG_MigrationLeavesNoLockBehindAPooler`). The chart does not render a
+`Pooler`: one replica of relay-sync needs none.
+
+### `external`
+
+```yaml
+database:
+  mode: external
+  external:
+    existingSecret: relay-database      # key DATABASE_URL (existingSecretKey)
+    cidrs: [10.20.0.15/32]              # the database's address, for egress
+```
+
+The Secret holds the full DSN, e.g.
+`postgres://relay:<pw>@db.example.internal:5432/relay?sslmode=verify-full&sslrootcert=system`
+(`system` for a publicly trusted certificate) or `sslrootcert=` pointing at a
+CA file you mount (put it in `config.existingSecret`, mounted at
+`/etc/ligus-relay/secrets`). Leave `cidrs` empty only if you add the rule to
+`networkPolicy.extraEgress` yourself; the install notes remind you.
+
+### `cnpg` (CloudNativePG)
+
+Prerequisite: the operator, installed once per cluster in its own namespace,
+for example
+
+```sh
+kubectl apply --server-side -f \
+  https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
+```
+
+The chart refuses to render `cnpg` when the cluster does not serve
+`postgresql.cnpg.io/v1`. `helm template`, Argo CD and Flux render without
+asking the cluster: pass `--api-versions postgresql.cnpg.io/v1` or set
+`database.skipCapabilityCheck=true`.
+
+```yaml
+database:
+  mode: cnpg
+  cnpg:
+    instances: 3                     # 1 = single instance; 3 = HA with failover
+    storage: {size: 20Gi, storageClass: fast}
+    backups:
+      barmanObjectStore:             # passed to spec.backup.barmanObjectStore
+        destinationPath: s3://relay-backups/prod
+        s3Credentials:
+          accessKeyId: {name: relay-backup-s3, key: ACCESS_KEY_ID}
+          secretAccessKey: {name: relay-backup-s3, key: ACCESS_SECRET_KEY}
+        wal: {compression: gzip}
+      retentionPolicy: 30d
+      schedule: "0 0 3 * * *"        # six fields, seconds first
+    podMonitor: {enabled: true}      # Prometheus Operator
+```
+
+- The chart renders the `Cluster` (`<release>-ligus-relay-db`; `initdb` of
+  `database.name` owned by `database.user`), a `ScheduledBackup`, an optional
+  `PodMonitor` and a NetworkPolicy that admits 5432 only from the relay pods,
+  the cluster's own instances and the operator's namespace
+  (`cnpg.networkPolicy.operatorNamespaceSelector`, default `cnpg-system`;
+  change it if you installed the operator elsewhere, or the operator loses
+  its instances).
+- The operator makes the application user's Secret (`<cluster>-app`) and the
+  CA (`<cluster>-ca`); the relay mounts `pgpass` and `ca.crt` from them and
+  connects to `<cluster>-rw` (the primary) with `verify-full`. `pg_hba`
+  rejects every non-TLS connection.
+- Backups are required unless you say otherwise:
+  `backups.enabled=false` renders only with
+  `backups.acknowledgeNoBackups=true`. `method: plugin` uses the Barman Cloud
+  plugin instead (CloudNativePG 1.26+; `plugin.parameters.barmanObjectName`
+  names an `ObjectStore` you create).
+- Restore is CloudNativePG's: a new cluster bootstrapped from the backup
+  (`database.cnpg.bootstrap: {recovery: {source: origin}}` with
+  `database.cnpg.externalClusters`), or point-in-time with
+  `recoveryTarget`. See the CloudNativePG docs, "Recovery".
+- Pods are Pod Security `restricted` compatible (the operator's defaults).
+- Single instance (`instances: 1`): the operator's default PodDisruptionBudget
+  blocks node drains; set `cnpg.enablePDB=false` if you accept the downtime.
+
+### `bundled`
+
+One Postgres 16 pod for a small self-host. No HA: if the node or the volume
+is lost, you restore from the last dump. Pinned by digest (the chart refuses
+an image tag without one), Pod Security `restricted` (UID 70, read-only root
+filesystem, no capabilities), a `ReadWriteOncePod` volume.
+
+```sh
+PW=$(openssl rand -hex 24)
+kubectl -n <ns> create secret generic relay-postgres-auth \
+  --from-literal=password=$PW --from-literal=pgpass="*:*:*:relay:$PW"
+```
+
+```yaml
+database:
+  mode: bundled
+  bundled:
+    auth: {existingSecret: relay-postgres-auth}
+    tls:
+      certManager:
+        issuerRef: {name: ligus-ca, kind: Issuer}   # a CA issuer: the Secret gets ca.crt
+      # or: existingSecret: relay-postgres-tls      # tls.crt, tls.key, ca.crt
+    backups:
+      schedule: "17 3 * * *"
+      keep: 7
+```
+
+- **TLS is required.** The server certificate comes from a
+  `kubernetes.io/tls` Secret with the issuing CA under `ca.crt`, or from a
+  cert-manager `Certificate` the chart renders when `tls.certManager.issuerRef`
+  is set (DNS names `<release>-ligus-relay-postgres[.<ns>[.svc[.cluster.local]]]`;
+  cert-manager must serve `cert-manager.io/v1`). Without either the chart
+  refuses to render, unless `allowPlaintextInNamespace: true` (development:
+  `sslmode=disable`, still `scram-sha-256`). A small sidecar reloads
+  Postgres's configuration when the mounted certificate changes, so renewals
+  need no restart.
+- **Roles.** The relay's role (`database.user`) is not a superuser; it owns
+  `database.name` and nothing else. `pg_hba` admits it only to that database,
+  only over TLS, with `scram-sha-256`; the `postgres` superuser only over the
+  pod's local socket (`peer`); everything else is rejected.
+- **NetworkPolicy.** Only the relay pods and the backup job reach 5432;
+  Postgres itself has no egress.
+- **Backups.** A CronJob runs `pg_dump --format=custom` over TLS to the
+  backup volume, checks each dump with `pg_restore --list`, and keeps the
+  newest `backups.keep`. `backups.enabled=false` renders only with
+  `backups.acknowledgeNoBackups=true`. The volume
+  (`backups-<release>-ligus-relay-postgres-0`) is a claim of the StatefulSet,
+  so it binds with the Postgres pod (`helm --wait` and Argo CD health don't
+  wait for the first backup), the jobs run on that pod's node, and it is kept
+  when the StatefulSet or the release is deleted. Postgres does not mount it.
+  It lives on the same cluster: copy dumps off it too (Velero, or
+  `kubectl cp` from a backup job's pod).
+- Turning backups on or off later, or resizing a volume, changes the
+  StatefulSet's claims, which Kubernetes does not allow in place:
+  `kubectl delete statefulset <release>-ligus-relay-postgres --cascade=orphan`
+  then upgrade (the pod and its volumes stay).
+
+#### Restoring the bundled Postgres
+
+1. Pick a dump (`<db>-<UTC time>.dump`) from the backup job's logs
+   (`kubectl -n <ns> logs job/<name>`) or by listing the backup volume.
+2. `helm upgrade ... --reuse-values --set database.bundled.backups.restore.file=relay-20261117T031700Z.dump`.
+   While it is set the relay runs **no replicas** (nothing writes during the
+   restore), the backup CronJob is suspended, and a Job runs
+   `pg_restore --clean --if-exists --no-owner --single-transaction`: one
+   transaction, so a failed restore leaves the database as it was.
+3. Wait for the Job: `kubectl -n <ns> wait --for=condition=Complete job/<release>-ligus-relay-postgres-restore-<hash>`.
+4. `helm upgrade ... --reuse-values --set database.bundled.backups.restore.file=`
+   brings the relay back.
+
+To restore a dump you have elsewhere, stream it into the pod:
+`kubectl -n <ns> exec -i <release>-ligus-relay-postgres-0 -- pg_restore -U postgres -d relay --clean --if-exists --no-owner --role=relay --single-transaction < relay.dump`
+(with the relay scaled to zero).
+
+Major Postgres upgrades are not automated: dump, install a new release (or
+switch to `cnpg`) and restore.
+
+### Deprecated keys
+
+When `database.mode` is empty the old keys still work, unchanged, and the
+install notes print a deprecation note. Setting both is refused.
+
+| Old | Maps to |
+|---|---|
+| `externalDatabase.existingSecret` / `existingSecretKey` | `database.mode=external`, `database.external.existingSecret` / `existingSecretKey` |
+| `externalDatabase.url` | `external`, with the URL rendered into a chart Secret as before (prefer a Secret of your own) |
+| `postgres.enabled` + `postgres.*` | `bundled` in its old development form: same StatefulSet and volume, no TLS, no backups, the role is a superuser |
+
+Moving off `postgres.enabled` (the old pod has no TLS and its role is a
+superuser, so switch to a fresh database rather than in place):
+
+```sh
+ns=<ns>; rel=<release>; pg=$rel-ligus-relay-postgres
+# 1. Dump the old pod, and check the dump.
+kubectl -n $ns exec $pg-0 -- pg_dump --format=custom -U relay -d relay > relay.dump
+pg_restore --list relay.dump > /dev/null
+# 2. Remove the old pod and its volume (the new StatefulSet has the same name).
+kubectl -n $ns delete statefulset $pg && kubectl -n $ns delete pvc data-$pg-0
+# 3. Switch modes (create the bundled Secrets first, see above).
+helm upgrade $rel deploy/helm/ligus-relay -n $ns --reuse-values \
+  --set postgres.enabled=false --set database.mode=bundled \
+  --set database.bundled.auth.existingSecret=relay-postgres-auth \
+  --set database.bundled.tls.existingSecret=relay-postgres-tls --wait
+# 4. Stop the relay, load the dump as the superuser over the pod's socket,
+#    owned by the relay's role, and start the relay again.
+kubectl -n $ns scale deploy -l app.kubernetes.io/instance=$rel,app.kubernetes.io/name=ligus-relay --replicas=0
+kubectl -n $ns exec -i $pg-0 -- pg_restore -U postgres -d relay --clean --if-exists \
+  --no-owner --role=relay --single-transaction < relay.dump
+kubectl -n $ns scale deploy -l app.kubernetes.io/instance=$rel,app.kubernetes.io/name=ligus-relay --replicas=1
+```
+
+For `cnpg` step 2 is optional (Helm removes the old StatefulSet; delete its
+PVC once you no longer need it), and the restore goes into the primary:
+`kubectl -n $ns exec -i $rel-ligus-relay-db-1 -c postgres -- pg_restore -U postgres -d relay ...`.
+
+### ligus-auth
+
+The `ligus-auth` chart has the same `database.*` block and the same three
+modes, from the same templates (the `deploy/helm/ligus-postgres` library
+chart, linked into each chart's `charts/`). ligus-auth gets its own cluster or
+pod (`<release>-ligus-auth-db`, `<release>-ligus-auth-postgres`), database and
+role `ligus_auth`, and its DSN at `/etc/ligus-auth/db/database-url`
+(`LIGUS_AUTH_DATABASE_URL_FILE`). Any mode but `none` selects its Postgres
+store; the old `store.driver=postgres` with `store.databaseUrl.existingSecret`
+maps to `external`.
 
 ## Values
 
@@ -70,8 +306,13 @@ of silently serving from memory.
 | `tunnel.mode` | `off` | `off`, `open`, `allowlist` (`tunnel.allowedHosts`). `open` admits any host; pair it with a token gate |
 | `tunnel.apns.*` | off | Built-in push sender on the tunnel pod; key file from `existingSecret`, a Secret of its own (the chart refuses `config.existingSecret` or `LIGUS_RELAY_APNS_*` in `config.env`, which reach relay-sync too) |
 | `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | Fixed in 2.0: anything else fails to render (see Scaling) |
-| `postgres.enabled` / `existingSecret` | `false`, required | Development Postgres in the release; the Secret holds `password` and `DATABASE_URL` |
-| `externalDatabase.url` / `existingSecret` | empty | Managed Postgres; mounted as a file (`DATABASE_URL_FILE`) |
+| `database.mode` | empty | `external`, `cnpg`, `bundled` or `none`; empty derives it from the deprecated keys, else `none` (see Database) |
+| `database.name` / `user` | `relay` | Database and role (`cnpg` and `bundled`) |
+| `database.skipCapabilityCheck` | `false` | Render `cnpg`, cert-manager or PodMonitor objects without asking the cluster for their API (GitOps) |
+| `database.external.existingSecret` / `existingSecretKey` / `cidrs` / `port` | empty, `DATABASE_URL`, `[]`, 5432 | DSN Secret mounted as a file; the database's addresses for egress |
+| `database.cnpg.*` | 1 instance, 10Gi, backups required | `instances`, `imageName`, `storage`, `walStorage`, `resources`, `affinity`, `enablePDB`, `parameters`, `bootstrap`, `externalClusters`, `backups.*`, `podMonitor.*`, `networkPolicy.*` |
+| `database.bundled.*` | Postgres 16 by digest, TLS required, backups on | `auth.existingSecret`, `tls.existingSecret` or `tls.certManager.issuerRef`, `allowPlaintextInNamespace`, `persistence.*`, `parameters`, `resources`, `backups.*` (`schedule`, `keep`, `persistence`, `restore.file`) |
+| `postgres.*`, `externalDatabase.*` | | Deprecated aliases (see Database) |
 | `memoryStore.maxBytes` | `100000000` | Memory store only: heap budget for workspace data (`LIGUS_RELAY_MAX_STORE_BYTES`); writes past it get 507 |
 | `contacts.enabled` | `true` | `/v1/contacts/*` (contact records + sealed drop boxes); `false` renders `LIGUS_RELAY_CONTACTS=off` (404) |
 | `contacts.*` (`maxRecordBytes`, `maxDropBytes`, `ttlDays`, `dropMaxRows`, `dropMaxBoxBytes`, `dropRetentionDays`, `reclaimHoldDays`, `maxContacts`, `dropRate`/`dropBurst`, `dropCidRate`/`dropCidBurst`, `writeRate`/`writeBurst`, `createRate`/`createBurst`) | `null` (binary defaults) | Contact size caps, TTL, drop-box bounds and rate limits; each maps to a `LIGUS_RELAY_CONTACT*` variable (see the relay README). Rate limiters are per pod |
@@ -84,11 +325,14 @@ of silently serving from memory.
 | `metrics.token.existingSecret` / `key` | empty, `token` | `LIGUS_RELAY_METRICS_TOKEN` as a file; the ServiceMonitor uses it too |
 | `metrics.serviceMonitor.*` | off | Prometheus Operator; set `bearerTokenSecret` when a metrics token is configured |
 | `networkPolicy.enabled` | `true` | Ingress to 8443 from `ingressFrom` (empty = anywhere) |
-| `networkPolicy.restrictEgress` | `true` | Egress only to DNS, the in-chart Postgres and `extraEgress` (add your database and, for APNs, 443) |
+| `networkPolicy.restrictEgress` | `true` | Egress only to DNS, the chosen database and `extraEgress` (for APNs, 443) |
 | `networkPolicy.dns.namespaceSelector` / `podSelector` | `kube-system`, `k8s-app: kube-dns` | Where DNS egress may go. Change them if your resolver pods are labeled differently, or DNS stops resolving |
 
 The chart refuses combinations that cannot work: more than one relay-sync
-replica, autoscaling or a PDB, `split` without a database,
+replica, autoscaling or a PDB, `split` without a database, the database
+settings above (no operator API, no TLS, no backups without acknowledgment,
+an unpinned bundled image, an external CIDR that is too broad or contains a
+metadata address),
 a snapshot PVC with a database or with `split`, `allowlist` without hosts. It
 also refuses APNs settings outside `tunnel.apns.*`.
 
@@ -98,8 +342,9 @@ also refuses APNs settings outside `tunnel.apns.*`.
   capabilities dropped, `RuntimeDefault` seccomp: passes Pod Security
   `restricted`.
 - No Kubernetes API access: the service account has no token mounted.
-- No secret in the environment: the database URL, `config.existingSecret` and
-  the APNs key are files mounted `0400` (with `fsGroup` the kubelet adds group
+- No secret in the environment: the database URL (or, for `cnpg` and
+  `bundled`, the `pgpass` file and CA next to a password-free DSN),
+  `config.existingSecret` and the APNs key are files mounted `0400` (with `fsGroup` the kubelet adds group
   read: `0440`, group 65532). The relay reads any setting `X` from `X_FILE` or
   from `$LIGUS_RELAY_SECRETS_DIR/X` when `X` itself is unset, and refuses to
   start when one of those files can't be read or is empty (a wrong
@@ -136,10 +381,10 @@ hops; a header from any other peer is ignored.
 
 ## Backups and upgrades
 
-- **Back up Postgres, not pods.** Use your database's point-in-time recovery
-  (WAL archiving: a managed database's PITR, or CloudNativePG / pgBackRest)
-  and connect with `sslmode=verify-full` and the server's CA
-  (`sslrootcert=` pointing at a mounted file). The relay holds ciphertext only,
+- **Back up Postgres, not pods.** Use point-in-time recovery where you can (a
+  managed database's PITR, or `database.mode=cnpg` with WAL archiving); the
+  bundled Postgres has nightly dumps (see Database). Connect with
+  `sslmode=verify-full` and the server's CA. The relay holds ciphertext only,
   but the database also holds push tokens and pairing state: keep its dumps
   apart from the APNs key (together they are a push channel to every phone).
 - **Migrations** run at startup in one transaction under a transaction-scoped
@@ -163,7 +408,8 @@ hops; a header from any other peer is ignored.
 
 - More than one relay-sync replica, autoscaling, or tunnel/ligus-auth HA.
 - Mutually distrusting tenants on one relay, ligus-auth or cluster.
-- The in-chart Postgres (`postgres.enabled`) for anything but development.
+- The deprecated in-chart Postgres (`postgres.enabled`) for anything but
+  development; HA for the bundled Postgres (use `cnpg` with `instances: 3`).
 
 ## Image
 
@@ -180,7 +426,10 @@ volume) is unchanged for hosts that mount root-owned volumes.
 
 ## CI
 
-`.github/workflows/kind-e2e.yml` renders every documented combination and the
-refusals, builds the image, installs the chart on kind in both topologies
-under Pod Security `restricted` and runs `helm test`. `helm_chart_test.go`
-(`go test`, needs helm) checks the rendered security properties.
+`.github/workflows/kind-e2e.yml` lints every `ci/*-values.yaml` (one per
+database mode), renders every documented combination and the refusals,
+builds the image, installs the chart on kind (split on the deprecated dev
+Postgres, single on memory, split on the bundled Postgres with TLS, a backup
+and a restore) under Pod Security `restricted` and runs `helm test`.
+`helm_chart_test.go` and `helm_chart_db_test.go` (`go test`, needs helm)
+check the rendered security properties of every mode and the refusals.
