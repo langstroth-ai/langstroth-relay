@@ -4,11 +4,11 @@ metadata:
   name: {{ include "ligus-auth.fullname" . }}
   labels: {{- include "ligus-auth.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicas }}
-  {{- if eq .Values.store.driver "file" }}
+  replicas: 1
+  # Recreate with either store: two pods would split sign-in and device-code
+  # flows (per process) during a rolling update.
   strategy:
     type: Recreate
-  {{- end }}
   selector:
     matchLabels: {{- include "ligus-auth.selectorLabels" . | nindent 6 }}
   template:

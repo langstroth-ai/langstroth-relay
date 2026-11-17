@@ -196,8 +196,11 @@ relay.example.com {
 
 - **Single instance:** mount a volume at `/data` and set `LIGUS_RELAY_DATA_DIR=/data`
   (JSON snapshot store; survives restarts). Nothing to back up but that volume.
-- **HA / multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
-  precedence over the snapshot dir, so every instance shares state (no migration).
+- **Multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
+  precedence over the snapshot dir, so every instance shares stored state (no
+  migration). Short pairing codes, SSE fan-out and rate limits stay per
+  process, so the Helm chart runs exactly one sync instance in 2.0; more than
+  one is unsupported.
 
 #### Envelope retention
 

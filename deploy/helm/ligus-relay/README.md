@@ -13,7 +13,7 @@ in two shapes:
 
 | `topology` | Renders | Store |
 |---|---|---|
-| `split` | `<release>-sync` Deployment (every route except `/v1/tunnel/*`, `LIGUS_RELAY_TUNNEL=off`, 1..N replicas) and `<release>-tunnel` Deployment (`/v1/tunnel/*`, exactly one replica, `strategy: Recreate`) | Postgres (required) |
+| `split` | `<release>-sync` Deployment (every route except `/v1/tunnel/*`, `LIGUS_RELAY_TUNNEL=off`, exactly one replica in 2.0, `Recreate`) and `<release>-tunnel` Deployment (`/v1/tunnel/*`, exactly one replica, `strategy: Recreate`) | Postgres (required) |
 | `single` | one Deployment, every route, one replica, `Recreate` | Postgres, or memory with an optional snapshot PVC |
 | `auto` (default) | `split` when a database is configured, else `single` | |
 
@@ -65,7 +65,7 @@ of silently serving from memory.
 | `topology` | `auto` | `split`, `single`, `auto` |
 | `tunnel.mode` | `off` | `off`, `open`, `allowlist` (`tunnel.allowedHosts`). `open` admits any host; pair it with a token gate |
 | `tunnel.apns.*` | off | Built-in push sender on the tunnel pod; key file from `existingSecret`, a Secret of its own (the chart refuses `config.existingSecret` or `LIGUS_RELAY_APNS_*` in `config.env`, which reach relay-sync too) |
-| `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | See Scaling |
+| `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | Fixed in 2.0: anything else fails to render (see Scaling) |
 | `postgres.enabled` / `existingSecret` | `false`, required | Development Postgres in the release; the Secret holds `password` and `DATABASE_URL` |
 | `externalDatabase.url` / `existingSecret` | empty | Managed Postgres; mounted as a file (`DATABASE_URL_FILE`) |
 | `memoryStore.maxBytes` | `100000000` | Memory store only: heap budget for workspace data (`LIGUS_RELAY_MAX_STORE_BYTES`); writes past it get 507 |
@@ -82,7 +82,8 @@ of silently serving from memory.
 | `networkPolicy.restrictEgress` | `true` | Egress only to DNS, the in-chart Postgres and `extraEgress` (add your database and, for APNs, 443) |
 | `networkPolicy.dns.namespaceSelector` / `podSelector` | `kube-system`, `k8s-app: kube-dns` | Where DNS egress may go. Change them if your resolver pods are labeled differently, or DNS stops resolving |
 
-The chart refuses combinations that cannot work: `split` without a database,
+The chart refuses combinations that cannot work: more than one relay-sync
+replica, autoscaling or a PDB, `split` without a database,
 a snapshot PVC with a database or with `split`, `allowlist` without hosts. It
 also refuses APNs settings outside `tunnel.apns.*`.
 
@@ -105,7 +106,9 @@ also refuses APNs settings outside `tunnel.apns.*`.
 
 ## Scaling
 
-Keep `relay-sync` at one replica for now. With more than one:
+`relay-sync` runs exactly one replica in 2.0, with `Recreate` (a rolling
+update's surge pod would be a second store for a moment); the chart refuses
+more replicas, an HPA or a PDB. With more than one:
 
 - short pairing codes (`/v1/pair`) live in one process, so a code created on
   one replica is unknown to another;

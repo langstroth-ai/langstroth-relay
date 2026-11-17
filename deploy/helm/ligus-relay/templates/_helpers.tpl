@@ -106,6 +106,12 @@ DATABASE_URL
 {{- fail (printf "config.env.%s: APNs settings reach every pod through config.env; use tunnel.apns.* (the key from tunnel.apns.existingSecret)" $k) -}}
 {{- end -}}
 {{- end -}}
+{{- if or (gt (int .Values.sync.replicas) 1) .Values.sync.autoscaling.enabled -}}
+{{- fail "relay-sync runs exactly one replica in 2.0: short pairing codes, SSE fan-out and rate limits live in one process, so a second replica breaks pairing (README, Scaling). Set sync.replicas=1 and sync.autoscaling.enabled=false" -}}
+{{- end -}}
+{{- if .Values.sync.pdb.enabled -}}
+{{- fail "sync.pdb: a PodDisruptionBudget on a single relay-sync replica only blocks node drains; relay-sync HA is unsupported in 2.0" -}}
+{{- end -}}
 {{- if and .Values.persistence.enabled (eq (include "ligus-relay.topology" .) "split") -}}
 {{- fail "persistence (memory-store snapshot) only works with topology=single" -}}
 {{- end -}}

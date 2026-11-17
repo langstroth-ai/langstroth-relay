@@ -257,3 +257,41 @@ func TestAuthChartNetworkPolicy(t *testing.T) {
 		t.Fatal("adminIngressFrom must open the admin port to the listed peers")
 	}
 }
+
+// relay-sync and ligus-auth keep per-process state: more than one replica,
+// an HPA, a PDB on one replica or a rolling update must not render.
+func TestChartsRefuseUnsupportedHA(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not installed")
+	}
+	for _, sets := range [][]string{{"sync.replicas=2"}, {"sync.autoscaling.enabled=true"}, {"sync.pdb.enabled=true"}} {
+		args := []string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0", "--set", "externalDatabase.url=postgres://u:p@db/r"}
+		for _, s := range sets {
+			args = append(args, "--set", s)
+		}
+		if err := exec.Command("helm", args...).Run(); err == nil {
+			t.Errorf("relay rendered with %v", sets)
+		}
+	}
+	out := renderChart(t, "--set", "externalDatabase.url=postgres://u:p@db/r")
+	sync := docOfKind(out, "Deployment", "-sync")
+	if !strings.Contains(sync, "type: Recreate") || strings.Contains(sync, "maxSurge") {
+		t.Fatal("relay-sync must use Recreate (a surge pod is a second pairing store)")
+	}
+	if strings.Contains(out, "kind: PodDisruptionBudget") || strings.Contains(out, "kind: HorizontalPodAutoscaler") {
+		t.Fatal("no PDB or HPA for single-replica relay-sync")
+	}
+	for _, sets := range [][]string{{"replicas=2"}, {"store.driver=postgres", "store.databaseUrl.existingSecret=db", "replicas=2"}, {"persistence.enabled=false"}} {
+		var args []string
+		for _, s := range sets {
+			args = append(args, "--set", s)
+		}
+		if out, err := renderAuth(t, args...); err == nil {
+			t.Errorf("ligus-auth rendered with %v:\n%.200s", sets, out)
+		}
+	}
+	out, err := renderAuth(t, "--set", "store.driver=postgres", "--set", "store.databaseUrl.existingSecret=db")
+	if err != nil || !strings.Contains(out, "type: Recreate") {
+		t.Fatalf("ligus-auth with Postgres must use Recreate: %v", err)
+	}
+}

@@ -58,12 +58,16 @@ store:
     key: database-url
 
 persistence:
-  enabled: false   # file store without persistence loses sessions on restart
+  # The file store needs it: without it every session is lost on restart and
+  # rendering fails unless allowEphemeral (CI only).
+  enabled: false
+  allowEphemeral: false
   size: 1Gi
   storageClass: ""
 
-# Flow state (sign-in, device codes) is per process: keep one replica unless
-# the Ingress pins clients to one pod.
+# Exactly one in 2.0 (rendering fails otherwise): sign-in and device-code
+# flow state is per process, and no affinity can pin a browser, a device-code
+# poller and a phone to the same pod.
 replicas: 1
 
 service:

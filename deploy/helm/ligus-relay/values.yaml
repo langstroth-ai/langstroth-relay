@@ -53,17 +53,14 @@ tunnel:
     env: auto
 
 sync:
+  # Exactly one in 2.0 (rendering fails otherwise): pairing codes, SSE
+  # fan-out and rate limits are per process (README, "Scaling"). Kept as
+  # values so a future release can lift the limit.
   replicas: 1
-  # Pairing codes, SSE fan-out and rate limits are per process today: keep
-  # one replica until pairing codes live in the store (README, "Scaling").
   autoscaling:
     enabled: false
-    minReplicas: 1
-    maxReplicas: 3
-    targetCPUUtilizationPercentage: 70
   pdb:
     enabled: false
-    minAvailable: 1
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: "1", memory: 256Mi }

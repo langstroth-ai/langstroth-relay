@@ -32,9 +32,14 @@ jobs:
           helm template t $c >/dev/null
           helm template t $c -f $c/ci/split-postgres-values.yaml >/dev/null
           helm template t $c -f $c/ci/single-memory-values.yaml >/dev/null
-          helm template t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true --set metrics.serviceMonitor.enabled=true --set sync.autoscaling.enabled=true --set sync.pdb.enabled=true >/dev/null
-          # Must refuse: split topology without a database.
+          helm template t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set ingress.enabled=true --set httpRoute.enabled=true --set metrics.serviceMonitor.enabled=true >/dev/null
+          # Must refuse: split topology without a database; relay-sync HA
+          # (unsupported in 2.0); the dev Postgres without its Secret.
           refuse t $c --set topology=split
+          refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.replicas=2
+          refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.autoscaling.enabled=true
+          refuse t $c --set externalDatabase.url=postgres://u:p@db:5432/r --set sync.pdb.enabled=true
+          refuse t $c --set postgres.enabled=true
       - name: ligus-auth chart
         run: |
           set -e
@@ -42,11 +47,14 @@ jobs:
           a=deploy/helm/ligus-auth
           helm lint --strict $a -f $a/ci/dex-values.yaml
           helm template t $a -f $a/ci/dex-values.yaml >/dev/null
-          helm template t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db --set replicas=2 >/dev/null
-          # Must refuse: no public_url / no signing key / file store with 2 replicas.
+          helm template t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db >/dev/null
+          # Must refuse: no public_url / no signing key / more than one replica
+          # with either store (unsupported in 2.0) / file store without a volume.
           refuse t $a
           refuse t $a -f $a/ci/dex-values.yaml --set signingKey.existingSecret=
           refuse t $a -f $a/ci/dex-values.yaml --set replicas=2
+          refuse t $a -f $a/ci/dex-values.yaml --set store.driver=postgres --set store.databaseUrl.existingSecret=db --set replicas=2
+          refuse t $a -f $a/ci/dex-values.yaml --set persistence.enabled=false
 
   e2e:
     runs-on: ubuntu-latest
