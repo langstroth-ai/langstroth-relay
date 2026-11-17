@@ -57,3 +57,18 @@ func TestChartDatabaseBundledParametersCannotOverrideSecurity(t *testing.T) {
 		t.Errorf("an ordinary parameter must render: %s", msg)
 	}
 }
+
+// R-3: the init script interpolates the role password into CREATE ROLE, so
+// any statement logging (a parameter, or an error) would write it to the pod
+// log. The session must turn statement logging off first.
+func TestChartDatabaseBundledInitDoesNotLogPassword(t *testing.T) {
+	out := renderChart(t, bundledArgs...)
+	cm := docNamed(out, "ConfigMap", "t-ligus-relay-postgres-conf")
+	create := strings.Index(cm, "CREATE ROLE")
+	for _, want := range []string{"SET log_statement = 'none'", "SET log_min_error_statement = 'panic'", "SET log_min_duration_statement = -1"} {
+		i := strings.Index(cm, want)
+		if i < 0 || i > create {
+			t.Errorf("init script must %q before CREATE ROLE:\n%s", want, cm)
+		}
+	}
+}

@@ -571,6 +571,11 @@ pg_hba.conf: |
   psql -v ON_ERROR_STOP=1 --no-psqlrc --username postgres --dbname "$POSTGRES_DB" \
     --set=role="$LIGUS_DB_USER" --set=db="$POSTGRES_DB" <<'SQL'
   \set pw `cat /etc/postgres-secret/password`
+  -- The statement below carries the password: keep it out of the server log
+  -- whatever log_* parameters are set (and if it fails).
+  SET log_statement = 'none';
+  SET log_min_error_statement = 'panic';
+  SET log_min_duration_statement = -1;
   SET password_encryption = 'scram-sha-256';
   CREATE ROLE :"role" LOGIN PASSWORD :'pw';
   ALTER DATABASE :"db" OWNER TO :"role";
