@@ -133,6 +133,14 @@ names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
 memory+snapshot; else in-memory only.
 
+**Settings from files.** Any setting `X` above (and `DATABASE_URL`) that is
+unset in the environment is read from the file named by `X_FILE` (for example
+`DATABASE_URL_FILE`, `LIGUS_RELAY_ACCESS_TOKENS_FILE`), else from the file
+`$LIGUS_RELAY_SECRETS_DIR/X` (canonical `LIGUS_RELAY_*` name), so secrets can
+be mounted files instead of environment variables. The environment wins over
+`X_FILE`, which wins over the directory; one trailing newline is trimmed.
+`LIGUS_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key).
+
 ## Test
 
 ```sh

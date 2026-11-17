@@ -35,19 +35,24 @@ kind load docker-image ligus-relay:dev
 
 kubectl create namespace ligus-relay
 kubectl label namespace ligus-relay pod-security.kubernetes.io/enforce=restricted
+# The development Postgres's password and DSN (the chart generates none).
+PW=$(openssl rand -hex 24)
+kubectl -n ligus-relay create secret generic relay-dev-postgres \
+  --from-literal=password=$PW \
+  --from-literal=DATABASE_URL="postgres://relay:$PW@ligus-relay-postgres:5432/relay?sslmode=disable"
 helm install ligus-relay deploy/helm/ligus-relay -n ligus-relay \
   --set image.repository=ligus-relay --set image.tag=dev \
-  --set postgres.enabled=true
+  --set postgres.enabled=true --set postgres.existingSecret=relay-dev-postgres
 helm test ligus-relay -n ligus-relay
 ```
 
 Use the release name `ligus-relay` to get Service names `ligus-relay-sync` and
 `ligus-relay-tunnel`; other release names are prefixed.
 
-`postgres.enabled` runs one development Postgres pod (no backups, no TLS, no
-HA). For anything you keep, use a managed database or an operator such as
+`postgres.enabled` runs one development Postgres pod (no backups, no TLS
+(`sslmode=disable`), no HA); it is unsupported in production. For anything you keep, use a managed database or an operator such as
 CloudNativePG and pass it as `externalDatabase.existingSecret` (a Secret with a
-`DATABASE_URL` key). With a database configured the chart sets
+`DATABASE_URL` key, `sslmode=verify-full` and the server's CA). With a database configured the chart sets
 `LIGUS_RELAY_REQUIRE_DB=1`, so a pod with a missing or broken URL fails instead
 of silently serving from memory.
 
@@ -61,15 +66,15 @@ of silently serving from memory.
 | `tunnel.mode` | `off` | `off`, `open`, `allowlist` (`tunnel.allowedHosts`). `open` admits any host; pair it with a token gate |
 | `tunnel.apns.*` | off | Built-in push sender on the tunnel pod; key file from `existingSecret`, a Secret of its own (the chart refuses `config.existingSecret` or `LIGUS_RELAY_APNS_*` in `config.env`, which reach relay-sync too) |
 | `sync.replicas`, `sync.autoscaling`, `sync.pdb` | 1, off, off | See Scaling |
-| `postgres.enabled` | `false` | Development Postgres in the release |
-| `externalDatabase.url` / `existingSecret` | empty | Managed Postgres |
+| `postgres.enabled` / `existingSecret` | `false`, required | Development Postgres in the release; the Secret holds `password` and `DATABASE_URL` |
+| `externalDatabase.url` / `existingSecret` | empty | Managed Postgres; mounted as a file (`DATABASE_URL_FILE`) |
 | `memoryStore.maxBytes` | `100000000` | Memory store only: heap budget for workspace data (`LIGUS_RELAY_MAX_STORE_BYTES`); writes past it get 507 |
 | `contacts.enabled` | `true` | `/v1/contacts/*` (contact records + sealed drop boxes); `false` renders `LIGUS_RELAY_CONTACTS=off` (404) |
 | `contacts.*` (`maxRecordBytes`, `maxDropBytes`, `ttlDays`, `dropMaxRows`, `dropMaxBoxBytes`, `dropRetentionDays`, `reclaimHoldDays`, `maxContacts`, `dropRate`/`dropBurst`, `dropCidRate`/`dropCidBurst`, `writeRate`/`writeBurst`, `createRate`/`createBurst`) | `null` (binary defaults) | Contact size caps, TTL, drop-box bounds and rate limits; each maps to a `LIGUS_RELAY_CONTACT*` variable (see the relay README). Rate limiters are per pod |
 | `githubRoutes` | `false` | Deprecated GitHub social routes for 1.x clients (`LIGUS_RELAY_GITHUB_ROUTES=on`); removed in relay v0.4 |
 | `persistence.enabled` | `false` | Memory-store snapshot PVC (`single` only) |
 | `config.env` | `{}` | Plain `LIGUS_RELAY_*` settings (membership mode, retention, ...) |
-| `config.existingSecret` | empty | Secret whose keys become env (`LIGUS_RELAY_TOKEN_PUBKEY`, `LIGUS_RELAY_METRICS_TOKEN`, ...) |
+| `config.existingSecret` | empty | Secret-valued settings, one key per setting name (`LIGUS_RELAY_ACCESS_TOKENS`, `LIGUS_RELAY_METRICS_TOKEN`, `LIGUS_RELAY_TOKEN_PUBKEY`, ...), mounted 0400 as a directory the relay reads (`LIGUS_RELAY_SECRETS_DIR`); never env |
 | `clientIP.trustedProxies` / `clientIP.header` | empty, `X-Forwarded-For` | Proxies whose forwarding header names the client (see Scaling) |
 | `ingress.*`, `httpRoute.*` | off | TLS at the edge; idle timeout must exceed 60 s |
 | `metrics.serviceMonitor.*` | off | Prometheus Operator; set `bearerTokenSecret` when a metrics token is configured |
@@ -87,6 +92,14 @@ also refuses APNs settings outside `tunnel.apns.*`.
   capabilities dropped, `RuntimeDefault` seccomp: passes Pod Security
   `restricted`.
 - No Kubernetes API access: the service account has no token mounted.
+- No secret in the environment: the database URL, `config.existingSecret` and
+  the APNs key are files mounted `0400` (with `fsGroup` the kubelet adds group
+  read: `0440`, group 65532). The relay reads any setting `X` from `X_FILE` or
+  from `$LIGUS_RELAY_SECRETS_DIR/X` when `X` itself is unset.
+- `checksum/secrets` rolls the pods when a Secret they read changes. It uses
+  `lookup`, a constant under `helm template`; with Argo CD or Flux use
+  [Reloader](https://github.com/stakater/Reloader) or bump `podAnnotations`.
+- The chart generates no Secrets, so every render is the same.
 - Clients require `https://` outside the cluster: terminate TLS at the Ingress
   or Gateway (cert-manager).
 

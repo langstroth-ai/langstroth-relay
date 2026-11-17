@@ -55,7 +55,7 @@ func TestChartTunnelOffByDefault(t *testing.T) {
 	if !regexp.MustCompile(`name: LIGUS_RELAY_TUNNEL\s+value: "off"`).MatchString(out) {
 		t.Fatalf("default install must render LIGUS_RELAY_TUNNEL=off")
 	}
-	split := renderChart(t, "--set", "postgres.enabled=true")
+	split := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg")
 	if docOfKind(split, "Deployment", "-tunnel") != "" {
 		t.Fatal("default split install must not render a tunnel Deployment")
 	}
@@ -69,7 +69,7 @@ func TestChartTunnelOffByDefault(t *testing.T) {
 // (dropping every tunnel socket) without fixing anything. Liveness must only
 // check the process; readiness keeps the store check.
 func TestChartLivenessDoesNotDependOnStore(t *testing.T) {
-	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "tunnel.mode=open")
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open")
 	for _, suffix := range []string{"-sync", "-tunnel"} {
 		d := docOfKind(out, "Deployment", suffix)
 		if d == "" {
@@ -94,7 +94,7 @@ func TestChartLivenessDoesNotDependOnStore(t *testing.T) {
 
 // Regression: the APNs key reaches the tunnel pod only, never relay-sync.
 func TestChartAPNsKeyOnlyOnTunnelPod(t *testing.T) {
-	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "tunnel.mode=open",
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open",
 		"--set", "tunnel.apns.existingSecret=apns", "--set", "tunnel.apns.keyId=K", "--set", "tunnel.apns.teamId=T", "--set", "tunnel.apns.topic=x.y")
 	if d := docOfKind(out, "Deployment", "-sync"); strings.Contains(d, "APNS") || strings.Contains(d, "secretName: apns") {
 		t.Fatal("relay-sync must not get the APNs key")
@@ -123,7 +123,7 @@ func renderChartErr(t *testing.T, args ...string) string {
 // The APNs key must come only from the tunnel-only Secret: config.existingSecret
 // and config.env reach every pod, relay-sync included.
 func TestChartAPNsKeyNotThroughSharedConfig(t *testing.T) {
-	base := []string{"--set", "postgres.enabled=true", "--set", "tunnel.mode=open"}
+	base := []string{"--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open"}
 	if msg := renderChartErr(t, append(base, "--set", "config.existingSecret=shared", "--set", "tunnel.apns.existingSecret=shared")...); !strings.Contains(msg, "tunnel.apns.existingSecret") {
 		t.Fatalf("sharing config.existingSecret with the APNs Secret must fail, got %q", msg)
 	}
@@ -182,5 +182,36 @@ func TestChartContactsAndGitHubRoutes(t *testing.T) {
 		if !strings.Contains(cm, want) {
 			t.Errorf("missing %s in:\n%s", want, cm)
 		}
+	}
+}
+
+// Secrets are files, never environment variables, and the chart generates
+// none (lookup-generated passwords changed on every helm template / GitOps
+// render).
+func TestChartSecretsAreFiles(t *testing.T) {
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg",
+		"--set", "config.existingSecret=relay-env", "--set", "tunnel.mode=open")
+	if strings.Contains(out, "secretKeyRef") || strings.Contains(out, "secretRef:") {
+		t.Fatal("a Secret reaches a container through env or envFrom")
+	}
+	for _, want := range []string{"DATABASE_URL_FILE", "LIGUS_RELAY_SECRETS_DIR", "POSTGRES_PASSWORD_FILE", "checksum/secrets:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if regexp.MustCompile(`(?m)^kind: Secret$`).MatchString(out) {
+		t.Fatal("the in-chart Postgres must not render (generate) a Secret")
+	}
+	if strings.Contains(out, "defaultMode: 0440") || !strings.Contains(out, "defaultMode: 0400") {
+		t.Fatal("secret volumes must be 0400")
+	}
+	again := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg",
+		"--set", "config.existingSecret=relay-env", "--set", "tunnel.mode=open")
+	if again != out {
+		t.Fatal("two renders differ")
+	}
+	if err := exec.Command("helm", "template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0",
+		"--set", "postgres.enabled=true").Run(); err == nil {
+		t.Fatal("postgres.enabled without postgres.existingSecret must fail")
 	}
 }

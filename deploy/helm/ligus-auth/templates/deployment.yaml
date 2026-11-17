@@ -16,6 +16,7 @@ spec:
       labels: {{- include "ligus-auth.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include "ligus-auth.config" . | sha256sum }}
+        checksum/secrets: {{ include "ligus-auth.secretsChecksum" . }}
         {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
     spec:
       automountServiceAccountToken: false
@@ -36,9 +37,9 @@ spec:
               value: /etc/ligus-auth/admin/{{ .Values.adminToken.key }}
             {{- end }}
             {{- if eq .Values.store.driver "postgres" }}
-            - name: LIGUS_AUTH_DATABASE_URL
-              valueFrom:
-                secretKeyRef: {name: {{ .Values.store.databaseUrl.existingSecret }}, key: {{ .Values.store.databaseUrl.key }}}
+            # The DSN is a file, never an environment variable.
+            - name: LIGUS_AUTH_DATABASE_URL_FILE
+              value: /etc/ligus-auth/db/database-url
             {{- end }}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
@@ -55,27 +56,39 @@ spec:
             {{- if .Values.adminToken.existingSecret }}
             - {name: admin-token, mountPath: /etc/ligus-auth/admin, readOnly: true}
             {{- end }}
+            {{- if eq .Values.store.driver "postgres" }}
+            - {name: db, mountPath: /etc/ligus-auth/db, readOnly: true}
+            {{- end }}
             {{- if eq .Values.store.driver "file" }}
             - {name: state, mountPath: /var/lib/ligus-auth}
             {{- end }}
       volumes:
         - name: config
           configMap: {name: {{ include "ligus-auth.fullname" . }}}
-        # 0440 + fsGroup: readable by the container user only (ligus-auth
-        # refuses world-readable secret files).
+        # 0400; with fsGroup the kubelet adds group read (0440, group
+        # 65532): readable by the container user only (ligus-auth refuses
+        # world-readable secret files).
         - name: signing-key
           secret:
             secretName: {{ .Values.signingKey.existingSecret }}
-            defaultMode: 0440
+            defaultMode: 0400
             items:
               - {key: {{ .Values.signingKey.key }}, path: signing-key}
         {{- if .Values.secretFiles.existingSecret }}
         - name: secret-files
-          secret: {secretName: {{ .Values.secretFiles.existingSecret }}, defaultMode: 0440}
+          secret: {secretName: {{ .Values.secretFiles.existingSecret }}, defaultMode: 0400}
         {{- end }}
         {{- if .Values.adminToken.existingSecret }}
         - name: admin-token
-          secret: {secretName: {{ .Values.adminToken.existingSecret }}, defaultMode: 0440}
+          secret: {secretName: {{ .Values.adminToken.existingSecret }}, defaultMode: 0400}
+        {{- end }}
+        {{- if eq .Values.store.driver "postgres" }}
+        - name: db
+          secret:
+            secretName: {{ .Values.store.databaseUrl.existingSecret }}
+            defaultMode: 0400
+            items:
+              - {key: {{ .Values.store.databaseUrl.key }}, path: database-url}
         {{- end }}
         {{- if eq .Values.store.driver "file" }}
         - name: state

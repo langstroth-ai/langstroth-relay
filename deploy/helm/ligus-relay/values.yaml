@@ -83,7 +83,9 @@ singlePod:
 # only), externalDatabase (managed Postgres, recommended), or neither (memory
 # store, topology=single only, optionally snapshotted to a PVC).
 externalDatabase:
-  # Full DATABASE_URL. Prefer existingSecret.
+  # Full DATABASE_URL, mounted as a file (DATABASE_URL_FILE). Prefer
+  # existingSecret. Use sslmode=verify-full with the server's CA
+  # (sslrootcert=/path in a mounted Secret) for any database off the node.
   url: ""
   existingSecret: ""
   existingSecretKey: DATABASE_URL
@@ -100,8 +102,14 @@ postgres:
     pullPolicy: IfNotPresent
   database: relay
   username: relay
-  # Generated once and kept across upgrades when empty.
-  password: ""
+  # Required: a Secret with keys `password` and `DATABASE_URL` (the chart
+  # generates nothing, so helm template, Argo CD and Flux are stable):
+  #   PW=$(openssl rand -hex 24)
+  #   kubectl -n <ns> create secret generic relay-dev-postgres \
+  #     --from-literal=password=$PW \
+  #     --from-literal=DATABASE_URL="postgres://relay:$PW@<release>-ligus-relay-postgres:5432/relay?sslmode=disable"
+  # (sslmode=disable is acceptable only for this in-cluster development pod.)
+  existingSecret: ""
   persistence:
     enabled: true
     size: 1Gi
@@ -157,8 +165,10 @@ persistence:
   mountPath: /data
 
 # Access control and other settings. Secret-valued settings go through
-# existingSecret; each key of that Secret becomes an environment variable
-# (for example LIGUS_RELAY_TOKEN_PUBKEY, LIGUS_RELAY_METRICS_TOKEN).
+# existingSecret: it is mounted (0400) as a directory, one file per setting
+# named like the variable (LIGUS_RELAY_ACCESS_TOKENS, LIGUS_RELAY_METRICS_TOKEN,
+# LIGUS_RELAY_TOKEN_PUBKEY, ...), which the relay reads through
+# LIGUS_RELAY_SECRETS_DIR. Nothing secret is put in the environment.
 config:
   # Extra plain environment variables (LIGUS_RELAY_MEMBERSHIP, ...).
   env: {}

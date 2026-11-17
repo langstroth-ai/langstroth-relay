@@ -50,7 +50,9 @@ adminToken:
 # Store: "file" (one replica, state on a volume) or "postgres" (shared).
 store:
   driver: file
-  # postgres: a Secret with the DSN, passed as LIGUS_AUTH_DATABASE_URL.
+  # postgres: a Secret with the DSN, mounted as a file
+  # (LIGUS_AUTH_DATABASE_URL_FILE). Use sslmode=verify-full with the server's
+  # CA for any database off the node.
   databaseUrl:
     existingSecret: ""
     key: database-url

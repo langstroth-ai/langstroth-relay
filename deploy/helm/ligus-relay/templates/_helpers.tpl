@@ -54,6 +54,8 @@ app.kubernetes.io/component: {{ .component }}
 {{- define "ligus-relay.databaseSecretName" -}}
 {{- if .Values.externalDatabase.existingSecret -}}
 {{- .Values.externalDatabase.existingSecret -}}
+{{- else if .Values.postgres.enabled -}}
+{{- .Values.postgres.existingSecret -}}
 {{- else -}}
 {{- printf "%s-db" (include "ligus-relay.fullname" .) -}}
 {{- end -}}
@@ -62,6 +64,8 @@ app.kubernetes.io/component: {{ .component }}
 {{- define "ligus-relay.databaseSecretKey" -}}
 {{- if .Values.externalDatabase.existingSecret -}}
 {{- .Values.externalDatabase.existingSecretKey -}}
+{{- else if .Values.postgres.enabled -}}
+DATABASE_URL
 {{- else -}}
 DATABASE_URL
 {{- end -}}
@@ -81,6 +85,9 @@ DATABASE_URL
 {{- end -}}
 {{- if and (eq .Values.tunnel.mode "allowlist") (empty .Values.tunnel.allowedHosts) -}}
 {{- fail "tunnel.mode=allowlist needs tunnel.allowedHosts" -}}
+{{- end -}}
+{{- if and .Values.postgres.enabled (not .Values.postgres.existingSecret) -}}
+{{- fail (printf "postgres.enabled needs postgres.existingSecret (keys password and DATABASE_URL); the chart generates no passwords, so helm template and GitOps render the same thing every time. Create it with:\n  PW=$(openssl rand -hex 24)\n  kubectl -n %s create secret generic relay-dev-postgres --from-literal=password=$PW --from-literal=DATABASE_URL=\"postgres://%s:$PW@%s:5432/%s?sslmode=disable\"" .Release.Namespace .Values.postgres.username (include "ligus-relay.postgresName" .) .Values.postgres.database) -}}
 {{- end -}}
 {{- if and .Values.postgres.enabled (or .Values.externalDatabase.url .Values.externalDatabase.existingSecret) -}}
 {{- fail "set either postgres.enabled or externalDatabase, not both" -}}
@@ -119,6 +126,7 @@ metadata:
     {{- end }}
   annotations:
     checksum/config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+    checksum/secrets: {{ include "ligus-relay.secretsChecksum" (dict "root" $root "withApns" .withApns) }}
     {{- with $v.podAnnotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -147,13 +155,11 @@ spec:
         - name: http
           containerPort: 8443
           protocol: TCP
+      # Settings only; secrets are files (config.existingSecret is a
+      # directory the relay reads by setting name, LIGUS_RELAY_SECRETS_DIR).
       envFrom:
         - configMapRef:
             name: {{ include "ligus-relay.fullname" $root }}
-        {{- with $v.config.existingSecret }}
-        - secretRef:
-            name: {{ . }}
-        {{- end }}
       env:
         - name: LIGUS_RELAY_TUNNEL
           value: {{ .tunnelMode | quote }}
@@ -161,12 +167,13 @@ spec:
         - name: LIGUS_RELAY_TUNNEL_HOSTS
           value: {{ join "," $v.tunnel.allowedHosts | quote }}
         {{- end }}
+        {{- with $v.config.existingSecret }}
+        - name: LIGUS_RELAY_SECRETS_DIR
+          value: /etc/ligus-relay/secrets
+        {{- end }}
         {{- if include "ligus-relay.hasDatabase" $root }}
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "ligus-relay.databaseSecretName" $root }}
-              key: {{ include "ligus-relay.databaseSecretKey" $root }}
+        - name: DATABASE_URL_FILE
+          value: /etc/ligus-relay/db/DATABASE_URL
         {{- end }}
         {{- if $v.persistence.enabled }}
         - name: LIGUS_RELAY_DATA_DIR
@@ -206,8 +213,18 @@ spec:
         failureThreshold: 3
       resources:
         {{- toYaml .resources | nindent 8 }}
-      {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) }}
+      {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "ligus-relay.hasDatabase" $root) }}
       volumeMounts:
+        {{- if $v.config.existingSecret }}
+        - name: secrets
+          mountPath: /etc/ligus-relay/secrets
+          readOnly: true
+        {{- end }}
+        {{- if include "ligus-relay.hasDatabase" $root }}
+        - name: db
+          mountPath: /etc/ligus-relay/db
+          readOnly: true
+        {{- end }}
         {{- if $v.persistence.enabled }}
         - name: data
           mountPath: {{ $v.persistence.mountPath }}
@@ -218,8 +235,23 @@ spec:
           readOnly: true
         {{- end }}
       {{- end }}
-  {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) }}
+  {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "ligus-relay.hasDatabase" $root) }}
   volumes:
+    # 0400: with fsGroup the kubelet adds group read (0440, group 65532).
+    {{- with $v.config.existingSecret }}
+    - name: secrets
+      secret:
+        secretName: {{ . }}
+        defaultMode: 0400
+    {{- end }}
+    {{- if include "ligus-relay.hasDatabase" $root }}
+    - name: db
+      secret:
+        secretName: {{ include "ligus-relay.databaseSecretName" $root }}
+        defaultMode: 0400
+        items:
+          - { key: {{ include "ligus-relay.databaseSecretKey" $root }}, path: DATABASE_URL }
+    {{- end }}
     {{- if $v.persistence.enabled }}
     - name: data
       persistentVolumeClaim:
@@ -246,25 +278,6 @@ spec:
   {{- end }}
 {{- end -}}
 
-{{/* In-chart Postgres password: values, else the existing Secret, else random. */}}
-{{- define "ligus-relay.postgresPassword" -}}
-{{- if .Values.postgres.password -}}
-{{- .Values.postgres.password -}}
-{{- else -}}
-{{- $s := lookup "v1" "Secret" .Release.Namespace (include "ligus-relay.postgresName" .) -}}
-{{- if and $s $s.data (index $s.data "password") -}}
-{{- index $s.data "password" | b64dec -}}
-{{- else -}}
-{{- $cached := get .Values.postgres "_generated" -}}
-{{- if not $cached -}}
-{{- $cached = randAlphaNum 32 -}}
-{{- $_ := set .Values.postgres "_generated" $cached -}}
-{{- end -}}
-{{- $cached -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
 {{/* Effective topology: "auto" is split with a database, single without. */}}
 {{- define "ligus-relay.topology" -}}
 {{- if eq .Values.topology "auto" -}}
@@ -272,4 +285,25 @@ spec:
 {{- else -}}
 {{- .Values.topology -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+checksum/secrets: rolls pods when a Secret they read changes. Chart-rendered
+Secrets are hashed as rendered; existing Secrets through lookup, which is a
+constant under `helm template` (with Argo CD or Flux use Reloader, or bump
+podAnnotations). Args: dict root withApns.
+*/}}
+{{- define "ligus-relay.secretsChecksum" -}}
+{{- $root := .root -}}
+{{- $v := $root.Values -}}
+{{- $names := list -}}
+{{- with $v.config.existingSecret }}{{ $names = append $names . }}{{ end -}}
+{{- if include "ligus-relay.hasDatabase" $root }}{{ $names = append $names (include "ligus-relay.databaseSecretName" $root) }}{{ end -}}
+{{- if and .withApns $v.tunnel.apns.existingSecret }}{{ $names = append $names $v.tunnel.apns.existingSecret }}{{ end -}}
+{{- $data := dict "rendered" (include (print $root.Template.BasePath "/secret-db.yaml") $root) -}}
+{{- range $n := ($names | uniq | sortAlpha) -}}
+{{- $s := lookup "v1" "Secret" $root.Release.Namespace $n -}}
+{{- $_ := set $data $n (dig "data" (dict) $s) -}}
+{{- end -}}
+{{- toJson $data | sha256sum -}}
 {{- end -}}
