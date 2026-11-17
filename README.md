@@ -364,7 +364,7 @@ record and drop into the box. Every route goes through the access gate.
 **What the relay still sees:** which `cid`s exist, when records change, drop
 timing and sizes, and client addresses. It can withhold or replay an old
 record; clients reject a record older than the newest they've seen for that
-`cid`. The `/v1/contacts/` prefix is reserved: extensions can't register it.
+`cid`.
 
 ### GitHub social routes (deprecated, off by default)
 
@@ -375,7 +375,6 @@ see each caller's GitHub token. Ligus 2.0 doesn't use them. Since v0.3 they are
 only for Ligus/Hive 1.x clients; when on, every response carries
 `Deprecation: @1794614400` and `Link: <…CHANGELOG.md>; rel="deprecation"`.
 **v0.4 removes them**, together with their tables and the GitHub verifier.
-Their path prefixes stay reserved, so no extension can reuse them.
 
 When enabled, they identify the caller by a GitHub token sent in
 `X-Hive-Github-Token` (or `X-Ligus-Github-Token`), verified against
@@ -619,24 +618,14 @@ unchanged.
 
 A downstream build can inject its own `TunnelPolicy` (host admission: hosts
 can be `pending` — enrollment works, sessions get `4006`; pending hosts unseen
-for 30 days are forgotten) and an APNs `PushSender`, through `MainWith`
-(below).
+for 30 days are forgotten) and an APNs `PushSender` through
+`New(Options{...})` (below).
 
 ## Extending (seams)
 
 This package is a complete relay on its own. It also exposes extension points
 (see `seams.go`) so a downstream build can add custom behavior via
 `New(Options{...})` without forking.
-
-A downstream binary that must behave exactly like `cmd/ligus-relay` plus a few
-additions (for example site-specific routes or a custom tunnel policy)
-calls `relay.MainWith(relay.Extension{...})` instead of `relay.Main()`.
-Storage, env, the access gate, every open route, subcommands and shutdown
-are the open binary's; the extension can only set the tunnel seams, serve extra
-routes under `/v1/<name>/` prefixes the relay doesn't use, and add
-subcommands. If its setup fails, the relay logs it and serves as the open
-binary. `relay.Assemble` builds the same handler without a listener, for
-side-by-side tests.
 
 Seams:
 

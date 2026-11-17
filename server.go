@@ -70,9 +70,6 @@ type Options struct {
 	// nil → the built-in APNs sender when HIVE_RELAY_APNS_* is set
 	// (push_apns.go), else push unavailable.
 	PushSender PushSender
-	// TunnelBilling is the "billing" field of GET /v1/tunnel/info, a wire value
-	// kept for client compatibility: "none" (default) or "appstore".
-	TunnelBilling string
 	// GitHubRoutes registers the deprecated GitHub social routes (directory,
 	// account, friends) for 1.x clients. Also enabled by env
 	// LIGUS_RELAY_GITHUB_ROUTES=on. Off (the v0.3 default) → 404. Removed in v0.4.
@@ -215,7 +212,7 @@ func New(o Options) *Server {
 			// (push_apns.go); otherwise push stays unavailable.
 			push = pushSenderFromEnv()
 		}
-		s.tunnel = newTunnelHub(s.store, tunnelPolicy, push, o.TunnelBilling)
+		s.tunnel = newTunnelHub(s.store, tunnelPolicy, push)
 	}
 	// When membership is on, default the guards to the built-in roster guard
 	// (unless a downstream build supplied its own). The guard is content-blind
@@ -250,8 +247,7 @@ func claimsFrom(ctx context.Context) *TokenClaims {
 
 func nowUnix() int64 { return time.Now().Unix() }
 
-// Handler builds the /v1 router. Keep relayPrefixes (extension.go) covering
-// every path registered here. Everything except /v1/health sits behind the
+// Handler builds the /v1 router. Everything except /v1/health sits behind the
 // access gate (a no-op when the policy is Open, i.e. self-hosted).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -289,8 +285,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/pair/{code}", s.resolvePairing)
 
 	// Deprecated GitHub social routes (directory / account / friends): only
-	// with Options.GitHubRoutes or LIGUS_RELAY_GITHUB_ROUTES=on, else 404. Their
-	// prefixes stay reserved (relayPrefixes). Removed in v0.4.
+	// with Options.GitHubRoutes or LIGUS_RELAY_GITHUB_ROUTES=on, else 404. Removed
+	// in v0.4.
 	s.registerGitHubRoutes(mux)
 
 	// Contacts (v0.3): opaque signed records + sealed drop boxes.

@@ -83,6 +83,15 @@ default.
   render exactly as before when `database.mode` is empty, with a note at
   install; the README has the move from `postgres.enabled` to a real mode.
 
+### Removed
+
+- **The downstream build hooks** `MainWith`, `Extension`, `Addon` and
+  `Assemble`, and the `Options.TunnelBilling` override. The relay binary is
+  `Main()`; a custom build still composes `New(Options{...})` with the seams
+  (`TunnelPolicy`, `PushSender`, `EntitlementVerifier`, `WriteGuard`, `Hooks`).
+  `GET /v1/tunnel/info` keeps its `billing` field, now always `"none"`, so
+  clients that read it see the same bytes as before.
+
 ### Also in this release
 
 - **ligus-auth** (`cmd/ligus-auth`): optional OIDC sign-in service that mints
