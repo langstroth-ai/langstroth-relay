@@ -545,6 +545,13 @@ done
 f="/backups/${RESTORE_FILE}"
 test -f "$f" || { echo "no such dump: $f"; ls -1 /backups; exit 1; }
 pg_restore --list "$f" >/dev/null
+# The app was scaled to zero in the same upgrade; its pods may still be
+# stopping. Wait until the role has no other session, so nothing writes
+# during or after the restore.
+i=0
+until [ "$(psql -X -Atqc 'SELECT count(*) FROM pg_stat_activity WHERE usename = current_user AND pid <> pg_backend_pid()')" = 0 ]; do
+  i=$((i + 1)); [ "$i" -lt 150 ] || { echo "other sessions of $PGUSER are still open"; exit 1; }; sleep 2
+done
 # One transaction: a failure leaves the database as it was.
 pg_restore --clean --if-exists --no-owner --no-acl --single-transaction --exit-on-error --dbname="$PGDATABASE" "$f"
 echo "restored $f"

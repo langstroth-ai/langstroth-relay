@@ -72,3 +72,21 @@ func TestChartDatabaseBundledInitDoesNotLogPassword(t *testing.T) {
 		}
 	}
 }
+
+// R-4: the restore Job starts while the old app pods are still terminating;
+// it must wait for the application role's other sessions to end so nothing
+// writes into the database during or right after the restore.
+func TestChartDatabaseBundledRestoreWaitsForAppSessions(t *testing.T) {
+	out := renderChart(t, with(bundledArgs, "--set", "database.bundled.backups.restore.file=relay-20260101T031700Z.dump")...)
+	var job string
+	for _, d := range docs(out) {
+		if strings.Contains(d, "kind: Job\n") && strings.Contains(d, "postgres-restore-") {
+			job = d
+		}
+	}
+	w := strings.Index(job, "pg_stat_activity")
+	r := strings.Index(job, "pg_restore --clean")
+	if w < 0 || w > r {
+		t.Errorf("restore must wait on pg_stat_activity before pg_restore --clean:\n%s", job)
+	}
+}
