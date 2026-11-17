@@ -1,4 +1,7 @@
 {{- if .Values.ingress.enabled }}
+{{- if kindIs "slice" .Values.ingress.tls }}{{ fail "ingress.tls is now an object like the relay chart's: {secretName: ..., terminatedUpstream: false}" }}{{ end }}
+{{- if and (not .Values.ingress.tls.secretName) (not .Values.ingress.tls.terminatedUpstream) }}{{ fail "ingress.enabled needs TLS: set ingress.tls.secretName, or ingress.tls.terminatedUpstream=true when a load balancer in front terminates TLS" }}{{ end }}
+{{- if and (not .Values.config.trusted_proxies) (not .Values.ingress.allowSharedBucket) }}{{ fail "behind an ingress set config.trusted_proxies to the exact addresses it connects from; without it every client shares one rate-limit bucket. ingress.allowSharedBucket=true accepts that" }}{{ end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -11,8 +14,10 @@ spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}
   {{- end }}
-  {{- with .Values.ingress.tls }}
-  tls: {{- toYaml . | nindent 4 }}
+  {{- with .Values.ingress.tls.secretName }}
+  tls:
+    - hosts: [{{ $.Values.ingress.host | quote }}]
+      secretName: {{ . }}
   {{- end }}
   rules:
     - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}

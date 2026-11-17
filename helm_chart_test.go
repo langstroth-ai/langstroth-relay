@@ -55,7 +55,7 @@ func TestChartTunnelOffByDefault(t *testing.T) {
 	if !regexp.MustCompile(`name: LIGUS_RELAY_TUNNEL\s+value: "off"`).MatchString(out) {
 		t.Fatalf("default install must render LIGUS_RELAY_TUNNEL=off")
 	}
-	split := renderChart(t, "--set", "postgres.enabled=true")
+	split := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg")
 	if docOfKind(split, "Deployment", "-tunnel") != "" {
 		t.Fatal("default split install must not render a tunnel Deployment")
 	}
@@ -69,7 +69,7 @@ func TestChartTunnelOffByDefault(t *testing.T) {
 // (dropping every tunnel socket) without fixing anything. Liveness must only
 // check the process; readiness keeps the store check.
 func TestChartLivenessDoesNotDependOnStore(t *testing.T) {
-	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "tunnel.mode=open")
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open")
 	for _, suffix := range []string{"-sync", "-tunnel"} {
 		d := docOfKind(out, "Deployment", suffix)
 		if d == "" {
@@ -94,7 +94,7 @@ func TestChartLivenessDoesNotDependOnStore(t *testing.T) {
 
 // Regression: the APNs key reaches the tunnel pod only, never relay-sync.
 func TestChartAPNsKeyOnlyOnTunnelPod(t *testing.T) {
-	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "tunnel.mode=open",
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open",
 		"--set", "tunnel.apns.existingSecret=apns", "--set", "tunnel.apns.keyId=K", "--set", "tunnel.apns.teamId=T", "--set", "tunnel.apns.topic=x.y")
 	if d := docOfKind(out, "Deployment", "-sync"); strings.Contains(d, "APNS") || strings.Contains(d, "secretName: apns") {
 		t.Fatal("relay-sync must not get the APNs key")
@@ -123,7 +123,7 @@ func renderChartErr(t *testing.T, args ...string) string {
 // The APNs key must come only from the tunnel-only Secret: config.existingSecret
 // and config.env reach every pod, relay-sync included.
 func TestChartAPNsKeyNotThroughSharedConfig(t *testing.T) {
-	base := []string{"--set", "postgres.enabled=true", "--set", "tunnel.mode=open"}
+	base := []string{"--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open"}
 	if msg := renderChartErr(t, append(base, "--set", "config.existingSecret=shared", "--set", "tunnel.apns.existingSecret=shared")...); !strings.Contains(msg, "tunnel.apns.existingSecret") {
 		t.Fatalf("sharing config.existingSecret with the APNs Secret must fail, got %q", msg)
 	}
@@ -181,6 +181,178 @@ func TestChartContactsAndGitHubRoutes(t *testing.T) {
 	} {
 		if !strings.Contains(cm, want) {
 			t.Errorf("missing %s in:\n%s", want, cm)
+		}
+	}
+}
+
+// Secrets are files, never environment variables, and the chart generates
+// none (lookup-generated passwords changed on every helm template / GitOps
+// render).
+func TestChartSecretsAreFiles(t *testing.T) {
+	out := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg",
+		"--set", "config.existingSecret=relay-env", "--set", "tunnel.mode=open")
+	if strings.Contains(out, "secretKeyRef") || strings.Contains(out, "secretRef:") {
+		t.Fatal("a Secret reaches a container through env or envFrom")
+	}
+	for _, want := range []string{"DATABASE_URL_FILE", "LIGUS_RELAY_SECRETS_DIR", "POSTGRES_PASSWORD_FILE", "checksum/secrets:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if regexp.MustCompile(`(?m)^kind: Secret$`).MatchString(out) {
+		t.Fatal("the in-chart Postgres must not render (generate) a Secret")
+	}
+	if strings.Contains(out, "defaultMode: 0440") || !strings.Contains(out, "defaultMode: 0400") {
+		t.Fatal("secret volumes must be 0400")
+	}
+	again := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg",
+		"--set", "config.existingSecret=relay-env", "--set", "tunnel.mode=open")
+	if again != out {
+		t.Fatal("two renders differ")
+	}
+	if err := exec.Command("helm", "template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0",
+		"--set", "postgres.enabled=true").Run(); err == nil {
+		t.Fatal("postgres.enabled without postgres.existingSecret must fail")
+	}
+}
+
+func renderAuth(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not installed")
+	}
+	cmd := exec.Command("helm", append([]string{"template", "t", "deploy/helm/ligus-auth", "--kube-version", "1.30.0",
+		"-f", "deploy/helm/ligus-auth/ci/dex-values.yaml"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// ligus-auth had no NetworkPolicy: its admin port was reachable from every
+// pod, agent-running serve pods included.
+func TestAuthChartNetworkPolicy(t *testing.T) {
+	out, err := renderAuth(t)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	np := ""
+	for _, d := range docs(out) {
+		if strings.Contains(d, "kind: NetworkPolicy\n") {
+			np = d
+		}
+	}
+	if np == "" {
+		t.Fatal("no NetworkPolicy")
+	}
+	if strings.Contains(np, "port: admin") {
+		t.Fatal("admin port admitted by default")
+	}
+	if !strings.Contains(np, "- Egress") || !strings.Contains(np, "169.254.0.0/16") || !strings.Contains(np, "k8s-app: kube-dns") {
+		t.Fatalf("egress must be restricted to DNS and the IdP, never cloud metadata:\n%s", np)
+	}
+	if !strings.Contains(out, "kind: ServiceAccount") || !strings.Contains(out, "enableServiceLinks: false") {
+		t.Fatal("ligus-auth needs its own token-less ServiceAccount and no service links")
+	}
+	out, _ = renderAuth(t, "--set", "networkPolicy.adminIngressFrom[0].podSelector.matchLabels.app=admin-ui")
+	if !strings.Contains(out, "port: admin") {
+		t.Fatal("adminIngressFrom must open the admin port to the listed peers")
+	}
+}
+
+// relay-sync and ligus-auth keep per-process state: more than one replica,
+// an HPA, a PDB on one replica or a rolling update must not render.
+func TestChartsRefuseUnsupportedHA(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not installed")
+	}
+	for _, sets := range [][]string{{"sync.replicas=2"}, {"sync.autoscaling.enabled=true"}, {"sync.pdb.enabled=true"}} {
+		args := []string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0", "--set", "externalDatabase.url=postgres://u:p@db/r"}
+		for _, s := range sets {
+			args = append(args, "--set", s)
+		}
+		if err := exec.Command("helm", args...).Run(); err == nil {
+			t.Errorf("relay rendered with %v", sets)
+		}
+	}
+	out := renderChart(t, "--set", "externalDatabase.url=postgres://u:p@db/r")
+	sync := docOfKind(out, "Deployment", "-sync")
+	if !strings.Contains(sync, "type: Recreate") || strings.Contains(sync, "maxSurge") {
+		t.Fatal("relay-sync must use Recreate (a surge pod is a second pairing store)")
+	}
+	if strings.Contains(out, "kind: PodDisruptionBudget") || strings.Contains(out, "kind: HorizontalPodAutoscaler") {
+		t.Fatal("no PDB or HPA for single-replica relay-sync")
+	}
+	for _, sets := range [][]string{{"replicas=2"}, {"store.driver=postgres", "store.databaseUrl.existingSecret=db", "replicas=2"}, {"persistence.enabled=false"}} {
+		var args []string
+		for _, s := range sets {
+			args = append(args, "--set", s)
+		}
+		if out, err := renderAuth(t, args...); err == nil {
+			t.Errorf("ligus-auth rendered with %v:\n%.200s", sets, out)
+		}
+	}
+	out, err := renderAuth(t, "--set", "store.driver=postgres", "--set", "store.databaseUrl.existingSecret=db")
+	if err != nil || !strings.Contains(out, "type: Recreate") {
+		t.Fatalf("ligus-auth with Postgres must use Recreate: %v", err)
+	}
+}
+
+// A public relay: TLS required, streaming timeouts and no SSE buffering by
+// default, trusted proxies required, /metrics behind a token.
+func TestChartPublicRelayDefaults(t *testing.T) {
+	pub := []string{"--set", "externalDatabase.url=postgres://u:p@db/r", "--set", "ingress.enabled=true", "--set", "httpRoute.enabled=true"}
+	good := append(append([]string{}, pub...), "--set", "ingress.tls.secretName=relay-tls",
+		"--set", "clientIP.trustedProxies[0]=10.0.0.5/32", "--set", "metrics.token.existingSecret=mt",
+		"--set", "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-read-timeout=7200")
+	out := renderChart(t, good...)
+	ing := ""
+	for _, d := range docs(out) {
+		if strings.Contains(d, "kind: Ingress\n") {
+			ing = d
+		}
+	}
+	for _, want := range []string{`proxy-buffering: "off"`, `proxy-send-timeout: "3600"`, `proxy-read-timeout: "7200"`, "idle_timeout.timeout_seconds=3600", "secretName: relay-tls"} {
+		if !strings.Contains(ing, want) {
+			t.Errorf("ingress lacks %s:\n%s", want, ing)
+		}
+	}
+	if !strings.Contains(out, "request: 3600s") || !strings.Contains(out, "LIGUS_RELAY_METRICS_TOKEN_FILE") {
+		t.Error("httpRoute timeouts or the metrics token file missing")
+	}
+	drop := map[string]bool{"ingress.tls.secretName=relay-tls": true, "clientIP.trustedProxies[0]=10.0.0.5/32": true, "metrics.token.existingSecret=mt": true}
+	for k := range drop {
+		args := []string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0"}
+		for i := 0; i < len(good); i += 2 {
+			if good[i+1] != k {
+				args = append(args, good[i], good[i+1])
+			}
+		}
+		if err := exec.Command("helm", args...).Run(); err == nil {
+			t.Errorf("rendered a public relay without %s", k)
+		}
+	}
+}
+
+// The tunnel pod serves only the tunnel; relay-sync never gets the setting.
+func TestChartTunnelPodServesOnlyTunnel(t *testing.T) {
+	out := renderChart(t, "--set", "externalDatabase.url=postgres://u:p@db/r", "--set", "tunnel.mode=open")
+	if !strings.Contains(docOfKind(out, "Deployment", "-tunnel"), "LIGUS_RELAY_ROUTES") {
+		t.Fatal("tunnel pod must set LIGUS_RELAY_ROUTES=tunnel")
+	}
+	if strings.Contains(docOfKind(out, "Deployment", "-sync"), "LIGUS_RELAY_ROUTES") {
+		t.Fatal("relay-sync must serve every route")
+	}
+}
+
+// A LoadBalancer or NodePort Service publishes the relay as surely as an
+// Ingress does, so it gets the same guards: no unauthenticated /metrics and
+// an explicit decision on client addresses.
+func TestChartPublicServiceTypeNeedsTheSameGuards(t *testing.T) {
+	for _, typ := range []string{"LoadBalancer", "NodePort"} {
+		if renderChartErr(t, "--set", "service.type="+typ) == "" {
+			t.Errorf("service.type=%s rendered with an open /metrics and no clientIP decision", typ)
+		}
+		if msg := renderChartErr(t, "--set", "service.type="+typ, "--set", "metrics.token.existingSecret=mt", "--set", "clientIP.allowSharedBucket=true"); msg != "" {
+			t.Errorf("service.type=%s with a metrics token must render: %s", typ, msg)
 		}
 	}
 }

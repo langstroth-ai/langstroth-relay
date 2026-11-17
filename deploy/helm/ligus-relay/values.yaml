@@ -53,17 +53,14 @@ tunnel:
     env: auto
 
 sync:
+  # Exactly one in 2.0 (rendering fails otherwise): pairing codes, SSE
+  # fan-out and rate limits are per process (README, "Scaling"). Kept as
+  # values so a future release can lift the limit.
   replicas: 1
-  # Pairing codes, SSE fan-out and rate limits are per process today: keep
-  # one replica until pairing codes live in the store (README, "Scaling").
   autoscaling:
     enabled: false
-    minReplicas: 1
-    maxReplicas: 3
-    targetCPUUtilizationPercentage: 70
   pdb:
     enabled: false
-    minAvailable: 1
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: "1", memory: 256Mi }
@@ -83,7 +80,9 @@ singlePod:
 # only), externalDatabase (managed Postgres, recommended), or neither (memory
 # store, topology=single only, optionally snapshotted to a PVC).
 externalDatabase:
-  # Full DATABASE_URL. Prefer existingSecret.
+  # Full DATABASE_URL, mounted as a file (DATABASE_URL_FILE). Prefer
+  # existingSecret. Use sslmode=verify-full with the server's CA
+  # (sslrootcert=/path in a mounted Secret) for any database off the node.
   url: ""
   existingSecret: ""
   existingSecretKey: DATABASE_URL
@@ -100,8 +99,14 @@ postgres:
     pullPolicy: IfNotPresent
   database: relay
   username: relay
-  # Generated once and kept across upgrades when empty.
-  password: ""
+  # Required: a Secret with keys `password` and `DATABASE_URL` (the chart
+  # generates nothing, so helm template, Argo CD and Flux are stable):
+  #   PW=$(openssl rand -hex 24)
+  #   kubectl -n <ns> create secret generic relay-dev-postgres \
+  #     --from-literal=password=$PW \
+  #     --from-literal=DATABASE_URL="postgres://relay:$PW@<release>-ligus-relay-postgres:5432/relay?sslmode=disable"
+  # (sslmode=disable is acceptable only for this in-cluster development pod.)
+  existingSecret: ""
   persistence:
     enabled: true
     size: 1Gi
@@ -157,8 +162,10 @@ persistence:
   mountPath: /data
 
 # Access control and other settings. Secret-valued settings go through
-# existingSecret; each key of that Secret becomes an environment variable
-# (for example LIGUS_RELAY_TOKEN_PUBKEY, LIGUS_RELAY_METRICS_TOKEN).
+# existingSecret: it is mounted (0400) as a directory, one file per setting
+# named like the variable (LIGUS_RELAY_ACCESS_TOKENS, LIGUS_RELAY_METRICS_TOKEN,
+# LIGUS_RELAY_TOKEN_PUBKEY, ...), which the relay reads through
+# LIGUS_RELAY_SECRETS_DIR. Nothing secret is put in the environment.
 config:
   # Extra plain environment variables (LIGUS_RELAY_MEMBERSHIP, ...).
   env: {}
@@ -166,11 +173,15 @@ config:
 
 # Client addresses for rate limits, abuse blocks and logs. Empty (default):
 # the TCP peer, so behind an ingress every client shares the ingress's
-# address and one rate-limit bucket. Set trustedProxies to the CIDRs your
-# ingress controller or load balancer connects from (for example the
-# controller's pod CIDR); only then is `header` read, and only from them.
+# address and one rate-limit bucket (ten bad pairing guesses from anyone lock
+# pairing for everyone). With ingress or httpRoute enabled the chart refuses
+# an empty list unless allowSharedBucket: list exactly the addresses your
+# ingress controller or load balancer connects from (its pods' IPs or the
+# LB's subnet), never the whole pod CIDR. Only then is `header` read, and
+# only from them.
 clientIP:
   trustedProxies: []
+  allowSharedBucket: false
   # X-Forwarded-For when empty; or X-Real-IP, CF-Connecting-IP, ...
   header: ""
 
@@ -179,30 +190,52 @@ service:
   port: 8443
 
 metrics:
+  # /metrics is open unless LIGUS_RELAY_METRICS_TOKEN is set. With ingress,
+  # httpRoute or a LoadBalancer/NodePort service.type it would be public, so
+  # the chart then requires a token Secret
+  # here (mounted as LIGUS_RELAY_METRICS_TOKEN_FILE) unless
+  # allowPublicUnauthenticated.
+  token:
+    existingSecret: ""
+    key: token
+  allowPublicUnauthenticated: false
   serviceMonitor:
     enabled: false
     interval: 30s
     labels: {}
-    # Set when LIGUS_RELAY_METRICS_TOKEN is set: Secret name and key holding it.
+    # Secret name and key holding LIGUS_RELAY_METRICS_TOKEN; defaults to
+    # metrics.token.
     bearerTokenSecret:
       name: ""
       key: ""
 
-# Clients require https://. Terminate TLS at the Ingress or Gateway; its idle
-# timeout must exceed 60 s for the tunnel WebSockets.
+# Clients require https://, so the chart refuses an Ingress without TLS:
+# set tls.secretName (cert-manager or your own), or terminatedUpstream: true
+# when a load balancer in front terminates TLS.
 ingress:
   enabled: false
   className: ""
+  # User annotations win over the streaming defaults below.
   annotations: {}
+  # Annotations for long-lived connections: tunnel WebSockets and SSE idle
+  # longer than the 60 s defaults of ingress-nginx and AWS ALB, and nginx
+  # must not buffer SSE. Harmless on other controllers.
+  streamingDefaults: true
   host: relay.example.com
   tls:
     secretName: ""
+    terminatedUpstream: false
 
 httpRoute:
   enabled: false
   parentRefs: []
   hostnames: []
   annotations: {}
+  # Per-rule timeouts (Gateway API): long enough for tunnel WebSockets and
+  # SSE. "0s" disables them on implementations that support it.
+  timeouts:
+    request: 3600s
+    backendRequest: 3600s
 
 networkPolicy:
   enabled: true
@@ -210,7 +243,11 @@ networkPolicy:
   # through an ingress controller or from workspace namespaces).
   ingressFrom: []
   # Default-deny egress except DNS, the in-chart Postgres and what is listed
-  # in extraEgress (an external database, APNs on 443, ...).
+  # in extraEgress (an external database, APNs on 443, ...). For 443 to the
+  # internet use an ipBlock that excludes cloud metadata and private ranges:
+  #   - to: [{ipBlock: {cidr: 0.0.0.0/0, except: [169.254.0.0/16, 100.100.100.200/32,
+  #                                               10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]}}]
+  #     ports: [{port: 443, protocol: TCP}]
   restrictEgress: true
   extraEgress: []
   # Where DNS egress may go: the cluster resolver's pods. The defaults match

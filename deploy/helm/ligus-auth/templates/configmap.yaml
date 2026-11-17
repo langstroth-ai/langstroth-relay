@@ -1,6 +1,7 @@
 {{- if not .Values.config.public_url }}{{ fail "config.public_url is required" }}{{ end }}
 {{- if not .Values.signingKey.existingSecret }}{{ fail "signingKey.existingSecret is required (create it from `ligus-auth keygen --out`)" }}{{ end }}
-{{- if and (eq .Values.store.driver "file") (gt (int .Values.replicas) 1) }}{{ fail "the file store supports one replica; use store.driver=postgres" }}{{ end }}
+{{- if gt (int .Values.replicas) 1 }}{{ fail "ligus-auth runs exactly one replica in 2.0: sign-in flow and device-code state is per process even with the Postgres store" }}{{ end }}
+{{- if and (eq .Values.store.driver "file") (not .Values.persistence.enabled) (not .Values.persistence.allowEphemeral) }}{{ fail "store.driver=file without persistence loses every session on restart: set persistence.enabled=true (or persistence.allowEphemeral=true for CI)" }}{{ end }}
 {{- if and (eq .Values.store.driver "postgres") (not .Values.store.databaseUrl.existingSecret) }}{{ fail "store.driver=postgres needs store.databaseUrl.existingSecret" }}{{ end }}
 apiVersion: v1
 kind: ConfigMap

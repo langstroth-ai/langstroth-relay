@@ -51,3 +51,21 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- toPrettyJson $c -}}
 {{- end -}}
+
+{{/*
+checksum/secrets: rolls the pod when a Secret it reads changes. lookup is a
+constant under `helm template`; with Argo CD or Flux use Reloader or bump
+podAnnotations.
+*/}}
+{{- define "ligus-auth.secretsChecksum" -}}
+{{- $names := list .Values.signingKey.existingSecret -}}
+{{- with .Values.secretFiles.existingSecret }}{{ $names = append $names . }}{{ end -}}
+{{- with .Values.adminToken.existingSecret }}{{ $names = append $names . }}{{ end -}}
+{{- if eq .Values.store.driver "postgres" }}{{ $names = append $names .Values.store.databaseUrl.existingSecret }}{{ end -}}
+{{- $data := dict -}}
+{{- range $n := ($names | compact | uniq | sortAlpha) -}}
+{{- $s := lookup "v1" "Secret" $.Release.Namespace $n -}}
+{{- $_ := set $data $n (dig "data" (dict) $s) -}}
+{{- end -}}
+{{- toJson $data | sha256sum -}}
+{{- end -}}

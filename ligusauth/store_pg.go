@@ -56,6 +56,35 @@ CREATE INDEX IF NOT EXISTS ligus_auth_refresh_user ON ligus_auth_refresh (tenant
 CREATE INDEX IF NOT EXISTS ligus_auth_refresh_exp ON ligus_auth_refresh (expires_at);
 `
 
+// migrationLockKey is the pg_advisory_lock key ligus-auth takes while
+// creating its schema ("ligusath" in ASCII; the relay uses "ligusrly").
+const migrationLockKey int64 = 0x6c69677573617468
+
+// migrate creates the schema in one transaction under a transaction-scoped
+// advisory lock, so pods starting together don't race in the catalog. Not a
+// session lock: behind a transaction-pooling PgBouncer its unlock can land on
+// another server connection and the lock leaks (see the relay's migrate).
+// Migrations are additive. The caller's context bounds the wait.
+func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if dl, ok := ctx.Deadline(); ok {
+		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = %d", time.Until(dl).Milliseconds()+1)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+	if _, err := tx.Exec(ctx, pgSchema); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // NewPostgresStore connects and creates the schema if needed.
 func NewPostgresStore(ctx context.Context, dsn string) (Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
@@ -69,7 +98,7 @@ func NewPostgresStore(ctx context.Context, dsn string) (Store, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := pool.Exec(cctx, pgSchema); err != nil {
+	if err := migrate(cctx, pool); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("postgres schema: %w", err)
 	}

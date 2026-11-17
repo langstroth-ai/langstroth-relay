@@ -8,9 +8,16 @@ metadata:
   name: {{ $fullname }}
   labels:
     {{- include "ligus-relay.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- $ann := dict -}}
+  {{- if .Values.ingress.streamingDefaults }}
+  {{- $ann = dict "nginx.ingress.kubernetes.io/proxy-read-timeout" "3600" "nginx.ingress.kubernetes.io/proxy-send-timeout" "3600" "nginx.ingress.kubernetes.io/proxy-buffering" "off" "alb.ingress.kubernetes.io/load-balancer-attributes" "idle_timeout.timeout_seconds=3600" -}}
+  {{- end }}
+  {{- $ann = merge (deepCopy (default (dict) .Values.ingress.annotations)) $ann }}
+  {{- with $ann }}
   annotations:
-    {{- toYaml . | nindent 4 }}
+    {{- range $k, $v := . }}
+    {{ $k }}: {{ $v | toString | quote }}
+    {{- end }}
   {{- end }}
 spec:
   {{- with .Values.ingress.className }}

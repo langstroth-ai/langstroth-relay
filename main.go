@@ -62,7 +62,12 @@ func MainWith(ext Extension) {
 		}
 	}
 
+	// Before anything reads a setting: an unreadable secret file would
+	// otherwise read as unset (an open access gate, the memory store).
+	fatalIf(secretFilesConfigError(os.Getenv))
 	fatalIf(entitlementConfigError())
+	fatalIf(routesConfigError(getenv))
+	fatalIf(apnsWithoutTunnelError(getenv))
 
 	store, err := buildStore(context.Background())
 	fatalIf(err)
@@ -104,7 +109,7 @@ func MainWith(ext Extension) {
 	// deadlines are safe.
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           a.Handler,
+		Handler:           restrictRoutes(a.Handler, getenv),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

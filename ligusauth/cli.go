@@ -152,11 +152,29 @@ func envName(name string) string {
 	return ""
 }
 
+// storeDSN is the Postgres DSN: the env var named by store.dsn_env, or the
+// file named by <dsn_env>_FILE (a mounted Secret; never both).
+func storeDSN(c *Config) (string, error) {
+	file := os.Getenv(c.Store.DSNEnv + "_FILE")
+	env := ""
+	if os.Getenv(c.Store.DSNEnv) != "" {
+		env = c.Store.DSNEnv
+	}
+	dsn, err := readSecret(file, env)
+	if err != nil {
+		return "", fmt.Errorf("store postgres: %w", err)
+	}
+	if dsn == "" {
+		return "", fmt.Errorf("store postgres: set %s or %s_FILE", c.Store.DSNEnv, c.Store.DSNEnv)
+	}
+	return dsn, nil
+}
+
 func openStore(ctx context.Context, c *Config) (Store, error) {
 	if c.Store.Driver == "postgres" {
-		dsn := os.Getenv(c.Store.DSNEnv)
-		if dsn == "" {
-			return nil, fmt.Errorf("store postgres: %s is empty", c.Store.DSNEnv)
+		dsn, err := storeDSN(c)
+		if err != nil {
+			return nil, err
 		}
 		return NewPostgresStore(ctx, dsn)
 	}

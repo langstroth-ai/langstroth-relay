@@ -1,17 +1,6 @@
 {{- if .Values.postgres.enabled }}
 {{- $name := include "ligus-relay.postgresName" . -}}
 apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $name }}
-  labels:
-    {{- include "ligus-relay.labels" . | nindent 4 }}
-    app.kubernetes.io/component: postgres
-type: Opaque
-stringData:
-  password: {{ include "ligus-relay.postgresPassword" . | quote }}
----
-apiVersion: v1
 kind: Service
 metadata:
   name: {{ $name }}
@@ -27,7 +16,9 @@ spec:
   selector:
     {{- include "ligus-relay.selectorLabels" (dict "root" . "component" "postgres") | nindent 4 }}
 ---
-# Development and CI only: one pod, no backups, no TLS.
+# Development and CI only: one pod, no backups, no TLS (sslmode=disable).
+# Unsupported for production: use a managed Postgres or an operator, with
+# sslmode=verify-full and point-in-time recovery.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -73,11 +64,8 @@ spec:
               value: {{ .Values.postgres.database | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.postgres.username | quote }}
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $name }}
-                  key: password
+            - name: POSTGRES_PASSWORD_FILE
+              value: /etc/postgres-secret/password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           readinessProbe:
@@ -98,7 +86,16 @@ spec:
               mountPath: /var/run/postgresql
             - name: tmp
               mountPath: /tmp
+            - name: secret
+              mountPath: /etc/postgres-secret
+              readOnly: true
       volumes:
+        - name: secret
+          secret:
+            secretName: {{ .Values.postgres.existingSecret }}
+            defaultMode: 0400
+            items:
+              - { key: password, path: password }
         - name: run
           emptyDir: {}
         - name: tmp

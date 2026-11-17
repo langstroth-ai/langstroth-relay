@@ -37,5 +37,8 @@ spec:
           code=$(curl -s -o /dev/null -w '%{http_code}' http://{{ $fullname }}-sync:{{ .Values.service.port }}/v1/tunnel/info)
           test "$code" = 404
           curl -fsS http://{{ $fullname }}-tunnel:{{ .Values.service.port }}/v1/tunnel/info
+          # and the tunnel pod serves nothing else (pairing lives on sync).
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://{{ $fullname }}-tunnel:{{ .Values.service.port }}/v1/pair)
+          test "$code" = 404
           {{- end }}
           {{- end }}
