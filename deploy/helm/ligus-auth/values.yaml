@@ -82,8 +82,8 @@ database:
     existingSecret: ""
     existingSecretKey: DATABASE_URL
     # The database's addresses for the egress NetworkPolicy (ipBlock). Must
-    # not contain a cloud metadata address; anything broader than /8 is
-    # refused. Empty: add it to networkPolicy.extraEgress yourself.
+    # not contain a cloud metadata address; anything broader than /8 (IPv4)
+    # or /48 (IPv6), and IPv4-mapped or NAT64 IPv6 forms, are refused. Empty: add it to networkPolicy.extraEgress yourself.
     cidrs: []
     port: 5432
 

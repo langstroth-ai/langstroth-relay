@@ -16,7 +16,18 @@
 {{- if not (regexMatch "^[0-9a-fA-F:.]+/[0-9]+$" .) -}}
 {{- fail (printf "%s.external.cidrs: %q is not a CIDR" $p .) -}}
 {{- end -}}
-{{- if lt (int (last (splitList "/" .))) 8 -}}
+{{- $bits := int (last (splitList "/" .)) -}}
+{{- if contains ":" . -}}
+{{- /* IPv6: at most a /48, and none of the forms that reach IPv4 or
+     metadata addresses (IPv4-mapped/compatible ::/8, NAT64 64:ff9b::/96,
+     dotted quads, the AWS IPv6 metadata fd00:ec2::254). */ -}}
+{{- if or (lt $bits 48) (gt $bits 128) -}}
+{{- fail (printf "%s.external.cidrs: %q is too broad for a database (IPv6 needs /48 or narrower); list its address or subnet" $p .) -}}
+{{- end -}}
+{{- if or (contains "." .) (regexMatch "^(::|0{1,4}:)" .) (regexMatch "(?i)^64:ff9b:" .) (regexMatch "(?i)^fd00:0?ec2:" .) -}}
+{{- fail (printf "%s.external.cidrs: %q is an IPv4-mapped, NAT64 or cloud metadata IPv6 range; list the database's own address" $p .) -}}
+{{- end -}}
+{{- else if or (lt $bits 8) (gt $bits 32) -}}
 {{- fail (printf "%s.external.cidrs: %q is too broad for a database; list its address or subnet" $p .) -}}
 {{- end -}}
 {{- if not (contains ":" .) -}}

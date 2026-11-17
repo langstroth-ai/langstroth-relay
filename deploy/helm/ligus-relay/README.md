@@ -86,8 +86,9 @@ CA's private key or the server's key.
 The relay's egress NetworkPolicy allows only the chosen database: the
 cluster's or the bundled pod's labels for `cnpg` and `bundled`, and
 `database.external.cidrs` (an `ipBlock`) for `external`. The chart refuses
-external CIDRs broader than `/8` or containing a cloud metadata address
-(`169.254.169.254`, `100.100.100.200`); the DNS rule and the metadata
+external CIDRs broader than `/8` (IPv4) or `/48` (IPv6), containing a cloud
+metadata address (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`), or
+written as IPv4-mapped, IPv4-compatible or NAT64 IPv6; the DNS rule and the metadata
 exclusions are unchanged.
 
 Migrations run in one transaction under a transaction-scoped advisory lock,
