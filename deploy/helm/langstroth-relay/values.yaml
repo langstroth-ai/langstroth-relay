@@ -306,7 +306,7 @@ contacts:
   createRate: null         # 0.01    LANGSTROTH_RELAY_CONTACT_CREATE_RATE (new records per client)
   createBurst: null        # 20      LANGSTROTH_RELAY_CONTACT_CREATE_BURST
 
-# Deprecated GitHub social routes (directory, account, friends) for 1.x
+# Deprecated GitHub social routes (directory, account, friends) for older
 # clients: off (404) by default since relay v0.3, removed in v0.4.
 # LANGSTROTH_RELAY_GITHUB_ROUTES.
 githubRoutes: false

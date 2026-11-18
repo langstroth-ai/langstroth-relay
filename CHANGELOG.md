@@ -135,7 +135,7 @@ route or database table changes.
   rel="deprecation"` headers. **They are removed in v0.4**, together with the
   `relay_directory*`, `relay_account*`, `relay_login_index`, `relay_inbox` and
   `relay_friend*` tables and the GitHub verifier.
-  *Upgrade:* a relay serving Hive/Ligus 1.x clients that use
+  *Upgrade:* a relay serving older clients that use
   invite-by-handle, friends or the account inbox must set
   `LIGUS_RELAY_GITHUB_ROUTES=on` until those clients are gone.
 
@@ -173,8 +173,8 @@ route or database table changes.
 
 ## v0.2.0
 
-Ligus Relay is the relay formerly called `hive-relay`. Ligus (LEE-gus) is short
-for *ligustica*, the Italian honeybee. The `/v1` API, `hrt1` tokens, `X-Hive-*`
+The relay is now Ligus Relay. Ligus (LEE-gus) is short for *ligustica*, the
+Italian honeybee. The `/v1` API, `hrt1` tokens, `X-Hive-*`
 headers, the `hive-tunnel.1` subprotocol and the `hive_relay_*` metric names are
 unchanged: existing clients keep working against this relay, except where the
 security changes below say otherwise.
@@ -206,7 +206,7 @@ security changes below say otherwise.
   sealed payload (`sealed1:` + base64url, at least 32 bytes). `hivews1:` and
   `ligusws1:` workspace invites, which carry the workspace key in cleartext,
   and anything else get `422`. Ligus 2.0 clients publish only friend codes
-  here and already refuse to broker workspace invites; Hive 1.x clients that
+  here and already refuse to broker workspace invites; older clients that
   published `hivews1:` codes through the relay can no longer do so.
 - **Pairing codes are single-use.** The first successful resolve consumes the
   code; a second resolve gets `404`. The TTL (default 600 s, 30–3600 s) is
@@ -322,7 +322,7 @@ configuration tables for every setting.
    as well as the existing write limits. Raise `LIGUS_RELAY_READ_RATE` and
    `LIGUS_RELAY_MAX_SSE_PER_CLIENT` if you can't.
 3. **Pairing.** Codes created before the upgrade live in memory and are gone
-   after the restart anyway. Hive 1.x clients that shared workspaces through
+   after the restart anyway. Clients that shared workspaces through
    short codes must share the `hivews1:` invite directly (Ligus 2.0 already
    does).
 4. **Keyring.** A workspace already over 2000 rotations or 16 MiB keeps what it

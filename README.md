@@ -5,8 +5,7 @@ A small, **content-blind** rendezvous + envelope-forwarding server, part of
 ([source](https://github.com/langstroth-ai/ligus), [docs](https://docs.ligus.ai)).
 Langstroth is named after the Langstroth frame hive; Ligus (LEE-gus), the
 client apps, is short for *ligustica*, as in *Apis mellifera ligustica*, the
-Italian honeybee. The project was called Hive until v2.0, and this relay was
-`hive-relay`, then `ligus-relay`.
+Italian honeybee. This relay was named `ligus-relay` in v0.2.x.
 
 Clients post opaque (end-to-end encrypted) event envelopes keyed by workspace
 and fetch everything after a cursor; the relay also brokers short pairing codes,
@@ -18,7 +17,7 @@ off by default since v0.3, removed in v0.4.
 
 > **Renamed to Langstroth (v0.3.0).** The Go module is now
 > `github.com/langstroth-ai/langstroth-relay` (it was `github.com/ligus-ai/relay`
-> in v0.2.x and `github.com/honeyhive-ai/relay` in v0.1.x), the binaries are
+> in v0.2.x), the binaries are
 > `langstroth-relay` and `langstroth-auth`, the images are
 > `ghcr.io/langstroth-ai/langstroth-relay` and
 > `ghcr.io/langstroth-ai/langstroth-auth` (the relay image keeps `ligus-relay`
@@ -34,8 +33,7 @@ off by default since v0.3, removed in v0.4.
 > warning. Wire formats do not change: the `/v1` API, `hrt1` tokens,
 > `X-Hive-*` / `X-Ligus-*` headers, the `hive-tunnel.1` subprotocol, the
 > `hive_relay_*` metric names, database table names and crypto
-> domain-separation strings are protocol identifiers from the project's
-> former names.
+> domain-separation strings are fixed protocol identifiers.
 
 This is the production relay (Go). It speaks the same JSON `/v1` contract and
 `hrt1` access-token format as the original Rust reference relay
@@ -99,7 +97,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
 | `LANGSTROTH_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
 | `LANGSTROTH_RELAY_CONTACTS` | on | `off`: unregister `/v1/contacts/*` (404, as on a v0.2 relay). See [Contacts](#contacts-v1contacts) |
-| `LANGSTROTH_RELAY_GITHUB_ROUTES` | off | **Deprecated, removed in v0.4.** `on`: register the GitHub social routes (directory, account, friends) for Ligus/Hive 1.x clients; every response then carries a `Deprecation` header. `LANGSTROTH_RELAY_GITHUB_SOCIAL=1` is accepted too. See [GitHub social routes](#github-social-routes-deprecated-off-by-default) |
+| `LANGSTROTH_RELAY_GITHUB_ROUTES` | off | **Deprecated, removed in v0.4.** `on`: register the GitHub social routes (directory, account, friends) for older clients; every response then carries a `Deprecation` header. `LANGSTROTH_RELAY_GITHUB_SOCIAL=1` is accepted too. See [GitHub social routes](#github-social-routes-deprecated-off-by-default) |
 | `LANGSTROTH_RELAY_FRIEND_CAP` | none | max accepted friends per account (GitHub routes only) |
 | `LANGSTROTH_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends (GitHub routes only) |
 | `LANGSTROTH_RELAY_TRUSTED_PROXIES` | empty | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used |
@@ -390,7 +388,7 @@ The identity directory, account and friends routes (`/v1/directory/*`,
 `/v1/account/*`, `/v1/friends/*`, keyed by `github:<id>`) need the relay to
 see each caller's GitHub token. Ligus 2.0 doesn't use them. Since v0.3 they are
 **not registered** (404) unless `LANGSTROTH_RELAY_GITHUB_ROUTES=on`, which exists
-only for Ligus/Hive 1.x clients; when on, every response carries
+only for older clients; when on, every response carries
 `Deprecation: @1794614400` and `Link: <…CHANGELOG.md>; rel="deprecation"`.
 **v0.4 removes them**, together with their tables and the GitHub verifier.
 
