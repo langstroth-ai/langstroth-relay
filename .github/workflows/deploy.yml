@@ -1,25 +1,26 @@
-# Continuous deploy to Fly.io. After `ci` passes on a push to main, deploy the
-# OPEN relay binary (cmd/langstroth-relay) to the project's public relay instance on
-# Fly (app hive-relay-enterprise; a legacy name, see below). It runs the same
-# open binary anyone can self-host and must only ever be deployed from this repo.
+# Deploy to Fly.io on a release. A pushed tag v* runs `ci` (the same tests as
+# every push to main) and, when it is green, deploys the OPEN relay binary
+# (cmd/langstroth-relay) from that tag to the project's public relay instance
+# on Fly (app hive-relay-enterprise; an internal legacy name, see below). Pushes
+# to main no longer deploy. It runs the same open binary anyone can self-host
+# and must only ever be deployed from this repo.
 #
 # Requires the FLY_API_TOKEN repo secret (a deploy token):
 #   fly tokens create deploy -x 999999h
 #   -> langstroth-ai/langstroth-relay -> Settings -> Secrets and variables -> Actions -> FLY_API_TOKEN
 # Until that secret exists the deploy step skips cleanly (no failed run).
 #
-# Gated on `ci` (workflow_run) so a red build never deploys. `deploy/fly.toml`
-# names a placeholder app, so `--app hive-relay-enterprise` targets the real one
-# (the Fly app keeps its legacy name, which describes nothing about what it
-# runs: its hostname is baked into clients);
-# the app's DATABASE_URL secret takes precedence over the volume, so the Postgres
-# store is used.
+# A manual dispatch redeploys a release tag (pick the tag as the ref); it is
+# refused on a branch. `deploy/fly.toml` names a placeholder app, so
+# `--app hive-relay-enterprise` targets the real one (the Fly app keeps its
+# legacy name, which describes nothing about what it runs: its hostname is
+# baked into clients); the app's DATABASE_URL secret takes precedence over the
+# volume, so the Postgres store is used.
 name: deploy
 
 on:
-  workflow_run:
-    workflows: ["ci"]
-    types: [completed]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 concurrency: deploy-relay
@@ -28,13 +29,14 @@ permissions:
   contents: read
 
 jobs:
+  ci:
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/ci.yml
+
   deploy:
-    # Manual dispatch, or a green `ci` from a push to main.
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main')
+    needs: ci
+    # Only a release tag, pushed or picked for a manual dispatch.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Approval gate (P2-22): configure the `production` environment under
     # Settings -> Environments with required reviewers so a human approves each
@@ -44,9 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Deploy exactly the commit the green ci run tested, not whatever main
-          # points at by the time this job starts.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # Deploy exactly the commit the ci job above tested: the tag's commit.
+          ref: ${{ github.sha }}
           persist-credentials: false
       # flyctl is installed from a pinned upstream release and checked against
       # its published SHA-256 (P2-22). The flyctl-actions installer would download whatever URL

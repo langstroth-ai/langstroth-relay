@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,14 @@ func readRepoFile(t *testing.T, p string) string {
 var usesRe = regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)`)
 var shaPinRe = regexp.MustCompile(`^[\w.-]+/[\w./-]+@[0-9a-f]{40}$`)
 
+// localWorkflowRe is a reusable workflow from this repository: it runs at the
+// same commit as its caller, so it needs no pin.
+var localWorkflowRe = regexp.MustCompile(`^\./\.github/workflows/[\w.-]+\.ya?ml$`)
+
+// writeScopes lists the only write scopes a workflow may request:
+// release.yml pushes images and charts to ghcr.io.
+var writeScopes = map[string][]string{".github/workflows/release.yml": {"packages: write"}}
+
 func TestWorkflows_PinnedAndLeastPrivilege(t *testing.T) {
 	files, err := filepath.Glob(".github/workflows/*.yml")
 	if err != nil || len(files) == 0 {
@@ -36,8 +45,10 @@ func TestWorkflows_PinnedAndLeastPrivilege(t *testing.T) {
 		if strings.Contains(src, "pull_request_target") {
 			t.Errorf("%s: pull_request_target runs fork code with a privileged token", f)
 		}
-		if regexp.MustCompile(`(?m)^\s*\w+:\s*write`).MatchString(src) {
-			t.Errorf("%s: grants a write scope; no relay workflow needs one", f)
+		for _, m := range regexp.MustCompile(`(?m)^\s*([\w-]+:\s*write)`).FindAllStringSubmatch(src, -1) {
+			if !slices.Contains(writeScopes[filepath.ToSlash(f)], m[1]) {
+				t.Errorf("%s: grants %q; only release.yml may write, and only packages", f, m[1])
+			}
 		}
 		// bash -e does not abort on a failing "! cmd" unless it is the last
 		// command, so a negative check written that way is silently skipped.
@@ -47,7 +58,7 @@ func TestWorkflows_PinnedAndLeastPrivilege(t *testing.T) {
 			}
 		}
 		for _, m := range usesRe.FindAllStringSubmatch(src, -1) {
-			if !shaPinRe.MatchString(m[1]) {
+			if !shaPinRe.MatchString(m[1]) && !localWorkflowRe.MatchString(m[1]) {
 				t.Errorf("%s: action %q is not pinned to a full commit SHA", f, m[1])
 			}
 		}
@@ -55,16 +66,29 @@ func TestWorkflows_PinnedAndLeastPrivilege(t *testing.T) {
 }
 
 // The production deploy must build the OPEN binary from the repo-root
-// Dockerfile, deploy exactly the commit CI tested, only from main, and never
-// configure a token gate (which would make the public relay 401 every client).
-func TestDeployWorkflow_OnlyTestedOpenRelayFromMain(t *testing.T) {
+// Dockerfile, run only for a release tag (never a push to main), deploy only
+// after ci passed on that same commit, and never configure a token gate
+// (which would make the public relay 401 every client).
+func TestDeployWorkflow_OnlyTestedOpenRelayFromReleaseTags(t *testing.T) {
 	src := readRepoFile(t, ".github/workflows/deploy.yml")
 
-	if !strings.Contains(src, "ref: ${{ github.event.workflow_run.head_sha || github.sha }}") {
-		t.Error("checkout must pin the commit CI tested (workflow_run.head_sha); the default ref is whatever main is at deploy time")
+	on := src[strings.Index(src, "\non:"):strings.Index(src, "\nconcurrency:")]
+	if !strings.Contains(on, `tags: ["v*"]`) {
+		t.Error("deploy must trigger on release tags v*")
 	}
-	if !strings.Contains(src, "github.ref == 'refs/heads/main'") {
-		t.Error("a manual dispatch must be limited to main, or any branch can be deployed to the public relay")
+	for _, bad := range []string{"branches", "workflow_run", "pull_request"} {
+		if strings.Contains(on, bad) {
+			t.Errorf("deploy must not trigger on %s: only a release tag deploys", bad)
+		}
+	}
+	if strings.Count(src, "if: startsWith(github.ref, 'refs/tags/v')") != 2 {
+		t.Error("both the ci and the deploy job must be limited to refs/tags/v* (a manual dispatch on a branch must not deploy)")
+	}
+	if !strings.Contains(src, "uses: ./.github/workflows/ci.yml") || !strings.Contains(src, "needs: ci") {
+		t.Error("deploy must run ci on the tag and wait for it (needs: ci)")
+	}
+	if !strings.Contains(src, "ref: ${{ github.sha }}") {
+		t.Error("checkout must pin the tagged commit ci tested")
 	}
 	if strings.Contains(src, "setup-flyctl") {
 		t.Error("setup-flyctl installs whatever flyctl the Fly API names, unverified; install a pinned, checksummed release instead")
@@ -96,5 +120,34 @@ func TestDeployWorkflow_OnlyTestedOpenRelayFromMain(t *testing.T) {
 	df := readRepoFile(t, "Dockerfile")
 	if !strings.Contains(df, "go build -trimpath -ldflags=\"-s -w\" -o /out/langstroth-relay ./cmd/langstroth-relay") {
 		t.Error("root Dockerfile must build the open cmd/langstroth-relay binary")
+	}
+}
+
+// The release publishes images and charts under ghcr.io/langstroth-ai only
+// after ci passed, and only for a tag that matches the charts' appVersion.
+func TestReleaseWorkflow_PublishesAfterCI(t *testing.T) {
+	src := readRepoFile(t, ".github/workflows/release.yml")
+	on := src[strings.Index(src, "\non:"):strings.Index(src, "\npermissions:")]
+	if !strings.Contains(on, `tags: ["v*"]`) || strings.Contains(on, "branches") || strings.Contains(on, "pull_request") {
+		t.Error("release must trigger only on release tags v*")
+	}
+	if !strings.Contains(src, "uses: ./.github/workflows/ci.yml") || !strings.Contains(src, "needs: ci") {
+		t.Error("release must run ci on the tag and wait for it")
+	}
+	for _, want := range []string{
+		"$REGISTRY/langstroth-relay:$VERSION",
+		"$REGISTRY/langstroth-auth:$VERSION",
+		"REGISTRY: ghcr.io/langstroth-ai",
+		`helm push "$f" "oci://$REGISTRY/charts"`,
+		"-f deploy/container/Dockerfile \\",
+		"-f deploy/container/Dockerfile.langstroth-auth",
+		"appVersion is $app, the tag says $version",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("release.yml: missing %q", want)
+		}
+	}
+	if strings.Contains(src, "secrets.FLY_API_TOKEN") {
+		t.Error("release.yml must not deploy; deploy.yml does")
 	}
 }
