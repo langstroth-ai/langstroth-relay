@@ -73,8 +73,11 @@ route or database table changes.
   that holds when clients rotate addresses), per-client and per-room request rates
   (`_IP_RATE`/`_BURST`, `_ROOM_RATE`/`_BURST`) and configurable tunnel push
   limits (`_TUNNEL_PUSH_RATE`/`_BURST`/`_PER_DAY`, defaults unchanged).
-  Storage quotas answer `507` and never evict; rates answer `429` with
-  `Retry-After`. New metrics `hive_relay_limit_rejections_total{limit}`,
+  Storage quotas answer `507` and never evict; rates answer `429`. Every
+  `429` and `507` (all routes) carries `Retry-After` and a JSON body
+  `{"error","message","retryAfter"}` with a stable code (README, "Refusals:
+  429 and 507"); before, most were free text with no `Retry-After`. New
+  metrics `hive_relay_limit_rejections_total{limit}`,
   `hive_relay_rooms`, `hive_relay_room_bytes`. `deploy/fly.toml` documents a
   community profile (commented out). Helm: `limits.*`.
 - **Idle-room retention**, `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` (off by
@@ -88,7 +91,8 @@ route or database table changes.
   per tenant, tunnel hosts are bound to their registration tenant;
   per-tenant quotas, rates, pairing, host and push limits; `/v1/tenant`
   admin routes (new, only with tenancy); tenant metrics with a label cap
-  (`LANGSTROTH_RELAY_METRICS_MAX_TENANTS`). See `docs/tenancy.md`. Helm:
+  (`LANGSTROTH_RELAY_METRICS_MAX_TENANTS`); tenancy requires
+  `LANGSTROTH_RELAY_METRICS_TOKEN`. See `docs/tenancy.md`. Helm:
   `tenancy.existingSecret` (mounted as a file). Without tenancy every `/v1`
   route is byte-identical.
 - Postgres: `relay_rooms` and `relay_tenant_usage` (with a one-time backfill

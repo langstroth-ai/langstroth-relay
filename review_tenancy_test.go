@@ -279,3 +279,99 @@ func TestMetricsRoomTotalsCached(t *testing.T) {
 		t.Fatalf("20 scrapes ran the room totals %d times", n)
 	}
 }
+
+// Regression sweep (held): ids that look like another tenant's key stay in
+// the caller's namespace; a tenant admin only reaches its own rooms; a token
+// without tid is refused on every route family; a pre-tenancy room is hidden.
+func TestTenancyNamespaceEscapes(t *testing.T) {
+	st := newMemoryStore()
+	if _, err := st.AppendEnvelope(bg, "team", raw(`"pre-tenancy"`), ""); err != nil {
+		t.Fatal(err)
+	}
+	f := newTenancyFixture(t, st, "")
+	if code, _ := req(t, "POST", f.ts.URL+"/v1/workspaces/team/envelopes", f.home, "home-secret"); code != 200 {
+		t.Fatal(code)
+	}
+	if rows := f.envelopes(t, f.acme, "team"); len(rows) != 0 {
+		t.Fatalf("acme sees another namespace's room: %+v", rows)
+	}
+	// acme names home's storage key through an encoded slash, a dot segment
+	// and a unicode lookalike: each lands under acme/.
+	for _, id := range []string{"home%2Fteam", "..%2Fhome%2Fteam", "home%E2%88%95team", "%2Fhome%2Fteam"} {
+		code, b := req(t, "GET", f.ts.URL+"/v1/workspaces/"+id+"/envelopes", f.acme, nil)
+		if code == 200 && strings.Contains(string(b), "secret") {
+			t.Fatalf("%s reached home's room: %s", id, b)
+		}
+		req(t, "POST", f.ts.URL+"/v1/workspaces/"+id+"/envelopes", f.acme, "acme-write")
+	}
+	if rows := f.envelopes(t, f.home, "team"); len(rows) != 1 || string(rows[0].Body) != `"home-secret"` {
+		t.Fatalf("home's room changed: %+v", rows)
+	}
+	st.mu.RLock()
+	for id, w := range st.workspaces {
+		if w.live && w.tenant == "acme" && !strings.HasPrefix(id, "acme/") {
+			t.Errorf("acme wrote outside its prefix: %q", id)
+		}
+	}
+	if len(st.workspaces["team"].envelopes) != 1 {
+		t.Error("the pre-tenancy room changed")
+	}
+	st.mu.RUnlock()
+	// acme's admin purging "../home/team" or "home%2Fteam" never touches home.
+	for _, id := range []string{"home%2Fteam", "..%2Fhome%2Fteam"} {
+		r, _ := http.NewRequest("DELETE", f.ts.URL+"/v1/tenant/rooms/"+id, nil)
+		r.Header.Set("Authorization", "Bearer "+f.acmeAdmin)
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if rows := f.envelopes(t, f.home, "team"); len(rows) != 1 {
+		t.Fatal("acme's admin purged home's room")
+	}
+	// No tid: refused everywhere the gate or the tenant admin guards.
+	noTid := f.tok(f.shared, TokenClaims{Sub: "alice", Caps: []string{tenantAdminCap}})
+	cid := strings.Repeat("A", 22)
+	for _, rt := range [][2]string{
+		{"GET", "/v1/workspaces/w/presence"}, {"POST", "/v1/workspaces/w/keyring"},
+		{"GET", "/v1/workspaces/w/members"}, {"POST", "/v1/pair"}, {"GET", "/v1/pair/ABCDEF"},
+		{"GET", "/v1/contacts/" + cid}, {"GET", "/v1/tenant"}, {"GET", "/v1/tenant/rooms"},
+	} {
+		if code, b := req(t, rt[0], f.ts.URL+rt[1], noTid, map[string]any{}); code != http.StatusUnauthorized {
+			t.Errorf("%s %s without tid: %d %s", rt[0], rt[1], code, b)
+		}
+	}
+}
+
+// Held: pods migrating at once run the rooms backfill exactly once (the
+// migration runs under pg_advisory_xact_lock and records itself), and the
+// backfill counts a keyring-only room.
+func TestPG_ConcurrentMigrateBackfillsOnce(t *testing.T) {
+	s := pgStore(t)
+	if _, err := s.pool.Exec(bg, `INSERT INTO relay_envelopes (workspace, seq, body, created_at) VALUES ('old', 1, '"abc"', 100), ('old', 2, '"de"', NULL);
+		INSERT INTO relay_keyring (workspace, blob) VALUES ('keys-only', '{"k":1}');
+		DELETE FROM relay_rooms; DELETE FROM relay_migrations WHERE name = 'rooms_backfill_v1'`); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- s.migrate(bg) }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var b, n, lw int64
+	if err := s.pool.QueryRow(bg, `SELECT bytes, envelopes, last_write FROM relay_rooms WHERE workspace = 'old'`).Scan(&b, &n, &lw); err != nil || b != 9 || n != 2 || lw != 100 {
+		t.Fatalf("old: %d bytes %d envelopes last_write %d (%v)", b, n, lw, err)
+	}
+	if err := s.pool.QueryRow(bg, `SELECT bytes, envelopes FROM relay_rooms WHERE workspace = 'keys-only'`).Scan(&b, &n); err != nil || b != 7 || n != 0 {
+		t.Fatalf("keys-only: %d bytes %d envelopes (%v)", b, n, err)
+	}
+}
