@@ -52,6 +52,19 @@ route or database table changes.
 
 ### Added
 
+- **Phone revocation over HTTPS.** `POST /v1/tunnel/revoke` (new, additive):
+  a host revokes one of its phones with a request signed by its registered
+  host key, without needing its control connection, and learns what was done
+  (`sessionsClosed`, `pushTokenRemoved`). Timestamped within ±300 s and
+  single-use per nonce (a replay answers `409`); a forged or cross-host
+  request answers `401`. It adds one signing label, `hive-tunnel/1
+  host-revoke`; no existing label changes. The control connection's `revoke`
+  is unchanged.
+- **langstroth-auth: end one device's session.** `POST
+  /admin/v1/tenants/{t}/devices/{device}/revoke` (admin listener) revokes
+  every refresh token bound to that device id and leaves the person's other
+  devices signed in. Idempotent. Access tokens already minted stay valid
+  until they expire (at most an hour).
 - **Push to more than one app build.** `LIGUS_RELAY_APNS_TOPICS` (comma
   list) allow-lists more bundle ids next to `LIGUS_RELAY_APNS_TOPIC` (which
   keeps working alone). The phone may report its bundle id with its token
