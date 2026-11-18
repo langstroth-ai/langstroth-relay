@@ -51,7 +51,7 @@ func send(t *testing.T, method, url, ip string, body any) (*http.Response, []byt
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp, b
 }

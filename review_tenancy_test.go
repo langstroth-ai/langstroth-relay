@@ -172,7 +172,7 @@ func TestPG_PurgeRacingAppendStaysConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(bg)
+	defer func() { _ = tx.Rollback(bg) }()
 	seq, err := s.nextSeqTx(ctx, tx, "ws:acme/r")
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestTenancyNamespaceEscapes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	if rows := f.envelopes(t, f.home, "team"); len(rows) != 1 {
 		t.Fatal("acme's admin purged home's room")
