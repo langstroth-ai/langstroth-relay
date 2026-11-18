@@ -46,6 +46,18 @@ func (f *tenancyFixture) tok(k ed25519.PrivateKey, c TokenClaims) string {
 
 func newTenancyFixture(t *testing.T, store Store, limits string) *tenancyFixture {
 	t.Helper()
+	t.Setenv("LANGSTROTH_RELAY_METRICS_TOKEN", "ops-metrics-token")
+	f := newTenancyFixtureNoCheck(t, store, limits)
+	if err := tenancyConfigError(); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// newTenancyFixtureNoCheck builds the fixture without the startup check
+// (a library caller of New).
+func newTenancyFixtureNoCheck(t *testing.T, store Store, limits string) *tenancyFixture {
+	t.Helper()
 	f := &tenancyFixture{shared: randKey(t), acmeKey: randKey(t), evilKey: randKey(t), acmeAdmin: "acme-admin-token-0123456789abcdef"}
 	if limits == "" {
 		limits = "{}"
@@ -55,9 +67,6 @@ func newTenancyFixture(t *testing.T, store Store, limits string) *tenancyFixture
 	  {"id": "home"}]}`, limits, pubHex(f.acmeKey), sha256hex(f.acmeAdmin))
 	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(f.shared))
 	t.Setenv("LANGSTROTH_RELAY_TENANCY", cfg)
-	if err := tenancyConfigError(); err != nil {
-		t.Fatal(err)
-	}
 	f.srv = New(Options{Store: store, Membership: true})
 	f.ts = httptest.NewServer(f.srv.Handler())
 	t.Cleanup(f.ts.Close)
@@ -392,6 +401,7 @@ func TestTenancyMetricsCardinalityCap(t *testing.T) {
 func TestTenancyTunnelHostsBoundToTenant(t *testing.T) {
 	sk := randKey(t)
 	acmeKey := randKey(t)
+	t.Setenv("LANGSTROTH_RELAY_METRICS_TOKEN", "ops-metrics-token")
 	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(sk))
 	t.Setenv("LANGSTROTH_RELAY_TENANCY", fmt.Sprintf(`{"tenants": [
 	  {"id": "acme", "issuer_pubkeys": [%q], "limits": {"max_hosts": 1}}, {"id": "home"}]}`, pubHex(acmeKey)))
@@ -479,6 +489,7 @@ func TestTenancyConfigRefusals(t *testing.T) {
 		t.Error("a tenant with no issuer key and no shared key was accepted")
 	}
 	// Startup conflicts.
+	t.Setenv("LANGSTROTH_RELAY_METRICS_TOKEN", "ops-metrics-token")
 	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(k2))
 	t.Setenv("LANGSTROTH_RELAY_TENANCY", `{"tenants":[{"id":"a"}]}`)
 	if err := tenancyConfigError(); err != nil {

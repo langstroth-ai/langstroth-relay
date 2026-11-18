@@ -331,7 +331,8 @@ limits:
 # every relay pod and read through LANGSTROTH_RELAY_TENANCY_FILE; it never
 # goes into the environment. Tenancy needs signed tokens: put
 # LANGSTROTH_RELAY_TOKEN_PUBKEY in config.existingSecret if a shared issuer
-# vouches for tenants.
+# vouches for tenants. It also needs metrics.token.existingSecret: an open
+# /metrics would list every tenant and its usage.
 tenancy:
   existingSecret: ""
   key: tenancy.json

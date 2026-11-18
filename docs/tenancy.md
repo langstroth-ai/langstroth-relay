@@ -132,8 +132,9 @@ langstroth-auth rule) or repeats; one public key is listed for two tenants or
 equals `LANGSTROTH_RELAY_TOKEN_PUBKEY(_NEXT)`; no tenant can be authenticated
 (no tenant key and no shared key); `LANGSTROTH_RELAY_TENANTS` or
 `LANGSTROTH_RELAY_ACCESS_TOKENS` is also set (tenancy replaces both); the
-GitHub social routes are on (their namespace is global); or an admin hash is
-not 64 hex characters.
+GitHub social routes are on (their namespace is global); an admin hash is
+not 64 hex characters; or `LANGSTROTH_RELAY_METRICS_TOKEN` is unset (an open
+`/metrics` would list every tenant and its usage).
 
 ### Who is the tenant
 
@@ -231,7 +232,8 @@ Either admits that one tenant only. The operator-wide `/v1/admin/*` and
 
 ### Metrics
 
-Added to `/metrics` (still behind `LANGSTROTH_RELAY_METRICS_TOKEN`):
+Added to `/metrics` (behind `LANGSTROTH_RELAY_METRICS_TOKEN`, which tenancy
+requires; the tenant series are never served on an open `/metrics`):
 
 - `hive_relay_limit_rejections_total{limit}`: every refusal above, fixed
   label values.

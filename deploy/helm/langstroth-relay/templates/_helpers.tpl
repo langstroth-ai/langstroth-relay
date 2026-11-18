@@ -162,6 +162,9 @@ empty. The shape is what the langstroth-postgres library expects.
 {{- if and $public (not .Values.metrics.token.existingSecret) (not .Values.metrics.allowPublicUnauthenticated) -}}
 {{- fail "with ingress, httpRoute or a LoadBalancer/NodePort service.type /metrics would be public: set metrics.token.existingSecret (LANGSTROTH_RELAY_METRICS_TOKEN), or metrics.allowPublicUnauthenticated=true" -}}
 {{- end -}}
+{{- if and .Values.tenancy.existingSecret (not .Values.metrics.token.existingSecret) (not .Values.config.existingSecret) -}}
+{{- fail "tenancy needs a metrics token: without LANGSTROTH_RELAY_METRICS_TOKEN /metrics is open and lists every tenant and its usage (the relay refuses to start). Set metrics.token.existingSecret" -}}
+{{- end -}}
 {{- if .Values.sync.pdb.enabled -}}
 {{- fail "sync.pdb: a PodDisruptionBudget on a single relay-sync replica only blocks node drains; relay-sync HA is unsupported in 2.0" -}}
 {{- end -}}

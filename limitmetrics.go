@@ -119,7 +119,10 @@ func (s *Server) writeLimitMetrics(ctx context.Context, w io.Writer) {
 			fmt.Fprintf(w, "# HELP hive_relay_room_bytes Stored room bytes (envelope bodies and key rotations).\n# TYPE hive_relay_room_bytes gauge\nhive_relay_room_bytes %d\n", bytes)
 		}
 	}
-	if s.tenancy == nil {
+	// Tenant series only behind the metrics token: on an open /metrics they
+	// would tell anyone which tenants share the relay and how much each uses
+	// (startup refuses tenancy without the token; this covers library use).
+	if s.tenancy == nil || s.metricsToken == "" {
 		return
 	}
 	c.mu.Lock()

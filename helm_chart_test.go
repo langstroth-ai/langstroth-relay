@@ -406,7 +406,8 @@ func TestChartLimitsAndTenancy(t *testing.T) {
 	}
 	base := []string{"--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open"}
 	out = renderChart(t, append(base, "--set", "limits.roomMaxBytes=67108864", "--set", "limits.ipRate=20",
-		"--set", "limits.roomRetentionDays=180", "--set", "limits.tunnelPushPerDay=500", "--set", "tenancy.existingSecret=relay-tenancy")...)
+		"--set", "limits.roomRetentionDays=180", "--set", "limits.tunnelPushPerDay=500", "--set", "tenancy.existingSecret=relay-tenancy",
+		"--set", "metrics.token.existingSecret=relay-metrics")...)
 	cm := docOfKind(out, "ConfigMap", "")
 	for _, want := range []string{
 		`LANGSTROTH_RELAY_ROOM_MAX_BYTES: "67108864"`, `LANGSTROTH_RELAY_IP_RATE: "20"`,
@@ -430,5 +431,9 @@ func TestChartLimitsAndTenancy(t *testing.T) {
 	}
 	if msg := renderChartErr(t, append(base, "--set", "config.env.LANGSTROTH_RELAY_TENANCY=x")...); !strings.Contains(msg, "tenancy.existingSecret") {
 		t.Fatalf("tenancy through config.env must fail, got %q", msg)
+	}
+	// Tenancy without a metrics token would publish every tenant's usage.
+	if msg := renderChartErr(t, append(base, "--set", "tenancy.existingSecret=relay-tenancy")...); !strings.Contains(msg, "metrics token") {
+		t.Fatalf("tenancy without a metrics token must fail, got %q", msg)
 	}
 }

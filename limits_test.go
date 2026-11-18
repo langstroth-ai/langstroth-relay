@@ -286,7 +286,7 @@ func limitServer(t *testing.T, env map[string]string) *httptest.Server {
 
 func metricsBody(t *testing.T, url string) string {
 	t.Helper()
-	_, b := req(t, "GET", url+"/metrics", "", nil)
+	_, b := req(t, "GET", url+"/metrics", os.Getenv("LANGSTROTH_RELAY_METRICS_TOKEN"), nil)
 	return string(b)
 }
 

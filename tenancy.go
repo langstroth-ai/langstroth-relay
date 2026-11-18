@@ -143,6 +143,11 @@ func tenancyFromEnv() (*tenancyConf, error) {
 	if githubRoutesFromEnv() {
 		return nil, errors.New("the GitHub social routes can't be used with LANGSTROTH_RELAY_TENANCY: their namespace is global")
 	}
+	if strings.TrimSpace(getenv("LANGSTROTH_RELAY_METRICS_TOKEN")) == "" {
+		// /metrics is public without it, and with tenancy it names every
+		// tenant and its usage.
+		return nil, errors.New("LANGSTROTH_RELAY_TENANCY needs LANGSTROTH_RELAY_METRICS_TOKEN: without it /metrics is public and would list every tenant and its usage")
+	}
 	return tc, nil
 }
 
