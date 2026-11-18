@@ -69,7 +69,8 @@ route or database table changes.
 - **Community limits** (all off by default): per-room byte and envelope
   quotas (`LANGSTROTH_RELAY_ROOM_MAX_BYTES`, `_ROOM_MAX_ENVELOPES`), a total
   room-byte cap on both stores (`_MAX_TOTAL_ROOM_BYTES`), rooms per client
-  (`_MAX_ROOMS_PER_CLIENT`), per-client and per-room request rates
+  (`_MAX_ROOMS_PER_CLIENT`), rooms across the relay (`_MAX_ROOMS`, the bound
+  that holds when clients rotate addresses), per-client and per-room request rates
   (`_IP_RATE`/`_BURST`, `_ROOM_RATE`/`_BURST`) and configurable tunnel push
   limits (`_TUNNEL_PUSH_RATE`/`_BURST`/`_PER_DAY`, defaults unchanged).
   Storage quotas answer `507` and never evict; rates answer `429` with

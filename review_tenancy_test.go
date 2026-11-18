@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -200,4 +201,49 @@ func TestPG_PurgeRacingAppendStaysConsistent(t *testing.T) {
 	if b, r, _ := s.TenantUsage(bg, "acme"); stored == 0 && (b != 0 || r != 0) {
 		t.Fatalf("tenant usage after purge: %d bytes %d rooms", b, r)
 	}
+}
+
+// F8: LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT keys on the address (IPv6 /64)
+// when there is no token subject, so a client rotating addresses creates
+// rooms without bound; the byte caps don't count rooms with no envelopes
+// (presence only), and on Postgres nothing bounded the room count.
+// LANGSTROTH_RELAY_MAX_ROOMS is a relay-wide room cap.
+func TestRoomCapSurvivesAddressRotation(t *testing.T) {
+	ts := limitServer(t, map[string]string{
+		"LANGSTROTH_RELAY_TRUSTED_PROXIES":      "127.0.0.1",
+		"LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT": "1",
+		"LANGSTROTH_RELAY_MAX_ROOMS":            "3",
+	})
+	created := 0
+	for i := 0; i < 6; i++ {
+		ip := fmt.Sprintf("2001:db8:%x::1", i+1) // a fresh /64 each time
+		resp, b := send(t, "POST", ts.URL+fmt.Sprintf("/v1/workspaces/r%d/presence", i), ip, map[string]any{"device_id": "d", "data": 1})
+		switch resp.StatusCode {
+		case 200:
+			created++
+		case http.StatusInsufficientStorage:
+			wantRefusal(t, resp, b, http.StatusInsufficientStorage, "total_rooms")
+		default:
+			t.Fatalf("room %d: %d %s", i, resp.StatusCode, b)
+		}
+	}
+	if created != 3 {
+		t.Fatalf("%d rooms created from rotating addresses past a relay cap of 3", created)
+	}
+}
+
+func TestRelayRoomCapStore(t *testing.T) {
+	roomStores(t, func(t *testing.T, s Store) {
+		q := qctx(writeQuota{TotalMaxRooms: 2})
+		for i := 0; i < 2; i++ {
+			if err := s.PutPresence(q, fmt.Sprintf("room-%d", i), "d", raw(`1`)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantQuota(t, s.PutPresence(q, "room-2", "d", raw(`1`)), limTotalRooms)
+		// Existing rooms keep working.
+		if _, err := s.AppendEnvelope(q, "room-0", raw(`1`), ""); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

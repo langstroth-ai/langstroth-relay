@@ -136,7 +136,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_ROOM_MAX_BYTES` | `0` (off) | stored bytes per room (envelope bodies + key rotations); `507` past it |
 | `LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES` | `0` (off) | stored envelopes per room; `507` past it |
 | `LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES` | `0` (off) | room bytes across the relay, both stores (Postgres re-reads the sum every 10 s); `507` |
-| `LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT` | `0` (off) | rooms a client may create (token subject, else address; IPv6 /64); `429` past it. A room is created by its first write of any kind |
+| `LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT` | `0` (off) | rooms a client may create (token subject, else address; IPv6 /64); `429` past it. A room is created by its first write of any kind. A client that rotates addresses gets a fresh count per address, so pair it with `LANGSTROTH_RELAY_MAX_ROOMS` |
+| `LANGSTROTH_RELAY_MAX_ROOMS` | `0` (off) | rooms across the relay, both stores (Postgres re-reads the count every 10 s); `507` `total_rooms` past it. The bound that holds when clients rotate addresses, and the only one on rooms that hold no envelopes |
 | `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` | `0` (off) | delete a room's envelopes, key rotations and device blobs once nothing has been appended to it for N days; its sequence and roster stay |
 | `LANGSTROTH_RELAY_IP_RATE` / `_BURST` | off / 2x rate | every request per client (except `/`, `/v1/health`, `/metrics`); `429` with `Retry-After` |
 | `LANGSTROTH_RELAY_ROOM_RATE` / `_BURST` | off / 2x rate | every request to one room, all clients together; `429` with `Retry-After` |

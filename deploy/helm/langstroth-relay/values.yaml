@@ -314,6 +314,7 @@ limits:
   roomMaxBytes: null        # LANGSTROTH_RELAY_ROOM_MAX_BYTES (envelope bodies + key rotations per room)
   roomMaxEnvelopes: null    # LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES
   totalRoomBytes: null      # LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES (all rooms)
+  maxRooms: null            # LANGSTROTH_RELAY_MAX_ROOMS (rooms across the relay; holds when clients rotate addresses)
   maxRoomsPerClient: null   # LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT (token subject, else address)
   roomRetentionDays: null   # LANGSTROTH_RELAY_ROOM_RETENTION_DAYS (whole idle rooms only)
   ipRate: null              # LANGSTROTH_RELAY_IP_RATE (every request per client, per second)

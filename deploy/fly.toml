@@ -32,6 +32,7 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES = "8589934592"    # 8 GiB on Postgres; size it to the database disk
   # LANGSTROTH_RELAY_MAX_STORE_BYTES = "268435456"          # memory store only: 256 MiB of the 512 MB VM
   # LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT = "50"            # rooms one token subject (else address, IPv6 /64) may create
+  # LANGSTROTH_RELAY_MAX_ROOMS = "100000"                   # rooms across the relay: holds when clients rotate addresses
   # LANGSTROTH_RELAY_ROOM_RETENTION_DAYS = "180"            # expire whole rooms idle for 180 days
   # LANGSTROTH_RELAY_IP_RATE = "20"                         # every request, per client, per second
   # LANGSTROTH_RELAY_IP_BURST = "200"

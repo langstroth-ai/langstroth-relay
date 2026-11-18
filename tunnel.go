@@ -127,8 +127,8 @@ type tunnelHub struct {
 	// hostRegMu serializes a tenant host's count-then-register, so hosts
 	// registering at once can't all pass max_hosts (one tunnel replica).
 	hostRegMu sync.Mutex
-	conns         map[*tconn]struct{}
-	shutting      bool
+	conns     map[*tconn]struct{}
+	shutting  bool
 
 	connectLim *ipRateLimiter // per IP
 	openLim    *ipRateLimiter // per host

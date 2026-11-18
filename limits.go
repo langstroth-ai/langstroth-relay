@@ -12,6 +12,7 @@ type communityLimits struct {
 	roomMaxBytes      int64 // LANGSTROTH_RELAY_ROOM_MAX_BYTES
 	roomMaxEnvelopes  int64 // LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES
 	totalMaxBytes     int64 // LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES
+	totalMaxRooms     int64 // LANGSTROTH_RELAY_MAX_ROOMS
 	maxRoomsPerClient int64 // LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT
 	roomRetention     time.Duration
 
@@ -25,6 +26,7 @@ func communityLimitsFromEnv() communityLimits {
 		roomMaxBytes:      pos("LANGSTROTH_RELAY_ROOM_MAX_BYTES"),
 		roomMaxEnvelopes:  pos("LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES"),
 		totalMaxBytes:     pos("LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES"),
+		totalMaxRooms:     pos("LANGSTROTH_RELAY_MAX_ROOMS"),
 		maxRoomsPerClient: pos("LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT"),
 		roomRetention:     daysEnv("LANGSTROTH_RELAY_ROOM_RETENTION_DAYS", 0),
 	}
@@ -58,6 +60,7 @@ func (s *Server) quotaFor(r *http.Request) *writeQuota {
 		RoomMaxBytes:     s.lim.roomMaxBytes,
 		RoomMaxEnvelopes: s.lim.roomMaxEnvelopes,
 		TotalMaxBytes:    s.lim.totalMaxBytes,
+		TotalMaxRooms:    s.lim.totalMaxRooms,
 		CreatorMaxRooms:  s.lim.maxRoomsPerClient,
 	}
 	if t := tenantFrom(ctx); t != nil {
@@ -92,13 +95,13 @@ func roomRetentionLoop(rs roomStore, idle time.Duration, stop <-chan struct{}) {
 
 // logLimits says at startup which community limits are on.
 func (l communityLimits) log() {
-	if l.roomMaxBytes == 0 && l.roomMaxEnvelopes == 0 && l.totalMaxBytes == 0 && l.maxRoomsPerClient == 0 &&
+	if l.roomMaxBytes == 0 && l.roomMaxEnvelopes == 0 && l.totalMaxBytes == 0 && l.totalMaxRooms == 0 && l.maxRoomsPerClient == 0 &&
 		l.roomRetention == 0 && l.ip == nil && l.room == nil {
 		return
 	}
 	attrs := []any{
 		"room_max_bytes", l.roomMaxBytes, "room_max_envelopes", l.roomMaxEnvelopes,
-		"total_max_bytes", l.totalMaxBytes, "max_rooms_per_client", l.maxRoomsPerClient,
+		"total_max_bytes", l.totalMaxBytes, "max_rooms", l.totalMaxRooms, "max_rooms_per_client", l.maxRoomsPerClient,
 		"room_retention_days", int(l.roomRetention / (24 * time.Hour)),
 	}
 	if l.ip != nil {

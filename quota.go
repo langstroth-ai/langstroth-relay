@@ -27,6 +27,7 @@ type writeQuota struct {
 	RoomMaxBytes     int64
 	RoomMaxEnvelopes int64
 	TotalMaxBytes    int64
+	TotalMaxRooms    int64 // live rooms across the relay (LANGSTROTH_RELAY_MAX_ROOMS)
 	TenantMaxBytes   int64
 	TenantMaxRooms   int64
 	CreatorMaxRooms  int64
@@ -48,6 +49,7 @@ const (
 	limRoomBytes     = "room_bytes"
 	limRoomEnvelopes = "room_envelopes"
 	limTotalBytes    = "total_bytes"
+	limTotalRooms    = "total_rooms"
 	limStoreBytes    = "store_bytes"
 	limKeyring       = "keyring"
 	limTenantBytes   = "tenant_bytes"
@@ -63,7 +65,7 @@ const (
 
 // allLimitNames fixes the label set (and its order on /metrics).
 var allLimitNames = []string{
-	limRoomBytes, limRoomEnvelopes, limTotalBytes, limStoreBytes, limKeyring,
+	limRoomBytes, limRoomEnvelopes, limTotalBytes, limTotalRooms, limStoreBytes, limKeyring,
 	limTenantBytes, limTenantRooms, limClientRooms, limIPRate, limRoomRate,
 	limTenantRate, limPairings, limPush, limTenantHosts,
 }
@@ -91,6 +93,7 @@ var quotaMessages = map[string]string{
 	limRoomBytes:     "room storage quota reached",
 	limRoomEnvelopes: "room envelope quota reached",
 	limTotalBytes:    "relay storage is full",
+	limTotalRooms:    "relay room capacity reached",
 	limStoreBytes:    "relay storage is full",
 	limTenantBytes:   "tenant storage quota reached",
 	limTenantRooms:   "tenant room quota reached",

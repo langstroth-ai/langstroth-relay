@@ -232,6 +232,8 @@ func (s *memoryStore) workspaceForWrite(ctx context.Context, id string, addBytes
 			return nil, errQuota(limTotalBytes, tenant)
 		case addBytes > 0 && q.TenantMaxBytes > 0 && tu.bytes+addBytes > q.TenantMaxBytes:
 			return nil, errQuota(limTenantBytes, tenant)
+		case creating && q.TotalMaxRooms > 0 && s.liveRooms >= q.TotalMaxRooms:
+			return nil, errQuota(limTotalRooms, tenant)
 		case creating && q.TenantMaxRooms > 0 && tu.rooms >= q.TenantMaxRooms:
 			return nil, errQuota(limTenantRooms, tenant)
 		case creating && q.CreatorMaxRooms > 0 && q.Creator != "" && s.creatorRooms[q.Creator] >= q.CreatorMaxRooms:

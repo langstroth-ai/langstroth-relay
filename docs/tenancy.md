@@ -73,6 +73,7 @@ refusal in `hive_relay_limit_rejections_total{limit}`.
 | `LANGSTROTH_RELAY_ROOM_MAX_BYTES` | stored bytes per room: envelope bodies + key rotations | 507 `room_bytes` |
 | `LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES` | stored envelopes per room | 507 `room_envelopes` |
 | `LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES` | sum of room bytes across the relay, both backends. Postgres re-reads the sum at most every 10 s and adds its own writes, so it can overshoot by what another writer adds in that window (none on one replica) | 507 `total_bytes` |
+| `LANGSTROTH_RELAY_MAX_ROOMS` | live rooms across the relay, both backends (Postgres re-reads the count at most every 10 s). `MAX_ROOMS_PER_CLIENT` keys on the address without a token, so a client rotating addresses (IPv6 /64s, IPv4 pools) is only bounded by this | 507 `total_rooms` |
 | `LANGSTROTH_RELAY_MAX_STORE_BYTES` | unchanged: memory store only, every workspace byte | 507 `store_bytes` |
 | `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` | delete a room idle for N days (above) | none |
 | `LANGSTROTH_RELAY_IP_RATE` / `_BURST` | every request per client address (IPv6 /64), before authentication | 429 `ip_rate` |

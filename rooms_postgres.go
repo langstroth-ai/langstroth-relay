@@ -55,10 +55,12 @@ BEGIN
 END $$;
 `
 
-// pgTotal caches the sum of room bytes for LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES.
+// pgTotal caches the sum of room bytes (LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES)
+// and the room count (LANGSTROTH_RELAY_MAX_ROOMS).
 type pgTotal struct {
 	mu    sync.Mutex
 	bytes int64
+	rooms int64
 	at    time.Time
 }
 
@@ -70,12 +72,37 @@ func (s *postgresStore) totalRoomBytes(ctx context.Context) (int64, error) {
 	if !s.total.at.IsZero() && time.Since(s.total.at) < pgTotalTTL {
 		return s.total.bytes, nil
 	}
-	var n int64
-	if err := s.pool.QueryRow(ctx, `SELECT coalesce(sum(bytes), 0)::bigint FROM relay_rooms`).Scan(&n); err != nil {
+	if err := s.refreshTotalLocked(ctx); err != nil {
 		return 0, err
 	}
-	s.total.bytes, s.total.at = n, time.Now()
-	return n, nil
+	return s.total.bytes, nil
+}
+
+// refreshTotalLocked re-reads the cached totals. Caller holds s.total.mu.
+func (s *postgresStore) refreshTotalLocked(ctx context.Context) error {
+	var b, r int64
+	if err := s.pool.QueryRow(ctx, `SELECT coalesce(sum(bytes), 0)::bigint, count(*) FROM relay_rooms`).Scan(&b, &r); err != nil {
+		return err
+	}
+	s.total.bytes, s.total.rooms, s.total.at = b, r, time.Now()
+	return nil
+}
+
+// reserveRoom admits one more room under max (re-reading the count at most
+// every pgTotalTTL, like the byte total) and counts it.
+func (s *postgresStore) reserveRoom(ctx context.Context, max int64) (bool, error) {
+	s.total.mu.Lock()
+	defer s.total.mu.Unlock()
+	if s.total.at.IsZero() || time.Since(s.total.at) >= pgTotalTTL {
+		if err := s.refreshTotalLocked(ctx); err != nil {
+			return false, err
+		}
+	}
+	if s.total.rooms >= max {
+		return false, nil
+	}
+	s.total.rooms++
+	return true, nil
 }
 
 func (s *postgresStore) addTotal(n int64) {
@@ -122,6 +149,17 @@ RETURNING bytes, envelopes, tenant, (xmax = 0)`,
 			return errQuota(limRoomBytes, rowTenant)
 		case addEnv > 0 && q.RoomMaxEnvelopes > 0 && envs > q.RoomMaxEnvelopes:
 			return errQuota(limRoomEnvelopes, rowTenant)
+		}
+		if inserted && q.TotalMaxRooms > 0 {
+			// The cached count includes this room (counted by reserveRoom;
+			// a rollback is corrected at the next re-read).
+			ok, err := s.reserveRoom(ctx, q.TotalMaxRooms)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errQuota(limTotalRooms, rowTenant)
+			}
 		}
 		if inserted && q.CreatorMaxRooms > 0 && creator != "" {
 			// Serialize this creator's room creations, then count (the
