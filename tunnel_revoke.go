@@ -33,7 +33,9 @@ import (
 // its own state.
 //
 // Answers: 200 {"ok":true,"pid","revokedUntil","sessionsClosed","pushTokenRemoved"};
-// 400 malformed; 401 unknown host, bad signature or stale ts; 409 replayed;
+// 400 malformed; 401 unknown host or bad signature ({"error":"unauthorized"},
+// counted against the address) or ts outside the window ({"error":
+// "clock_skew","now":<relay unix time>}, not counted); 409 replayed;
 // 429 too many failed attempts from this address; 503 store unavailable.
 
 // hostRevokeLabel is the ctx label of the signed preimage (new; additive to
@@ -173,7 +175,12 @@ func (h *tunnelHub) handleRevokeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	t := now.Unix()
 	if *m.TS < t-tunnelSkewSecs || *m.TS > t+tunnelSkewSecs {
-		unauthorized("timestamp outside the skew window")
+		// The host's own valid signature: a skewed clock (or a stale
+		// replay), not a guess. Not counted against the address (a real
+		// host retrying would block itself from the tunnel); the relay's
+		// time lets the host correct.
+		slog.Warn("tunnel revoke refused", "host", m.HostID, "reason", "timestamp outside the skew window")
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "clock_skew", "now": t})
 		return
 	}
 	// Single use: kept until the ts can no longer pass the window above.

@@ -332,6 +332,30 @@ func TestTunnelRevoke_ReplayCacheIsPerHost(t *testing.T) {
 	}
 }
 
+// A real host with a skewed clock is told the relay's time (so it can
+// correct) and isn't treated as an attacker: its address isn't blocked
+// from the tunnel by repeated retries.
+func TestTunnelRevoke_ClockSkewIsReportedNotPunished(t *testing.T) {
+	env := newTunnelEnv(t, nil, &fakePush{}, func(l *tunnelLimits) { l.FailedAuthPerMin = 3 })
+	h := newFakeHost(t, env)
+	h.connect()
+	now := time.Now().Unix()
+	for i := 0; i < 10; i++ {
+		st, res := postRevoke(t, env, revokeBody(h.sign, h.id, newFakePhone().pid, now+3600, now-tunnelSkewSecs-120, freshNonce()))
+		if st != http.StatusUnauthorized || res["error"] != "clock_skew" {
+			t.Fatalf("skewed: %d %v", st, res)
+		}
+		if n, ok := res["now"].(float64); !ok || int64(n) < now-5 || int64(n) > now+5 {
+			t.Fatalf("relay time missing: %v", res)
+		}
+	}
+	// Still welcome: a corrected request and a phone connect both work.
+	if st, res := postRevoke(t, env, revokeBody(h.sign, h.id, newFakePhone().pid, now+3600, now, freshNonce())); st != http.StatusOK {
+		t.Fatalf("corrected: %d %v", st, res)
+	}
+	session(t, env, h, newFakePhone())
+}
+
 // When every host's quota together fills the cache, a new host's revocation
 // still applies (unrecorded: it is idempotent); expired entries free quota.
 func TestReplayCache_QuotaAndFullCache(t *testing.T) {
