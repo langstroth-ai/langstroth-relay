@@ -17,6 +17,7 @@ import (
 //	GET    /admin/v1/tenants/{t}/users
 //	POST   /admin/v1/tenants/{t}/users/{id}/active  {"active":false}
 //	POST   /admin/v1/tenants/{t}/users/{id}/revoke
+//	POST   /admin/v1/tenants/{t}/devices/{device}/revoke
 //
 // A grant can name only workspaces the tenant owns (config "workspaces").
 // Nothing here touches workspace membership: that is the signed roster's job.
@@ -44,6 +45,7 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/tenants/{tenant}/users", a(s.adminUsers))
 	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/users/{id}/active", a(s.adminSetActive))
 	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/users/{id}/revoke", a(s.adminRevoke))
+	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/devices/{device}/revoke", a(s.adminRevokeDevice))
 }
 
 func (s *Server) adminAuthorized(w http.ResponseWriter, r *http.Request) bool {
@@ -173,5 +175,25 @@ func (s *Server) adminRevoke(w http.ResponseWriter, r *http.Request, t *TenantCo
 		return
 	}
 	s.audit.event("admin_sessions_revoked", t.ID, "user", r.PathValue("id"), "refresh_revoked", n)
+	writeJSON(w, http.StatusOK, map[string]int{"revoked": n})
+}
+
+// adminRevokeDevice ends one device's sign-in session: every refresh token
+// bound to that device id (a revoked phone or a lost laptop), leaving the
+// person's other devices signed in. Idempotent ({"revoked": 0} the second
+// time). Access tokens already minted for the device stay valid until they
+// expire (at most an hour); the relay doesn't look them up.
+func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request, t *TenantConfig) {
+	device := r.PathValue("device")
+	if !deviceIDRe.MatchString(device) {
+		http.Error(w, "bad device id", http.StatusBadRequest)
+		return
+	}
+	n, err := s.store.RevokeDevice(r.Context(), t.ID, device)
+	if err != nil {
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+	s.audit.event("admin_device_revoked", t.ID, "did", device, "refresh_revoked", n)
 	writeJSON(w, http.StatusOK, map[string]int{"revoked": n})
 }

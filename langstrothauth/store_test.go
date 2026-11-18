@@ -87,6 +87,26 @@ func storeSuite(t *testing.T, s Store) {
 		t.Fatal("revoking t1/b must not touch t2/b")
 	}
 
+	// Per-device session revocation: only that device, only that tenant.
+	must(s.PutRefresh(ctx, RefreshToken{Hash: "h6", Tenant: "t1", FamilyID: "f6", UserID: "c", DeviceID: "phone", ExpiresAt: 100}))
+	must(s.PutRefresh(ctx, RefreshToken{Hash: "h7", Tenant: "t1", FamilyID: "f7", UserID: "c", DeviceID: "laptop", ExpiresAt: 100}))
+	must(s.PutRefresh(ctx, RefreshToken{Hash: "h8", Tenant: "t2", FamilyID: "f8", UserID: "c", DeviceID: "phone", ExpiresAt: 100}))
+	if n, _ := s.RevokeDevice(ctx, "t1", "phone"); n != 1 {
+		t.Fatalf("revoke device t1/phone: %d", n)
+	}
+	if n, _ := s.RevokeDevice(ctx, "t1", "phone"); n != 0 {
+		t.Fatalf("revoke device again: %d", n)
+	}
+	if got, _ := s.GetRefresh(ctx, "h6"); !got.Revoked {
+		t.Fatal("device token not revoked")
+	}
+	if got, _ := s.GetRefresh(ctx, "h7"); got.Revoked {
+		t.Fatal("revoking a device must not touch the person's other devices")
+	}
+	if got, _ := s.GetRefresh(ctx, "h8"); got.Revoked {
+		t.Fatal("revoking t1/phone must not touch t2/phone")
+	}
+
 	must(s.DeleteUser(ctx, "t1", "a"))
 	if g, _ := s.GetGroup(ctx, "t1", "g"); len(g.Members) != 1 || g.Members[0] != "b" {
 		t.Fatalf("delete removes membership: %v", g.Members)
