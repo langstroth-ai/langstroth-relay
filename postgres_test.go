@@ -32,7 +32,8 @@ func pgStore(t *testing.T) *postgresStore {
 	// Isolate each test.
 	if _, err := ps.pool.Exec(bg, `TRUNCATE relay_seq, relay_envelopes, relay_candidates,
 		relay_presence, relay_keyring, relay_directory, relay_directory_devices, relay_accounts,
-		relay_account_devices, relay_login_index, relay_inbox, relay_friend_requests, relay_friend_edges`); err != nil {
+		relay_account_devices, relay_login_index, relay_inbox, relay_friend_requests, relay_friend_edges,
+		relay_rooms, relay_tenant_usage, relay_workspace_members, relay_workspace_invites`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return ps
