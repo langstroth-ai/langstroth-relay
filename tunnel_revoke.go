@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,33 +63,50 @@ type hostRevokeReq struct {
 }
 
 // replayCache remembers accepted (hostId, nonce) pairs until their ts falls
-// out of the skew window, after which the ts check alone refuses them.
+// out of the skew window, after which the ts check alone refuses them. Each
+// host may hold at most perHost live entries, so one host (every host on an
+// open relay can sign for itself) can't fill it and lock the others out.
 type replayCache struct {
-	mu   sync.Mutex
-	seen map[string]int64 // key -> forget after (unix)
-	max  int
+	mu      sync.Mutex
+	seen    map[string]int64 // key -> forget after (unix)
+	perHost map[string]int   // host -> live entries
+	max     int
+	hostMax int
 }
 
 func newReplayCache(max int) *replayCache {
-	return &replayCache{seen: map[string]int64{}, max: max}
+	hostMax := max / 8
+	if hostMax < 1 {
+		hostMax = 1
+	}
+	return &replayCache{seen: map[string]int64{}, perHost: map[string]int{}, max: max, hostMax: hostMax}
 }
 
-// claim records key; ok=false when it was already seen (a replay), full=true
-// when the cache is full of live entries.
-func (c *replayCache) claim(key string, until, now int64) (ok, full bool) {
+// claim records host|nonce. ok=false when it was already seen (a replay);
+// hostFull when this host has too many live entries; full when the whole
+// cache is full of live entries (the caller may still apply the request:
+// a host revocation is idempotent, so a replay of it changes nothing).
+func (c *replayCache) claim(host, nonce string, until, now int64) (ok, hostFull, full bool) {
+	key := host + "|" + nonce
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if exp, dup := c.seen[key]; dup && exp > now {
-		return false, false
+		return false, false, false
+	}
+	if c.perHost[host] >= c.hostMax || len(c.seen) >= c.max {
+		c.pruneLocked(now)
+	}
+	if c.perHost[host] >= c.hostMax {
+		return false, true, false
 	}
 	if len(c.seen) >= c.max {
-		c.pruneLocked(now)
-		if len(c.seen) >= c.max {
-			return false, true
-		}
+		return true, false, true
+	}
+	if _, dup := c.seen[key]; !dup {
+		c.perHost[host]++
 	}
 	c.seen[key] = until
-	return true, false
+	return true, false, false
 }
 
 func (c *replayCache) prune(now int64) {
@@ -101,6 +119,10 @@ func (c *replayCache) pruneLocked(now int64) {
 	for k, exp := range c.seen {
 		if exp <= now {
 			delete(c.seen, k)
+			host, _, _ := strings.Cut(k, "|")
+			if c.perHost[host]--; c.perHost[host] <= 0 {
+				delete(c.perHost, host)
+			}
 		}
 	}
 }
@@ -155,10 +177,15 @@ func (h *tunnelHub) handleRevokeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Single use: kept until the ts can no longer pass the window above.
-	ok, full := h.revokeSeen.claim(m.HostID+"|"+m.Nonce, *m.TS+tunnelSkewSecs+1, t)
-	if full {
+	ok, hostFull, full := h.revokeSeen.claim(m.HostID, m.Nonce, *m.TS+tunnelSkewSecs+1, t)
+	if hostFull {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "busy"})
 		return
+	}
+	if full {
+		// Every host's quota together filled the cache: apply it unrecorded
+		// rather than refuse a revocation (it is idempotent).
+		slog.Warn("tunnel revoke replay cache full; applying unrecorded", "host", m.HostID)
 	}
 	if !ok {
 		slog.Warn("tunnel revoke replayed", "host", m.HostID)

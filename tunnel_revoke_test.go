@@ -308,3 +308,51 @@ func TestTunnelRevoke_RacingSessionKeepsNoSessionOrPushToken(t *testing.T) {
 	}
 }
 
+// One host can't fill the revoke replay cache and lock every other host
+// out of POST /v1/tunnel/revoke.
+func TestTunnelRevoke_ReplayCacheIsPerHost(t *testing.T) {
+	env := newTunnelEnv(t, nil, &fakePush{}, nil)
+	env.hub.revokeSeen = newReplayCache(64)
+	flood := newFakeHost(t, env)
+	flood.connect()
+	victim := newFakeHost(t, env)
+	victim.connect()
+	now := time.Now().Unix()
+	busy := 0
+	for i := 0; i < 200; i++ {
+		if st, _ := postRevoke(t, env, revokeBody(flood.sign, flood.id, newFakePhone().pid, now+60, now, freshNonce())); st == http.StatusServiceUnavailable {
+			busy++
+		}
+	}
+	if busy == 0 {
+		t.Fatal("one host's flood was never limited")
+	}
+	if st, res := postRevoke(t, env, revokeBody(victim.sign, victim.id, newFakePhone().pid, now+60, now, freshNonce())); st != http.StatusOK {
+		t.Fatalf("another host locked out: %d %v", st, res)
+	}
+}
+
+// When every host's quota together fills the cache, a new host's revocation
+// still applies (unrecorded: it is idempotent); expired entries free quota.
+func TestReplayCache_QuotaAndFullCache(t *testing.T) {
+	c := newReplayCache(16) // 2 per host
+	for h := 0; h < 8; h++ {
+		for n := 0; n < 2; n++ {
+			if ok, hf, f := c.claim(string(rune('a'+h)), string(rune('0'+n)), 100, 0); !ok || hf || f {
+				t.Fatalf("fill %d/%d: %v %v %v", h, n, ok, hf, f)
+			}
+		}
+	}
+	if _, hf, _ := c.claim("a", "9", 100, 0); !hf {
+		t.Fatal("host quota not enforced")
+	}
+	if ok, hf, f := c.claim("z", "0", 100, 0); !ok || hf || !f {
+		t.Fatalf("new host on a full cache: %v %v %v", ok, hf, f)
+	}
+	if ok, _, _ := c.claim("a", "0", 100, 0); ok {
+		t.Fatal("replay accepted")
+	}
+	if ok, hf, f := c.claim("a", "9", 200, 150); !ok || hf || f {
+		t.Fatalf("after expiry: %v %v %v", ok, hf, f)
+	}
+}
