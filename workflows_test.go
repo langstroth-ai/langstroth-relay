@@ -151,3 +151,28 @@ func TestReleaseWorkflow_PublishesAfterCI(t *testing.T) {
 		t.Error("release.yml must not deploy; deploy.yml does")
 	}
 }
+
+// The public relay is one always-on machine (per-process pairing, SSE
+// fan-out, rate limits and long-lived tunnels), limited by open connections,
+// with a health check in the current flyctl schema.
+func TestFlyConfig_SingleMachineConnectionsAndHealth(t *testing.T) {
+	fly := readRepoFile(t, "deploy/fly.toml")
+	for _, want := range []string{
+		"auto_stop_machines = false",
+		"min_machines_running = 1",
+		"[http_service.concurrency]\n    type = \"connections\"\n    soft_limit = 1500\n    hard_limit = 2000",
+		"[[http_service.checks]]\n    method = \"GET\"\n    path = \"/v1/health\"\n    interval = \"30s\"\n    timeout = \"5s\"\n    grace_period = \"10s\"",
+	} {
+		if !strings.Contains(fly, want) {
+			t.Errorf("deploy/fly.toml: missing %q", want)
+		}
+	}
+	for _, bad := range []string{"http_checks", `type = "requests"`} {
+		if strings.Contains(fly, bad) {
+			t.Errorf("deploy/fly.toml: %q is the old form", bad)
+		}
+	}
+	if strings.Contains(fly, "trigger autoscaling") {
+		t.Error("deploy/fly.toml: the relay is single-replica; nothing autoscales")
+	}
+}
