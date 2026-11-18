@@ -19,6 +19,11 @@ import (
 //	POST   /admin/v1/tenants/{t}/users/{id}/revoke
 //	POST   /admin/v1/tenants/{t}/devices/{device}/revoke
 //
+// The device route also accepts the tenant's own device-revocation token
+// (config "device_revoke_token_file" / "device_revoke_token_sha256"), and
+// only for that tenant: a serve box ending a revoked phone's session holds
+// that token, never the operator token.
+//
 // A grant can name only workspaces the tenant owns (config "workspaces").
 // Nothing here touches workspace membership: that is the signed roster's job.
 
@@ -45,7 +50,30 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/tenants/{tenant}/users", a(s.adminUsers))
 	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/users/{id}/active", a(s.adminSetActive))
 	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/users/{id}/revoke", a(s.adminRevoke))
-	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/devices/{device}/revoke", a(s.adminRevokeDevice))
+	// The operator token, or that tenant's device-revocation token (a serve
+	// box's; it opens this route of its own tenant only).
+	mux.HandleFunc("POST /admin/v1/tenants/{tenant}/devices/{device}/revoke", func(w http.ResponseWriter, r *http.Request) {
+		t := s.cfg.tenant(r.PathValue("tenant"))
+		if !s.deviceRevokeAuthorized(w, r, t) {
+			return
+		}
+		if t == nil {
+			http.Error(w, "unknown tenant", http.StatusNotFound)
+			return
+		}
+		s.adminRevokeDevice(w, r, t)
+	})
+}
+
+// deviceRevokeAuthorized accepts the operator token, or t's own
+// device-revocation token (never another tenant's).
+func (s *Server) deviceRevokeAuthorized(w http.ResponseWriter, r *http.Request, t *TenantConfig) bool {
+	if t != nil && t.deviceRevokeTokenHash != "" {
+		if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && constEq(sha256Hex(strings.TrimSpace(tok)), t.deviceRevokeTokenHash) {
+			return true
+		}
+	}
+	return s.adminAuthorized(w, r)
 }
 
 func (s *Server) adminAuthorized(w http.ResponseWriter, r *http.Request) bool {

@@ -68,3 +68,50 @@ func TestAdminRevokeDeviceEndsOnlyThatDevicesSession(t *testing.T) {
 		t.Fatalf("second revoke: %d %v", code, m)
 	}
 }
+
+// A serve box needs only to end its own tenant's device sessions, so it is
+// given that tenant's device-revocation token, never the operator token. The
+// token works on that tenant's device route alone: not on another tenant's
+// (tenant confusion) and not on any other admin route.
+func TestDeviceRevokeTokenIsTenantAndRouteScoped(t *testing.T) {
+	clock := newClock()
+	homeIdP, workIdP := newMockIdP(t, clock), newMockIdP(t, clock)
+	const homeTok = "home-device-revoke-token-0123456789abcdef"
+	const workTok = "work-device-revoke-token-0123456789abcdef"
+	h := newHarness(t, clock,
+		tenantSpec{id: "home", idp: homeIdP, workspaces: []string{"ws-home"}, grants: map[string][]string{"family": {"ws-home"}}, scimToken: testSCIMToken, deviceRevokeToken: homeTok},
+		tenantSpec{id: "work", idp: workIdP, workspaces: []string{"ws-work"}, grants: map[string][]string{"family": {"ws-work"}}, scimToken: testSCIMToken, deviceRevokeToken: workTok},
+	)
+	phone := newDevice("4d1b6c1e-0000-4000-8000-000000000002")
+	h.loginTokens("home", phone)
+	grantJIT(t, h, "home")
+	pt := h.loginTokens("home", phone)
+	if pt.status != 200 {
+		t.Fatalf("login: %s", fmtStatus(pt))
+	}
+	admin := httptestAdmin(t, h)
+	home := "/admin/v1/tenants/home/devices/" + phone.id + "/revoke"
+	work := "/admin/v1/tenants/work/devices/" + phone.id + "/revoke"
+
+	// Another tenant's token, and this tenant's token on another tenant.
+	if code, _ := adminJSON(t, admin, workTok, "POST", home); code != http.StatusUnauthorized {
+		t.Fatalf("work token on home: %d", code)
+	}
+	if code, _ := adminJSON(t, admin, homeTok, "POST", work); code != http.StatusUnauthorized {
+		t.Fatalf("home token on work: %d", code)
+	}
+	// Any other admin route.
+	for _, r := range [][2]string{{"GET", "/admin/v1/tenants"}, {"GET", "/admin/v1/tenants/home/users"}, {"GET", "/admin/v1/tenants/home/grants"}, {"POST", "/admin/v1/tenants/home/users/x/revoke"}} {
+		if code, _ := adminJSON(t, admin, homeTok, r[0], r[1]); code != http.StatusUnauthorized {
+			t.Fatalf("device token on %s %s: %d", r[0], r[1], code)
+		}
+	}
+	// Its own route works.
+	code, m := adminJSON(t, admin, homeTok, "POST", home)
+	if code != http.StatusOK || m["revoked"] != float64(1) {
+		t.Fatalf("own tenant: %d %v", code, m)
+	}
+	if tr := h.refresh("home", pt.Refresh, pt.Nonce, phone); tr.status == 200 {
+		t.Fatalf("revoked device refreshed: %s", fmtStatus(tr))
+	}
+}

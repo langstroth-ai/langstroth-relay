@@ -543,7 +543,7 @@ they authenticate themselves, so they bypass the bearer-token gate):
 | `GET /v1/tunnel/host` | host | control socket: Ed25519-signed challenge; `host_id = H(host key)`, registered implicitly on first connect |
 | `GET /v1/tunnel/accept?sid=…` | host | one data socket per phone session (`sid` is single-use, valid 10 s) |
 | `GET /v1/tunnel/connect?host=…` | phone | host-signed `hpc1` credential + proof-of-possession signature (or a pairing-window tag to enroll), then a 1:1 splice to the host |
-| `POST /v1/tunnel/revoke` | host | revoke one phone without the control socket: `{"v":1,hostId,pid,exp,ts,nonce,sig}`, `sig` = Ed25519 by the registered host key over `ctx("host-revoke", hostId, pid, u64be(exp), u64be(ts), nonce)`; `ts` within ±300 s, each nonce once (`409 replayed`). Records the revocation, drops the push token, closes live sessions with `4003`, and answers `{"ok":true,"pid","revokedUntil","sessionsClosed","pushTokenRemoved"}`. Idempotent; a host can only name its own `hostId` |
+| `POST /v1/tunnel/revoke` | host | revoke one phone without the control socket: `{"v":1,hostId,pid,exp,ts,nonce,sig}`, `sig` = Ed25519 by the registered host key over `ctx("host-revoke", hostId, pid, u64be(exp), u64be(ts), nonce)`; `ts` within ±300 s (else `401 {"error":"clock_skew","now"}`), each nonce once (`409 replayed`). Records the revocation, drops the push token, closes live sessions with `4003`, and answers `{"ok":true,"pid","revokedUntil","sessionsClosed","pushTokenRemoved"}`. Idempotent; a host can only name its own `hostId` |
 
 What the relay stores (both backends; part of the snapshot / database):
 registered hosts `(host_id, pub, created_at, last_seen)`, revoked phones
