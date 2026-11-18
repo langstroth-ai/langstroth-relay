@@ -61,6 +61,12 @@ type memoryStore struct {
 	tenantUse    map[string]*memTenantUse
 	creatorRooms map[string]int64
 
+	// Attachment blobs (blobs_memory.go): room → id → blob, with per-tenant
+	// and relay-wide totals. Lazily built.
+	blobs      map[string]map[string]*memBlob
+	blobTenant map[string]*memBlobUse
+	blobTotal  memBlobUse
+
 	// notify wakes SSE subscribers of this workspace on a genuinely new append
 	// (in-process; see wsNotifier).
 	notify *wsNotifier

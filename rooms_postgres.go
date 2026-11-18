@@ -255,6 +255,9 @@ func (s *postgresStore) expireRoomsTx(ctx context.Context, tx pgx.Tx, rooms []st
 			return err
 		}
 	}
+	if err := expireRoomBlobsTx(ctx, tx, rooms); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `
 WITH r AS (DELETE FROM relay_rooms WHERE workspace = ANY($1) RETURNING tenant, bytes),
 x AS (SELECT tenant, sum(bytes)::bigint AS b, count(*)::bigint AS c FROM r WHERE tenant <> '' GROUP BY tenant)

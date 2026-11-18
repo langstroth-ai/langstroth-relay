@@ -38,6 +38,10 @@ type TenantLimits struct {
 	MaxPairings      int     `json:"max_pairings"`
 	MaxHosts         int64   `json:"max_hosts"`
 	PushPerDay       int     `json:"push_per_day"`
+	BlobMaxBytes     int64   `json:"blob_max_bytes"`
+	BlobMaxCount     int64   `json:"blob_max_count"`
+	BlobRoomMaxBytes int64   `json:"blob_room_max_bytes"`
+	BlobRoomMaxCount int64   `json:"blob_room_max_count"`
 }
 
 // overlay returns l with every non-zero field of o applied.
@@ -55,6 +59,10 @@ func (l TenantLimits) overlay(o *TenantLimits) TenantLimits {
 	set(&l.RoomMaxBytes, o.RoomMaxBytes)
 	set(&l.RoomMaxEnvelopes, o.RoomMaxEnvelopes)
 	set(&l.MaxHosts, o.MaxHosts)
+	set(&l.BlobMaxBytes, o.BlobMaxBytes)
+	set(&l.BlobMaxCount, o.BlobMaxCount)
+	set(&l.BlobRoomMaxBytes, o.BlobRoomMaxBytes)
+	set(&l.BlobRoomMaxCount, o.BlobRoomMaxCount)
 	if o.Rate != 0 {
 		l.Rate = o.Rate
 	}
@@ -72,7 +80,8 @@ func (l TenantLimits) overlay(o *TenantLimits) TenantLimits {
 
 func (l TenantLimits) validate() error {
 	if l.MaxBytes < 0 || l.MaxRooms < 0 || l.RoomMaxBytes < 0 || l.RoomMaxEnvelopes < 0 ||
-		l.Rate < 0 || l.Burst < 0 || l.MaxPairings < 0 || l.MaxHosts < 0 || l.PushPerDay < 0 {
+		l.Rate < 0 || l.Burst < 0 || l.MaxPairings < 0 || l.MaxHosts < 0 || l.PushPerDay < 0 ||
+		l.BlobMaxBytes < 0 || l.BlobMaxCount < 0 || l.BlobRoomMaxBytes < 0 || l.BlobRoomMaxCount < 0 {
 		return errors.New("limits must not be negative")
 	}
 	if l.Rate > 0 && l.Burst < 1 {

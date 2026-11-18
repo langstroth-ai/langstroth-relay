@@ -1,0 +1,405 @@
+package relay
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Blob channel (docs/blobs.md): opaque, end-to-end encrypted file
+// attachments. A client seals a file with its workspace key and uploads the
+// ciphertext; the relay stores the bytes it got and hands them back to anyone
+// with read access to the workspace who knows the blob's id. The relay never
+// sees plaintext, file names or types: the signed event that references a
+// blob (its id, content hash, size, author) lives inside the sealed envelope
+// log, and clients check a downloaded blob against it.
+//
+//	POST   /v1/workspaces/{id}/blobs          body = ciphertext → 201 {"id","size","sha256","expiresAt"}
+//	GET    /v1/workspaces/{id}/blobs/{blob}   → 200 application/octet-stream
+//	DELETE /v1/workspaces/{id}/blobs/{blob}   → 204 (whether or not it existed)
+//
+// Ids are minted by the relay (32 random bytes, base64url without padding)
+// and there is no route that lists them, so a blob can't be found by
+// enumeration. Deleting is a capability: write access to the workspace plus
+// knowledge of the id. Clients delete only after a signed deletion event in
+// the workspace log (the authorization of who may delete lives there).
+
+// Blob refusal codes (refusal.go). The storage ones answer 507 and are also
+// label values of hive_relay_limit_rejections_total; blob_rate answers 429.
+const (
+	limBlobRoomBytes   = "blob_room_bytes"
+	limBlobRoomCount   = "blob_room_count"
+	limBlobWriterBytes = "blob_writer_bytes"
+	limBlobWriterCount = "blob_writer_count"
+	limBlobTenantBytes = "blob_tenant_bytes"
+	limBlobTenantCount = "blob_tenant_count"
+	limBlobTotalBytes  = "blob_total_bytes"
+	limBlobRate        = "blob_rate"
+)
+
+func init() {
+	allLimitNames = append(allLimitNames, limBlobRoomBytes, limBlobRoomCount, limBlobWriterBytes,
+		limBlobWriterCount, limBlobTenantBytes, limBlobTenantCount, limBlobTotalBytes, limBlobRate)
+	for k, v := range map[string]string{
+		limBlobRoomBytes:   "workspace attachment storage quota reached",
+		limBlobRoomCount:   "workspace attachment count quota reached",
+		limBlobWriterBytes: "your attachment storage quota in this workspace is reached",
+		limBlobWriterCount: "your attachment count quota in this workspace is reached",
+		limBlobTenantBytes: "tenant attachment storage quota reached",
+		limBlobTenantCount: "tenant attachment count quota reached",
+		limBlobTotalBytes:  "relay attachment storage is full",
+	} {
+		quotaMessages[k] = v
+	}
+}
+
+// Defaults (README "Blobs").
+const (
+	defaultBlobMaxBytes      = 25 << 20  // one blob
+	defaultBlobRoomMaxBytes  = 512 << 20 // one workspace
+	defaultBlobRoomMaxCount  = 2000
+	defaultBlobRetentionDays = 30
+	defaultBlobRate          = 1.0 // uploads per second per writer per workspace
+	defaultBlobBurst         = 20
+
+	// blobIDBytes is the entropy of a blob id; its base64url form is
+	// blobIDLen characters.
+	blobIDBytes = 32
+	blobIDLen   = 43
+
+	// blobTransferWindow is how long one upload or download may take: the
+	// server's 30 s read and write timeouts are for JSON, not 25 MiB.
+	blobTransferWindow = 5 * time.Minute
+)
+
+// blobConfig is the blob channel's relay-wide configuration.
+type blobConfig struct {
+	enabled        bool
+	maxBytes       int64 // LANGSTROTH_RELAY_BLOB_MAX_BYTES
+	roomMaxBytes   int64 // LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES (0 = off)
+	roomMaxCount   int64 // LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT (0 = off)
+	writerMaxBytes int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES (0 = off)
+	writerMaxCount int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT (0 = off)
+	totalMaxBytes  int64 // LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES (0 = off)
+	retention      time.Duration
+	rate           *ipRateLimiter // LANGSTROTH_RELAY_BLOB_RATE / _BURST (nil = off)
+}
+
+func blobConfigFromEnv() blobConfig {
+	pos := func(name string, def int64) int64 { return max(envInt64(name, def), 0) }
+	c := blobConfig{
+		enabled:        blobsEnabled(getenv("LANGSTROTH_RELAY_BLOBS")),
+		maxBytes:       pos("LANGSTROTH_RELAY_BLOB_MAX_BYTES", defaultBlobMaxBytes),
+		roomMaxBytes:   pos("LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES", defaultBlobRoomMaxBytes),
+		roomMaxCount:   pos("LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT", defaultBlobRoomMaxCount),
+		writerMaxBytes: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES", 0),
+		writerMaxCount: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT", 0),
+		totalMaxBytes:  pos("LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES", 0),
+		retention:      daysEnv("LANGSTROTH_RELAY_BLOB_RETENTION_DAYS", defaultBlobRetentionDays),
+	}
+	if c.maxBytes == 0 {
+		c.maxBytes = defaultBlobMaxBytes // a blob size cap is never off
+	}
+	if r := envFloat("LANGSTROTH_RELAY_BLOB_RATE", defaultBlobRate); r > 0 {
+		c.rate = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_BLOB_BURST", defaultBlobBurst), 1))
+	}
+	return c
+}
+
+// blobsEnabled reads LANGSTROTH_RELAY_BLOBS: on unless it says off.
+func blobsEnabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "0", "false", "no":
+		return false
+	}
+	return true
+}
+
+func (c blobConfig) log() {
+	if !c.enabled {
+		slog.Info("blob channel off (LANGSTROTH_RELAY_BLOBS=off)")
+		return
+	}
+	attrs := []any{"max_bytes", c.maxBytes, "room_max_bytes", c.roomMaxBytes, "room_max_count", c.roomMaxCount,
+		"writer_max_bytes", c.writerMaxBytes, "writer_max_count", c.writerMaxCount, "total_max_bytes", c.totalMaxBytes,
+		"retention_days", int(c.retention / (24 * time.Hour))}
+	if c.rate != nil {
+		attrs = append(attrs, "rate", c.rate.rate, "burst", c.rate.burst)
+	}
+	slog.Info("blob channel", attrs...)
+}
+
+// BlobMeta describes one stored blob. Uploader is a hash of the writing
+// identity (blobUploaderTag), never the raw token subject or address.
+type BlobMeta struct {
+	Room      string // storage key (<tenant>/<id> with tenancy)
+	ID        string
+	Tenant    string
+	Uploader  string
+	Size      int64
+	SHA256    string // hex of the stored bytes
+	CreatedAt int64
+	ExpiresAt int64 // unix seconds; 0 = kept until deleted
+}
+
+// blobQuota carries the limits for one upload. Zero fields are unlimited.
+type blobQuota struct {
+	RoomMaxBytes, RoomMaxCount     int64
+	WriterMaxBytes, WriterMaxCount int64
+	TenantMaxBytes, TenantMaxCount int64
+	TotalMaxBytes                  int64
+}
+
+// errNoRoom is a blob upload to a workspace that holds nothing yet. Blobs
+// ride a workspace's log, so they never create a room (which would get round
+// the room limits).
+var errNoRoom = errors.New("no such workspace")
+
+// blobStore is implemented by both built-in stores. A downstream Store
+// without it keeps compiling; the blob routes then answer 404.
+type blobStore interface {
+	// PutBlob stores data under meta if the room is live and every quota in
+	// q admits it, atomically with the quota checks. Returns errNoRoom or a
+	// quota error (quota.go) otherwise.
+	PutBlob(ctx context.Context, meta BlobMeta, data []byte, q blobQuota) error
+	// GetBlob returns a live (unexpired at now) blob of room.
+	GetBlob(ctx context.Context, room, id string, now int64) (BlobMeta, []byte, bool, error)
+	// DeleteBlob removes one blob of room; false if there was none.
+	DeleteBlob(ctx context.Context, room, id string) (bool, error)
+	// DeleteBlobsByUploader removes every blob uploader put in room.
+	DeleteBlobsByUploader(ctx context.Context, room, uploader string) (int64, error)
+	// PruneExpiredBlobs removes every blob that expired at or before now.
+	PruneExpiredBlobs(ctx context.Context, now int64) (int64, error)
+}
+
+// newBlobID mints a blob id: 32 random bytes, base64url without padding.
+func newBlobID() string {
+	var b [blobIDBytes]byte
+	randRead(b[:])
+	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
+// validBlobID is the shape newBlobID produces; anything else is unknown.
+func validBlobID(id string) bool {
+	if len(id) != blobIDLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// blobUploaderTag is the stored identity of an uploader: a hash of its
+// writerTag (token subject, else client address).
+func blobUploaderTag(writer string) string {
+	return sha256hex("relay-blob-uploader\x00" + writer)
+}
+
+// blobUploaderForAccount is the uploader tag of a token subject in the
+// tenant of ctx: what writerTag yields for that member's uploads.
+func blobUploaderForAccount(ctx context.Context, account string) string {
+	if t := tenantID(ctx); t != "" {
+		return blobUploaderTag("sub:t:" + t + "\x00" + account)
+	}
+	return blobUploaderTag("sub:" + account)
+}
+
+// blobQuotaFor builds the upload quotas for a request: relay-wide limits,
+// then the caller's tenant's.
+func (s *Server) blobQuotaFor(ctx context.Context) blobQuota {
+	q := blobQuota{
+		RoomMaxBytes:   s.blobs.roomMaxBytes,
+		RoomMaxCount:   s.blobs.roomMaxCount,
+		WriterMaxBytes: s.blobs.writerMaxBytes,
+		WriterMaxCount: s.blobs.writerMaxCount,
+		TotalMaxBytes:  s.blobs.totalMaxBytes,
+	}
+	if t := tenantFrom(ctx); t != nil {
+		q.TenantMaxBytes = t.limits.BlobMaxBytes
+		q.TenantMaxCount = t.limits.BlobMaxCount
+		if t.limits.BlobRoomMaxBytes > 0 {
+			q.RoomMaxBytes = t.limits.BlobRoomMaxBytes
+		}
+		if t.limits.BlobRoomMaxCount > 0 {
+			q.RoomMaxCount = t.limits.BlobRoomMaxCount
+		}
+	}
+	return q
+}
+
+func (s *Server) registerBlobs(mux *http.ServeMux) {
+	if !s.blobs.enabled || s.blobStore == nil {
+		return
+	}
+	mux.HandleFunc("POST /v1/workspaces/{id}/blobs", s.scoped(s.postBlob))
+	mux.HandleFunc("GET /v1/workspaces/{id}/blobs/{blob}", s.scoped(s.getBlob))
+	mux.HandleFunc("DELETE /v1/workspaces/{id}/blobs/{blob}", s.scoped(s.deleteBlob))
+}
+
+type blobError struct {
+	Error    string `json:"error"`
+	Message  string `json:"message"`
+	MaxBytes int64  `json:"maxBytes,omitempty"`
+}
+
+func blobNotFound(w http.ResponseWriter) {
+	writeJSON(w, http.StatusNotFound, blobError{Error: "blob_not_found", Message: "no such blob"})
+}
+
+// postBlob stores one sealed blob and answers its relay-minted id.
+func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
+	if !s.limitWrite(w, r) {
+		return
+	}
+	room := r.PathValue("id")
+	if !s.enforceWrite(w, r, room) {
+		return
+	}
+	writer := writerTag(r.Context(), clientKey(r))
+	if s.blobs.rate != nil {
+		if ok, wait := s.blobs.rate.allowWait(room + "|" + writer); !ok {
+			tooMany(w, limBlobRate, tenantID(r.Context()), wait, "attachment upload rate exceeded")
+			return
+		}
+	}
+	tooLarge := func() {
+		writeJSON(w, http.StatusRequestEntityTooLarge, blobError{Error: "blob_too_large",
+			Message: "attachment is larger than this relay accepts", MaxBytes: s.blobs.maxBytes})
+	}
+	if r.ContentLength > s.blobs.maxBytes {
+		tooLarge()
+		return
+	}
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(blobTransferWindow))
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.blobs.maxBytes))
+	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			tooLarge()
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, blobError{Error: "bad_body", Message: "could not read the request body"})
+		return
+	}
+	if len(data) == 0 {
+		writeJSON(w, http.StatusBadRequest, blobError{Error: "empty_blob", Message: "an attachment needs a body"})
+		return
+	}
+	sum := sha256.Sum256(data)
+	now := time.Now().Unix()
+	meta := BlobMeta{
+		Room:      room,
+		ID:        newBlobID(),
+		Tenant:    tenantID(r.Context()),
+		Uploader:  blobUploaderTag(writer),
+		Size:      int64(len(data)),
+		SHA256:    hex.EncodeToString(sum[:]),
+		CreatedAt: now,
+	}
+	if s.blobs.retention > 0 {
+		meta.ExpiresAt = now + int64(s.blobs.retention/time.Second)
+	}
+	if err := s.blobStore.PutBlob(r.Context(), meta, data, s.blobQuotaFor(r.Context())); err != nil {
+		if errors.Is(err, errNoRoom) {
+			writeJSON(w, http.StatusNotFound, blobError{Error: "no_workspace",
+				Message: "this workspace holds nothing yet; attachments ride an existing workspace"})
+			return
+		}
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id": meta.ID, "size": meta.Size, "sha256": meta.SHA256, "expiresAt": meta.ExpiresAt,
+	})
+}
+
+func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
+	room := r.PathValue("id")
+	if !s.enforceRead(w, r, room) {
+		return
+	}
+	id := r.PathValue("blob")
+	if !validBlobID(id) {
+		blobNotFound(w)
+		return
+	}
+	_, data, ok, err := s.blobStore.GetBlob(r.Context(), room, id, time.Now().Unix())
+	if storeErr(w, err) {
+		return
+	}
+	if !ok {
+		blobNotFound(w)
+		return
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(blobTransferWindow))
+	h := w.Header()
+	h.Set("Content-Type", "application/octet-stream")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Disposition", "attachment")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) deleteBlob(w http.ResponseWriter, r *http.Request) {
+	if !s.limitWrite(w, r) {
+		return
+	}
+	room := r.PathValue("id")
+	if !s.enforceWrite(w, r, room) {
+		return
+	}
+	if id := r.PathValue("blob"); validBlobID(id) {
+		if _, err := s.blobStore.DeleteBlob(r.Context(), room, id); storeErr(w, err) {
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeMemberBlobs deletes the blobs a removed member uploaded to room
+// (best effort: logged, never fails the removal).
+func (s *Server) removeMemberBlobs(ctx context.Context, room, account string) {
+	if s.blobStore == nil || account == "" {
+		return
+	}
+	n, err := s.blobStore.DeleteBlobsByUploader(ctx, room, blobUploaderForAccount(ctx, account))
+	if err != nil {
+		slog.Warn("removing a member's blobs failed", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("removed member's blobs", "count", n)
+	}
+}
+
+// blobRetentionLoop deletes expired blobs hourly.
+func blobRetentionLoop(bs blobStore, stop <-chan struct{}) {
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+			runPrune("expired_blobs", func() (int64, error) {
+				return bs.PruneExpiredBlobs(context.Background(), time.Now().Unix())
+			})
+		}
+	}
+}

@@ -53,8 +53,9 @@ func (s *memoryStore) PurgeRoom(_ context.Context, room string) (bool, error) {
 	if w == nil {
 		return false, nil
 	}
-	had := w.live || len(w.members) > 0 || len(w.invites) > 0
+	had := w.live || len(w.members) > 0 || len(w.invites) > 0 || len(s.blobs[room]) > 0
 	s.expireRoomLocked(w)
+	s.dropRoomBlobsLocked(room)
 	w.members = map[string]*MemberRow{}
 	w.invites = map[string]*memInvite{}
 	s.dropIfEmptyLocked(room, w)
@@ -68,6 +69,7 @@ func (s *memoryStore) PruneIdleRooms(_ context.Context, cutoff int64) (int64, er
 	for id, w := range s.workspaces {
 		if w.live && w.lastWrite < cutoff {
 			s.expireRoomLocked(w)
+			s.dropRoomBlobsLocked(id)
 			s.dropIfEmptyLocked(id, w)
 			n++
 		}

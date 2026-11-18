@@ -164,6 +164,19 @@ func TestExistingRoutesMatchGolden(t *testing.T) {
 		}
 		return
 	}
+	checkGolden(t, got)
+}
+
+// The blob channel is additive: with it on (the default, above) or off, every
+// existing route answers exactly as recorded.
+func TestExistingRoutesMatchGoldenWithBlobsOff(t *testing.T) {
+	t.Setenv("LANGSTROTH_RELAY_GITHUB_ROUTES", "on")
+	t.Setenv("LANGSTROTH_RELAY_BLOBS", "off")
+	checkGolden(t, runGoldenRequests(t))
+}
+
+func checkGolden(t *testing.T, got []goldenResp) {
+	t.Helper()
 	raw, err := os.ReadFile(goldenRoutesFile)
 	if err != nil {
 		t.Fatalf("read golden: %v", err)

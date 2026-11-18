@@ -33,6 +33,8 @@ type snapshot struct {
 	Tunnel *tunnelSnap `json:"tunnel,omitempty"`
 	// Contact records + drop boxes (relay v0.3); absent from older snapshots.
 	Contacts map[string]contactSnap `json:"contacts,omitempty"`
+	// Attachment blobs (blobs.go); absent from older snapshots.
+	Blobs []blobSnap `json:"blobs,omitempty"`
 }
 
 type tokenSnap struct {
@@ -198,6 +200,7 @@ func (s *memoryStore) restore(snap snapshot) {
 	}
 	s.recountStoreBytesLocked()
 	s.recountRoomsLocked()
+	s.restoreBlobsLocked(snap.Blobs)
 	s.storeBytes += contactBytes
 
 	s.directory = map[string]*DirAccount{}
@@ -274,6 +277,7 @@ func (s *memoryStore) toSnapshot() snapshot {
 		NextIDSeq:   s.nextIDSeq,
 		Tunnel:      s.toTunnelSnap(),
 		Contacts:    contacts,
+		Blobs:       s.blobSnapsLocked(),
 	}
 	for id, u := range s.users {
 		snap.Users[id] = *u

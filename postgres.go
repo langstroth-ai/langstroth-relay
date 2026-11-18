@@ -141,7 +141,7 @@ func (s *postgresStore) migrate(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
 		return fmt.Errorf("migration lock (another pod migrating, or hung holding it): %w", err)
 	}
-	for _, q := range []string{schemaSQL, tunnelSchemaSQL, contactsSchemaSQL, roomsSchemaSQL} {
+	for _, q := range []string{schemaSQL, tunnelSchemaSQL, contactsSchemaSQL, roomsSchemaSQL, blobsSchemaSQL} {
 		if _, err := tx.Exec(ctx, q); err != nil {
 			return err
 		}
