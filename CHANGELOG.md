@@ -8,6 +8,48 @@ against v0.2.0), and no crypto domain-separation string changed. The one
 behavior change is that the deprecated GitHub social routes are off by
 default.
 
+### Renamed to Langstroth
+
+The server side is now **Langstroth** (after the Langstroth frame hive); the
+client apps stay **Ligus**. No wire format, token, crypto string, header,
+route or database table changes.
+
+- Go module `github.com/langstroth-ai/langstroth-relay` (was
+  `github.com/ligus-ai/relay`); `cmd/langstroth-relay`, `cmd/langstroth-auth`;
+  package `langstrothauth` (was `ligusauth`).
+- Images `ghcr.io/langstroth-ai/langstroth-relay` and
+  `ghcr.io/langstroth-ai/langstroth-auth`. The relay images keep
+  `/usr/local/bin/ligus-relay` and `hive-relay`, and the auth image
+  `ligus-auth`, as symlinks until v3.0.
+- Charts `langstroth-relay`, `langstroth-auth` and the `langstroth-postgres`
+  library, published from each release tag at
+  `oci://ghcr.io/langstroth-ai/charts/<name>`. The auth chart's appVersion
+  follows the repository (0.3.0). *Upgrade:* a release installed from the
+  `ligus-relay` or `ligus-auth` chart upgrades with `--set
+  nameOverride=ligus-relay` (or `ligus-auth`) to keep its resource names and
+  selector labels; the charts now mount under `/etc/langstroth-relay` and
+  `/etc/langstroth-auth`.
+- Settings are `LANGSTROTH_RELAY_*` and `LANGSTROTH_AUTH_*`. `LIGUS_RELAY_*`,
+  `LIGUS_AUTH_*` and `HIVE_RELAY_*` keep working. A `LANGSTROTH_*` name and a
+  former name for the same setting set to different values stop the relay or
+  `langstroth-auth` at startup; so do `LANGSTROTH_RELAY_<X>` and
+  `LIGUS_RELAY_<X>` files with different contents in the secrets directory,
+  which may use either name.
+- `langstroth-auth` reads `/etc/langstroth-auth/config.json`, or
+  `/etc/ligus-auth/config.json` when only that exists (the image no longer
+  passes `--config`), and the systemd credential
+  `langstroth-auth-signing-key`, or `ligus-auth-signing-key`.
+- The agent scripts read `LANGSTROTH_NAMESPACE`, `LANGSTROTH_RELEASE`,
+  `LANGSTROTH_SCENARIO`, ... and still accept the `LIGUS_*` names (two
+  different values are a usage error); `local.sh` keeps using a
+  `~/.local/state/ligus-relay` data directory, pid file and metrics token from
+  before the rename.
+- `langstroth-relay bootstrap-agent` prints `brew install langstroth-ai/hive/ligus`.
+- The Fly deploy runs only for a release tag `v*`, after `ci` passes on it,
+  not on every push to main. Fly concurrency counts open connections
+  (1500/2000), and the health check uses the current `http_service.checks`
+  schema.
+
 ### Added
 
 - **Push to more than one app build.** `LIGUS_RELAY_APNS_TOPICS` (comma
