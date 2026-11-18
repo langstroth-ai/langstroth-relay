@@ -230,6 +230,13 @@ func (s *postgresStore) PurgeRoom(ctx context.Context, room string) (bool, error
 		return false, err
 	}
 	defer tx.Rollback(ctx)
+	// Lock the room's row first, as retention does: an append in flight
+	// (row updated, envelope not yet committed) then finishes before the
+	// deletes run, instead of leaving an envelope behind with no row
+	// counting it.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM relay_rooms WHERE workspace = $1 FOR UPDATE`, room); err != nil {
+		return false, err
+	}
 	var existed bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM relay_rooms WHERE workspace = $1)
 		OR EXISTS (SELECT 1 FROM relay_workspace_members WHERE workspace = $1)`, room).Scan(&existed); err != nil {

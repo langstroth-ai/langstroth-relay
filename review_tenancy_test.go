@@ -152,3 +152,52 @@ func TestExpiredEmptyRoomFreesMemory(t *testing.T) {
 		t.Fatal("a purged room with no sequence stayed in memory")
 	}
 }
+
+// F7: Postgres PurgeRoom deleted the room's envelopes before taking the
+// room's row lock, so an append in flight (its row update done, its envelope
+// not yet committed) survived the purge while its relay_rooms row was
+// deleted: stored bytes nobody counts, so the room and tenant quotas and
+// retention stop seeing them.
+func TestPG_PurgeRacingAppendStaysConsistent(t *testing.T) {
+	s := pgStore(t)
+	ctx := qctx(writeQuota{Tenant: "acme"})
+	if _, err := s.AppendEnvelope(ctx, "acme/r", raw(`"first"`), ""); err != nil {
+		t.Fatal(err)
+	}
+	// An append in flight: accounted and inserted, not committed.
+	tx, err := s.pool.Begin(bg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(bg)
+	seq, err := s.nextSeqTx(ctx, tx, "ws:acme/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.touchRoomTx(ctx, tx, "acme/r", 8, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(bg, `INSERT INTO relay_envelopes (workspace, seq, body, created_at) VALUES ('acme/r', $1, '"second"', 1)`, seq); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := s.PurgeRoom(bg, "acme/r"); done <- err }()
+	time.Sleep(300 * time.Millisecond) // the purge reaches the row lock
+	if err := tx.Commit(bg); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var stored, counted int64
+	if err := s.pool.QueryRow(bg, `SELECT count(*) FROM relay_envelopes WHERE workspace = 'acme/r'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.pool.QueryRow(bg, `SELECT envelopes FROM relay_rooms WHERE workspace = 'acme/r'`).Scan(&counted)
+	if stored != counted {
+		t.Fatalf("after a purge raced an append: %d envelopes stored, %d counted", stored, counted)
+	}
+	if b, r, _ := s.TenantUsage(bg, "acme"); stored == 0 && (b != 0 || r != 0) {
+		t.Fatalf("tenant usage after purge: %d bytes %d rooms", b, r)
+	}
+}
