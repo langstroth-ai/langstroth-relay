@@ -459,8 +459,7 @@ func (s *Server) enforceWrite(w http.ResponseWriter, r *http.Request, workspace 
 func (s *Server) enforceRead(w http.ResponseWriter, r *http.Request, workspace string) bool {
 	// Per-client read rate (keyed like the write limiter), so one client can't
 	// loop the list routes and keep the store busy for everyone else.
-	if !s.readLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.readLimiter, clientKey(r), refReadRate, "rate limit exceeded") {
 		return false
 	}
 	if _, ok := s.entitlement.Allow(bearerToken(r), nowUnix()); !ok {
@@ -543,11 +542,7 @@ func (s *Server) guardMetrics(next http.HandlerFunc) http.HandlerFunc {
 // no unauth write path is left unbounded (P2-12). Returns false (after writing
 // 429) when the caller is over the limit.
 func (s *Server) limitWrite(w http.ResponseWriter, r *http.Request) bool {
-	if !s.pushLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-		return false
-	}
-	return true
+	return !rateRefused(w, s.pushLimiter, clientKey(r), refWriteRate, "rate limit exceeded")
 }
 
 func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
@@ -559,8 +554,7 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 	// history (P1-6). Content-blind — keyed on the token subject or client
 	// IP, never the body.
 	id := r.PathValue("id")
-	if !s.wsWriterLimit.allow(id + "|" + writerTag(r.Context(), clientKey(r))) {
-		http.Error(w, "workspace write quota exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.wsWriterLimit, id+"|"+writerTag(r.Context(), clientKey(r)), refRoomWriterRate, "workspace write quota exceeded") {
 		return
 	}
 	var body json.RawMessage
@@ -665,7 +659,7 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	// client address), so one client can't hold every slot.
 	releaseClient, ok := s.sseClient.acquire(writerTag(r.Context(), clientKey(r)))
 	if !ok {
-		http.Error(w, "too many concurrent streams from this client", http.StatusTooManyRequests)
+		refuse(w, http.StatusTooManyRequests, refSSEStreams, "too many concurrent streams from this client", retrySSE)
 		return
 	}
 	defer releaseClient()
@@ -917,8 +911,9 @@ func (s *Server) resolvePairing(w http.ResponseWriter, r *http.Request) {
 
 	s.pairMu.Lock()
 	if s.resolveBlockedLocked(client, now) {
+		wait := s.pairAttempts[client].resetAt.Sub(now)
 		s.pairMu.Unlock()
-		http.Error(w, "too many attempts", http.StatusTooManyRequests)
+		refuse(w, http.StatusTooManyRequests, refPairLockout, "too many attempts", wait)
 		return
 	}
 	s.sweepPairingsLocked(now)
@@ -1141,8 +1136,7 @@ func (s *Server) accountInviteCreate(w http.ResponseWriter, r *http.Request) {
 	// Per-(sender,recipient) invite rate limit so one account can't flood another's
 	// inbox with workspace invites (P1-7). Generous burst (default 10) then a slow
 	// sustained rate; keyed on the verified sender + target handle.
-	if !s.inviteLimiter.allow(fromAccount + "->" + lower(toLogin)) {
-		http.Error(w, "too many invites to this user", http.StatusTooManyRequests)
+	if rateRefused(w, s.inviteLimiter, fromAccount+"->"+lower(toLogin), refRateLimited, "too many invites to this user") {
 		return
 	}
 	toAccount, found, err := s.store.AccountKeyForLogin(r.Context(), toLogin)
@@ -1372,8 +1366,7 @@ func (s *Server) requireGitHub(w http.ResponseWriter, r *http.Request) (*githubU
 	// friends) so a flood can't be amplified into one outbound api.github.com call
 	// per request, and to throttle bulk directory / membership enumeration (P1-8,
 	// P2-14). Generous (default 30/s, burst 120); env-tunable.
-	if !s.ghLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.ghLimiter, clientKey(r), refRateLimited, "rate limit exceeded") {
 		return nil, false
 	}
 	user, err := s.verifyCached(r.Context(), token)
@@ -1517,8 +1510,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // storeErr writes the response for a store error (507/429 for a quota,
 // else 500) and returns true if there was one.
 func storeErr(w http.ResponseWriter, err error) bool {
-	if status, msg, ok := quotaStatus(err); ok {
-		http.Error(w, msg, status)
+	if status, code, msg, ok := quotaStatus(err); ok {
+		refuse(w, status, code, msg, quotaRetry(code))
 		return true
 	}
 	if err != nil {
@@ -1548,6 +1541,10 @@ func friendErr(w http.ResponseWriter, err error) bool {
 		status = http.StatusForbidden
 	case errors.Is(err, ErrTooManyPending):
 		status = http.StatusTooManyRequests
+	}
+	if status == http.StatusTooManyRequests {
+		refuse(w, status, refTooManyPending, err.Error(), time.Minute)
+		return true
 	}
 	if status == http.StatusInternalServerError {
 		// Not one of the friend graph's own refusals: a store error, which may

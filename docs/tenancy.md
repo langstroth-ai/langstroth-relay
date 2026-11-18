@@ -96,8 +96,11 @@ Rules:
   with `RETURNING` and the transaction rolls back when over).
 - An idempotent re-push of an envelope already stored is answered as before
   (its seq) even when the room is full.
-- 429 responses carry `Retry-After` (seconds until a token is available,
-  rounded up); 507 responses don't.
+- Every 429 and 507 carries `Retry-After` (for a rate, the seconds until a
+  token is available, rounded up; for a room or tenant quota an hour; for
+  relay-wide storage ten minutes) and a JSON body
+  `{"error":"<code>","message":"...","retryAfter":n}` whose `error` is the
+  limit name above (README, "Refusals: 429 and 507").
 
 ## Tenancy
 

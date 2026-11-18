@@ -118,17 +118,19 @@ func slash48Key(r *http.Request) string {
 }
 
 // allowCreate spends one create token for the client (and its /48).
-func (l contactLimiters) allowCreate(r *http.Request) bool {
+func (l contactLimiters) allowCreate(r *http.Request) (bool, time.Duration) {
 	tag := writerTag(r.Context(), clientKey(r))
-	if !l.create.allow(tag) {
-		return false
+	if ok, wait := l.create.allowWait(tag); !ok {
+		return false, wait
 	}
 	if strings.HasPrefix(tag, "ip:") {
-		if k := slash48Key(r); k != "" && !l.create48.allow(k) {
-			return false
+		if k := slash48Key(r); k != "" {
+			if ok, wait := l.create48.allowWait(k); !ok {
+				return false, wait
+			}
 		}
 	}
-	return true
+	return true, 0
 }
 
 func contactLimitersFromEnv() contactLimiters {
@@ -245,7 +247,7 @@ func contactErr(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, ErrContactKey):
 		http.Error(w, "contact key does not match", http.StatusForbidden)
 	case errors.Is(err, ErrContactsFull):
-		http.Error(w, "relay contact capacity reached", http.StatusInsufficientStorage)
+		refuse(w, http.StatusInsufficientStorage, refContactsFull, "relay contact capacity reached", quotaRetry(refContactsFull))
 	default:
 		if !errors.Is(err, ErrStoreFull) {
 			slog.Error("contact store error", "error", err)
@@ -327,11 +329,12 @@ func (s *Server) contactPut(w http.ResponseWriter, r *http.Request) {
 		// spend the owner's write budget. The store re-checks atomically.
 		contactErr(w, ErrContactKey)
 		return
-	case existing == nil && !s.contactLim.allowCreate(r):
-		http.Error(w, "too many new contacts from this client", http.StatusTooManyRequests)
-		return
-	case existing != nil && !s.contactLim.write.allow(cid):
-		http.Error(w, "too many writes to this contact", http.StatusTooManyRequests)
+	case existing == nil:
+		if ok, wait := s.contactLim.allowCreate(r); !ok {
+			refuse(w, http.StatusTooManyRequests, refContactCreate, "too many new contacts from this client", wait)
+			return
+		}
+	case rateRefused(w, s.contactLim.write, cid, refContactWrite, "too many writes to this contact"):
 		return
 	}
 	exp := now + int64(s.contactCfg.ttl/time.Second)
@@ -348,8 +351,7 @@ func (s *Server) contactGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.readLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.readLimiter, clientKey(r), refReadRate, "rate limit exceeded") {
 		return
 	}
 	rec, err := s.contacts.GetContact(r.Context(), cid, nowUnix())
@@ -410,8 +412,8 @@ func (s *Server) contactDropPost(w http.ResponseWriter, r *http.Request) {
 	if !ok || !s.limitWrite(w, r) {
 		return
 	}
-	if !s.contactLim.drop.allow(writerTag(r.Context(), clientKey(r))+"->"+cid) || !s.contactLim.dropCID.allow(cid) {
-		http.Error(w, "too many drops to this contact", http.StatusTooManyRequests)
+	if rateRefused(w, s.contactLim.drop, writerTag(r.Context(), clientKey(r))+"->"+cid, refContactDrop, "too many drops to this contact") ||
+		rateRefused(w, s.contactLim.dropCID, cid, refContactDrop, "too many drops to this contact") {
 		return
 	}
 	capBody(w, r, s.contactCfg.maxDropBytes)
@@ -448,8 +450,7 @@ func (s *Server) contactDropList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.readLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.readLimiter, clientKey(r), refReadRate, "rate limit exceeded") {
 		return
 	}
 	keyHash, ok := ownerKey(w, r)

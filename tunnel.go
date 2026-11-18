@@ -1413,6 +1413,16 @@ func (l *failLimiter) blocked(key string, now time.Time) bool {
 	return e != nil && now.Before(e.blockedUntil)
 }
 
+// wait is how long key stays blocked (for Retry-After).
+func (l *failLimiter) wait(key string, now time.Time) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.m[key]; e != nil {
+		return e.blockedUntil.Sub(now)
+	}
+	return 0
+}
+
 func (l *failLimiter) note(key string, now time.Time) {
 	if l.max <= 0 {
 		return

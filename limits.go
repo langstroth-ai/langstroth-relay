@@ -3,9 +3,7 @@ package relay
 import (
 	"context"
 	"log/slog"
-	"math"
 	"net/http"
-	"strconv"
 	"time"
 )
 
@@ -39,16 +37,10 @@ func communityLimitsFromEnv() communityLimits {
 	return l
 }
 
-// tooMany writes a 429 for limit with Retry-After (whole seconds, at least 1)
-// and counts it.
+// tooMany writes a 429 refusal for limit (refusal.go) and counts it.
 func tooMany(w http.ResponseWriter, limit, tenant string, wait time.Duration, msg string) {
 	countLimit(limit, tenant)
-	secs := int64(math.Ceil(wait.Seconds()))
-	if secs < 1 {
-		secs = 1
-	}
-	w.Header().Set("Retry-After", strconv.FormatInt(secs, 10))
-	http.Error(w, msg, http.StatusTooManyRequests)
+	refuse(w, http.StatusTooManyRequests, limit, msg, wait)
 }
 
 // limitedPath reports whether the per-client request rate applies to path:

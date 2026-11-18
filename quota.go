@@ -97,25 +97,25 @@ var quotaMessages = map[string]string{
 	limClientRooms:   "too many rooms created by this client",
 }
 
-// quotaStatus maps a store error to a refusal, recording it. ok=false when
-// err is not a quota refusal.
-func quotaStatus(err error) (status int, msg string, ok bool) {
+// quotaStatus maps a store error to a refusal (its status and stable code,
+// refusal.go), recording it. ok=false when err is not a quota refusal.
+func quotaStatus(err error) (status int, code, msg string, ok bool) {
 	var qe *quotaError
 	switch {
 	case errors.As(err, &qe):
 		countLimit(qe.limit, qe.tenant)
 		if qe.storage {
-			return http.StatusInsufficientStorage, quotaMessages[qe.limit], true
+			return http.StatusInsufficientStorage, qe.limit, quotaMessages[qe.limit], true
 		}
-		return http.StatusTooManyRequests, quotaMessages[qe.limit], true
+		return http.StatusTooManyRequests, qe.limit, quotaMessages[qe.limit], true
 	case errors.Is(err, ErrKeyringFull):
 		countLimit(limKeyring, "")
-		return http.StatusInsufficientStorage, "workspace keyring is full", true
+		return http.StatusInsufficientStorage, limKeyring, "workspace keyring is full", true
 	case errors.Is(err, ErrStoreFull):
 		countLimit(limStoreBytes, "")
-		return http.StatusInsufficientStorage, "relay storage is full", true
+		return http.StatusInsufficientStorage, limStoreBytes, "relay storage is full", true
 	}
-	return 0, "", false
+	return 0, "", "", false
 }
 
 // roomCreatorTag is the stored identity of a room's creator: a hash, never

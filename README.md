@@ -294,6 +294,34 @@ values for one small VM, and the Helm chart sets them under `limits.*`.
 - Every refusal is counted in `hive_relay_limit_rejections_total{limit}`;
   `hive_relay_rooms` and `hive_relay_room_bytes` report usage.
 
+#### Refusals: 429 and 507
+
+Every `429` and `507` the relay sends (any route, any limit) carries a
+`Retry-After` header in whole seconds (at least 1) and a JSON body with a
+stable code:
+
+```json
+{"error": "room_bytes", "message": "room storage quota reached", "retryAfter": 3600}
+```
+
+`error` is the contract; `message` is for people and may change. Clients
+should switch on `error`, and treat an unknown code by its status.
+
+| Status | `error` | Meaning | What a client should do |
+|---|---|---|---|
+| 429 | `ip_rate`, `room_rate`, `tenant_rate`, `write_rate`, `read_rate`, `room_writer_rate`, `contact_create_rate`, `contact_write_rate`, `contact_drop_rate`, `rate_limited` | a request rate | wait `Retry-After` (the time until a token is free), then retry the same request; keep the outbox |
+| 429 | `sse_streams` | too many open event streams from this client | close a stream; retry after `Retry-After` |
+| 429 | `pair_lockout` | too many failed pairing-code guesses | stop guessing until `Retry-After` |
+| 429 | `client_rooms` | this client created its quota of rooms | don't retry automatically: tell the user; it clears when one of its rooms expires or is deleted |
+| 429 | `too_many_pending` | GitHub routes: too many pending friend requests | as `client_rooms` |
+| 507 | `room_bytes`, `room_envelopes` | this room is full | stop writing to this room and tell the user; the room stays readable; `Retry-After` is an hour |
+| 507 | `keyring` | the room's key-rotation log is full | as `room_bytes` |
+| 507 | `tenant_bytes`, `tenant_rooms` | the tenant's quota (tenancy) | tell the user to contact their admin; `Retry-After` is an hour |
+| 507 | `store_bytes`, `total_bytes`, `contacts_full` | the relay itself is full | back off and retry after `Retry-After` (ten minutes) |
+
+A refused write stored nothing, so retrying it later is always safe; an
+envelope re-push keeps its idempotency key and gets its original seq.
+
 ### Tenancy: several organisations on one relay
 
 Off by default. With `LANGSTROTH_RELAY_TENANCY` (JSON, normally read from a

@@ -133,7 +133,7 @@ func (h *tunnelHub) handleRevokeHTTP(w http.ResponseWriter, r *http.Request) {
 	ip := clientKey(r)
 	now := h.now()
 	if h.authFail.blocked(ip, now) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
+		refuse(w, http.StatusTooManyRequests, refRateLimited, "too many failed revocations from this client", h.authFail.wait(ip, now))
 		return
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hostRevokeMaxBody))
