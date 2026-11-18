@@ -57,6 +57,7 @@ func (s *memoryStore) PurgeRoom(_ context.Context, room string) (bool, error) {
 	s.expireRoomLocked(w)
 	w.members = map[string]*MemberRow{}
 	w.invites = map[string]*memInvite{}
+	s.dropIfEmptyLocked(room, w)
 	return had, nil
 }
 
@@ -64,13 +65,29 @@ func (s *memoryStore) PruneIdleRooms(_ context.Context, cutoff int64) (int64, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var n int64
-	for _, w := range s.workspaces {
+	for id, w := range s.workspaces {
 		if w.live && w.lastWrite < cutoff {
 			s.expireRoomLocked(w)
+			s.dropIfEmptyLocked(id, w)
 			n++
 		}
 	}
 	return n, nil
+}
+
+// dropIfEmptyLocked forgets an expired workspace that has nothing left to
+// keep: no sequence (it never held an envelope, so no device has a cursor
+// into it), no roster and no invites. Without this, every room created and
+// abandoned stayed in memory and in the byte budget forever. Caller holds
+// s.mu.
+func (s *memoryStore) dropIfEmptyLocked(id string, w *memWorkspace) {
+	if w.live || w.nextSeq != 0 || len(w.members) > 0 || len(w.invites) > 0 {
+		return
+	}
+	delete(s.workspaces, id)
+	if w.charged {
+		s.storeBytes -= int64(wsOverheadBytes + len(id))
+	}
 }
 
 // expireRoomLocked drops w's envelopes, key rotations and device blobs and

@@ -356,6 +356,7 @@ func (s *memoryStore) recountStoreBytesLocked() {
 	var n int64
 	for id, w := range s.workspaces {
 		n += int64(wsOverheadBytes + len(id))
+		w.charged = true
 		for _, e := range w.envelopes {
 			n += int64(len(e.Body))
 		}

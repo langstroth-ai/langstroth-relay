@@ -110,7 +110,10 @@ type memWorkspace struct {
 	tenant    string
 	creator   string
 	roomBytes int64 // envelope bodies + key rotations
-	lastWrite int64 // unix seconds of the last envelope or key-rotation write
+	lastWrite int64 // unix seconds of the room's creation or its last envelope or key-rotation write
+	// charged: the store budget holds this workspace's overhead
+	// (wsOverheadBytes + id), to give back if the struct is dropped.
+	charged bool
 }
 
 type memTenantUse struct {
@@ -244,6 +247,7 @@ func (s *memoryStore) workspaceForWrite(ctx context.Context, id string, addBytes
 	}
 	if w == nil {
 		w = s.workspace(id)
+		w.charged = true
 	}
 	if creating {
 		w.live, w.tenant, w.creator = true, tenant, ""
@@ -256,7 +260,9 @@ func (s *memoryStore) workspaceForWrite(ctx context.Context, id string, addBytes
 			s.creatorRooms[w.creator]++
 		}
 	}
-	if addBytes > 0 || addEnv > 0 {
+	// A new room starts its idle clock now, whatever created it (a presence
+	// write too), so retention can't expire a room created a minute ago.
+	if creating || addBytes > 0 || addEnv > 0 {
 		w.lastWrite = time.Now().Unix()
 	}
 	s.addRoomBytesLocked(w, addBytes)
