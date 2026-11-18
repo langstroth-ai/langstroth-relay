@@ -103,15 +103,15 @@ func newMemoryStoreWithPersistence(dataDir string) *memoryStore {
 	case err == nil:
 		var snap snapshot
 		if jerr := json.Unmarshal(bytes, &snap); jerr != nil {
-			fmt.Fprintf(os.Stderr, "ligus-relay: snapshot at %s is unreadable (%v); starting empty\n", path, jerr)
+			fmt.Fprintf(os.Stderr, "langstroth-relay: snapshot at %s is unreadable (%v); starting empty\n", path, jerr)
 		} else {
 			s.restore(snap)
-			fmt.Fprintf(os.Stderr, "ligus-relay: loaded state snapshot from %s\n", path)
+			fmt.Fprintf(os.Stderr, "langstroth-relay: loaded state snapshot from %s\n", path)
 		}
 	case os.IsNotExist(err):
-		fmt.Fprintf(os.Stderr, "ligus-relay: no snapshot at %s yet; starting empty\n", path)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: no snapshot at %s yet; starting empty\n", path)
 	default:
-		fmt.Fprintf(os.Stderr, "ligus-relay: could not read %s (%v); starting empty\n", path, err)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: could not read %s (%v); starting empty\n", path, err)
 	}
 	return s
 }

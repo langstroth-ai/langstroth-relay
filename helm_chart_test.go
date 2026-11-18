@@ -20,13 +20,13 @@ func renderChart(t *testing.T, args ...string) string {
 	}
 	// Read every chart file so go test's cache notices chart edits (it can't
 	// see the files helm opens).
-	_ = filepath.WalkDir("deploy/helm/ligus-relay", func(p string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir("deploy/helm/langstroth-relay", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			_, _ = os.ReadFile(p)
 		}
 		return nil
 	})
-	cmd := exec.Command(helm, append([]string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0"}, args...)...)
+	cmd := exec.Command(helm, append([]string{"template", "t", "deploy/helm/langstroth-relay", "--kube-version", "1.30.0"}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("helm template %v: %v\n%s", args, err, out)
@@ -39,7 +39,7 @@ func docs(out string) []string { return strings.Split(out, "\n---\n") }
 
 func docOfKind(out, kind, nameSuffix string) string {
 	for _, d := range docs(out) {
-		if strings.Contains(d, "kind: "+kind+"\n") && strings.Contains(d, "name: t-ligus-relay"+nameSuffix+"\n") {
+		if strings.Contains(d, "kind: "+kind+"\n") && strings.Contains(d, "name: t-langstroth-relay"+nameSuffix+"\n") {
 			return d
 		}
 	}
@@ -52,8 +52,8 @@ func docOfKind(out, kind, nameSuffix string) string {
 // default is off.
 func TestChartTunnelOffByDefault(t *testing.T) {
 	out := renderChart(t)
-	if !regexp.MustCompile(`name: LIGUS_RELAY_TUNNEL\s+value: "off"`).MatchString(out) {
-		t.Fatalf("default install must render LIGUS_RELAY_TUNNEL=off")
+	if !regexp.MustCompile(`name: LANGSTROTH_RELAY_TUNNEL\s+value: "off"`).MatchString(out) {
+		t.Fatalf("default install must render LANGSTROTH_RELAY_TUNNEL=off")
 	}
 	split := renderChart(t, "--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg")
 	if docOfKind(split, "Deployment", "-tunnel") != "" {
@@ -99,7 +99,7 @@ func TestChartAPNsKeyOnlyOnTunnelPod(t *testing.T) {
 	if d := docOfKind(out, "Deployment", "-sync"); strings.Contains(d, "APNS") || strings.Contains(d, "secretName: apns") {
 		t.Fatal("relay-sync must not get the APNs key")
 	}
-	if d := docOfKind(out, "Deployment", "-tunnel"); !strings.Contains(d, "LIGUS_RELAY_APNS_KEY_FILE") || !strings.Contains(d, "secretName: apns") {
+	if d := docOfKind(out, "Deployment", "-tunnel"); !strings.Contains(d, "LANGSTROTH_RELAY_APNS_KEY_FILE") || !strings.Contains(d, "secretName: apns") {
 		t.Fatal("the tunnel pod should get the APNs key file")
 	}
 }
@@ -112,7 +112,7 @@ func renderChartErr(t *testing.T, args ...string) string {
 	if err != nil {
 		t.Skip("helm not installed")
 	}
-	cmd := exec.Command(helm, append([]string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0"}, args...)...)
+	cmd := exec.Command(helm, append([]string{"template", "t", "deploy/helm/langstroth-relay", "--kube-version", "1.30.0"}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return ""
@@ -127,7 +127,7 @@ func TestChartAPNsKeyNotThroughSharedConfig(t *testing.T) {
 	if msg := renderChartErr(t, append(base, "--set", "config.existingSecret=shared", "--set", "tunnel.apns.existingSecret=shared")...); !strings.Contains(msg, "tunnel.apns.existingSecret") {
 		t.Fatalf("sharing config.existingSecret with the APNs Secret must fail, got %q", msg)
 	}
-	for _, k := range []string{"LIGUS_RELAY_APNS_KEY", "HIVE_RELAY_APNS_KEY_FILE", "LIGUS_RELAY_APNS_TOPIC"} {
+	for _, k := range []string{"LANGSTROTH_RELAY_APNS_KEY", "LIGUS_RELAY_APNS_KEY", "HIVE_RELAY_APNS_KEY_FILE", "LANGSTROTH_RELAY_APNS_TOPIC"} {
 		if msg := renderChartErr(t, append(base, "--set", "config.env."+k+"=x")...); !strings.Contains(msg, "APNs") {
 			t.Fatalf("config.env.%s must fail, got %q", k, msg)
 		}
@@ -163,21 +163,21 @@ func TestChartDNSEgressOnlyToKubeDNS(t *testing.T) {
 }
 
 // v0.3: contacts on and the deprecated GitHub routes off by default; the
-// contacts values render as their LIGUS_RELAY_* variables, integers intact.
+// contacts values render as their LANGSTROTH_RELAY_* variables, integers intact.
 func TestChartContactsAndGitHubRoutes(t *testing.T) {
 	out := renderChart(t)
 	cm := docOfKind(out, "ConfigMap", "")
-	if strings.Contains(cm, "LIGUS_RELAY_CONTACT") || strings.Contains(cm, "LIGUS_RELAY_GITHUB_ROUTES") {
+	if strings.Contains(cm, "LANGSTROTH_RELAY_CONTACT") || strings.Contains(cm, "LANGSTROTH_RELAY_GITHUB_ROUTES") {
 		t.Fatalf("default install must keep the binary defaults:\n%s", cm)
 	}
 	out = renderChart(t, "--set", "contacts.enabled=false", "--set", "contacts.dropMaxBoxBytes=4194304",
 		"--set", "contacts.dropRate=0.5", "--set", "githubRoutes=true")
 	cm = docOfKind(out, "ConfigMap", "")
 	for _, want := range []string{
-		`LIGUS_RELAY_CONTACTS: "off"`,
-		`LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES: "4194304"`,
-		`LIGUS_RELAY_CONTACT_DROP_RATE: "0.5"`,
-		`LIGUS_RELAY_GITHUB_ROUTES: "on"`,
+		`LANGSTROTH_RELAY_CONTACTS: "off"`,
+		`LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES: "4194304"`,
+		`LANGSTROTH_RELAY_CONTACT_DROP_RATE: "0.5"`,
+		`LANGSTROTH_RELAY_GITHUB_ROUTES: "on"`,
 	} {
 		if !strings.Contains(cm, want) {
 			t.Errorf("missing %s in:\n%s", want, cm)
@@ -194,7 +194,7 @@ func TestChartSecretsAreFiles(t *testing.T) {
 	if strings.Contains(out, "secretKeyRef") || strings.Contains(out, "secretRef:") {
 		t.Fatal("a Secret reaches a container through env or envFrom")
 	}
-	for _, want := range []string{"DATABASE_URL_FILE", "LIGUS_RELAY_SECRETS_DIR", "POSTGRES_PASSWORD_FILE", "checksum/secrets:"} {
+	for _, want := range []string{"DATABASE_URL_FILE", "LANGSTROTH_RELAY_SECRETS_DIR", "POSTGRES_PASSWORD_FILE", "checksum/secrets:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %s", want)
 		}
@@ -210,7 +210,7 @@ func TestChartSecretsAreFiles(t *testing.T) {
 	if again != out {
 		t.Fatal("two renders differ")
 	}
-	if err := exec.Command("helm", "template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0",
+	if err := exec.Command("helm", "template", "t", "deploy/helm/langstroth-relay", "--kube-version", "1.30.0",
 		"--set", "postgres.enabled=true").Run(); err == nil {
 		t.Fatal("postgres.enabled without postgres.existingSecret must fail")
 	}
@@ -221,13 +221,13 @@ func renderAuth(t *testing.T, args ...string) (string, error) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm not installed")
 	}
-	cmd := exec.Command("helm", append([]string{"template", "t", "deploy/helm/ligus-auth", "--kube-version", "1.30.0",
-		"-f", "deploy/helm/ligus-auth/ci/dex-values.yaml"}, args...)...)
+	cmd := exec.Command("helm", append([]string{"template", "t", "deploy/helm/langstroth-auth", "--kube-version", "1.30.0",
+		"-f", "deploy/helm/langstroth-auth/ci/dex-values.yaml"}, args...)...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-// ligus-auth had no NetworkPolicy: its admin port was reachable from every
+// langstroth-auth had no NetworkPolicy: its admin port was reachable from every
 // pod, agent-running serve pods included.
 func TestAuthChartNetworkPolicy(t *testing.T) {
 	out, err := renderAuth(t)
@@ -250,7 +250,7 @@ func TestAuthChartNetworkPolicy(t *testing.T) {
 		t.Fatalf("egress must be restricted to DNS and the IdP, never cloud metadata:\n%s", np)
 	}
 	if !strings.Contains(out, "kind: ServiceAccount") || !strings.Contains(out, "enableServiceLinks: false") {
-		t.Fatal("ligus-auth needs its own token-less ServiceAccount and no service links")
+		t.Fatal("langstroth-auth needs its own token-less ServiceAccount and no service links")
 	}
 	out, _ = renderAuth(t, "--set", "networkPolicy.adminIngressFrom[0].podSelector.matchLabels.app=admin-ui")
 	if !strings.Contains(out, "port: admin") {
@@ -258,14 +258,14 @@ func TestAuthChartNetworkPolicy(t *testing.T) {
 	}
 }
 
-// relay-sync and ligus-auth keep per-process state: more than one replica,
+// relay-sync and langstroth-auth keep per-process state: more than one replica,
 // an HPA, a PDB on one replica or a rolling update must not render.
 func TestChartsRefuseUnsupportedHA(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm not installed")
 	}
 	for _, sets := range [][]string{{"sync.replicas=2"}, {"sync.autoscaling.enabled=true"}, {"sync.pdb.enabled=true"}} {
-		args := []string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0", "--set", "externalDatabase.url=postgres://u:p@db/r"}
+		args := []string{"template", "t", "deploy/helm/langstroth-relay", "--kube-version", "1.30.0", "--set", "externalDatabase.url=postgres://u:p@db/r"}
 		for _, s := range sets {
 			args = append(args, "--set", s)
 		}
@@ -287,12 +287,12 @@ func TestChartsRefuseUnsupportedHA(t *testing.T) {
 			args = append(args, "--set", s)
 		}
 		if out, err := renderAuth(t, args...); err == nil {
-			t.Errorf("ligus-auth rendered with %v:\n%.200s", sets, out)
+			t.Errorf("langstroth-auth rendered with %v:\n%.200s", sets, out)
 		}
 	}
 	out, err := renderAuth(t, "--set", "store.driver=postgres", "--set", "store.databaseUrl.existingSecret=db")
 	if err != nil || !strings.Contains(out, "type: Recreate") {
-		t.Fatalf("ligus-auth with Postgres must use Recreate: %v", err)
+		t.Fatalf("langstroth-auth with Postgres must use Recreate: %v", err)
 	}
 }
 
@@ -315,12 +315,12 @@ func TestChartPublicRelayDefaults(t *testing.T) {
 			t.Errorf("ingress lacks %s:\n%s", want, ing)
 		}
 	}
-	if !strings.Contains(out, "request: 3600s") || !strings.Contains(out, "LIGUS_RELAY_METRICS_TOKEN_FILE") {
+	if !strings.Contains(out, "request: 3600s") || !strings.Contains(out, "LANGSTROTH_RELAY_METRICS_TOKEN_FILE") {
 		t.Error("httpRoute timeouts or the metrics token file missing")
 	}
 	drop := map[string]bool{"ingress.tls.secretName=relay-tls": true, "clientIP.trustedProxies[0]=10.0.0.5/32": true, "metrics.token.existingSecret=mt": true}
 	for k := range drop {
-		args := []string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0"}
+		args := []string{"template", "t", "deploy/helm/langstroth-relay", "--kube-version", "1.30.0"}
 		for i := 0; i < len(good); i += 2 {
 			if good[i+1] != k {
 				args = append(args, good[i], good[i+1])
@@ -335,10 +335,10 @@ func TestChartPublicRelayDefaults(t *testing.T) {
 // The tunnel pod serves only the tunnel; relay-sync never gets the setting.
 func TestChartTunnelPodServesOnlyTunnel(t *testing.T) {
 	out := renderChart(t, "--set", "externalDatabase.url=postgres://u:p@db/r", "--set", "tunnel.mode=open")
-	if !strings.Contains(docOfKind(out, "Deployment", "-tunnel"), "LIGUS_RELAY_ROUTES") {
-		t.Fatal("tunnel pod must set LIGUS_RELAY_ROUTES=tunnel")
+	if !strings.Contains(docOfKind(out, "Deployment", "-tunnel"), "LANGSTROTH_RELAY_ROUTES") {
+		t.Fatal("tunnel pod must set LANGSTROTH_RELAY_ROUTES=tunnel")
 	}
-	if strings.Contains(docOfKind(out, "Deployment", "-sync"), "LIGUS_RELAY_ROUTES") {
+	if strings.Contains(docOfKind(out, "Deployment", "-sync"), "LANGSTROTH_RELAY_ROUTES") {
 		t.Fatal("relay-sync must serve every route")
 	}
 }
@@ -354,5 +354,27 @@ func TestChartPublicServiceTypeNeedsTheSameGuards(t *testing.T) {
 		if msg := renderChartErr(t, "--set", "service.type="+typ, "--set", "metrics.token.existingSecret=mt", "--set", "clientIP.allowSharedBucket=true"); msg != "" {
 			t.Errorf("service.type=%s with a metrics token must render: %s", typ, msg)
 		}
+	}
+}
+
+// A release installed from the former ligus-relay chart upgrades with
+// nameOverride=ligus-relay: the resource names and the immutable selector
+// labels stay what that chart rendered (README, "Renamed from ligus-relay").
+func TestChartNameOverrideKeepsFormerNames(t *testing.T) {
+	out := renderChart(t, "--set", "nameOverride=ligus-relay")
+	var d string
+	for _, doc := range docs(out) {
+		if strings.Contains(doc, "kind: Deployment\n") {
+			d = doc
+		}
+	}
+	if !strings.Contains(d, "name: t-ligus-relay\n") || !strings.Contains(d, "app.kubernetes.io/name: ligus-relay") {
+		t.Fatalf("nameOverride must keep the former names and selector labels:\n%s", d)
+	}
+	if strings.Contains(out, "app.kubernetes.io/name: langstroth-relay") {
+		t.Fatal("a former name must not leave a langstroth-relay selector behind")
+	}
+	if d := docOfKind(renderChart(t), "Deployment", ""); !strings.Contains(d, "app.kubernetes.io/name: langstroth-relay") {
+		t.Fatalf("default name:\n%s", d)
 	}
 }

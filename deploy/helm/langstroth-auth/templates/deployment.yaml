@@ -1,0 +1,108 @@
+{{- $ctx := include "langstroth-auth.dbCtx" . | fromYaml -}}
+{{- $_ := set $ctx "root" . -}}
+{{- $pg := eq (include "langstroth-auth.storeDriver" .) "postgres" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "langstroth-auth.fullname" . }}
+  labels: {{- include "langstroth-auth.labels" . | nindent 4 }}
+spec:
+  # Zero while a bundled-Postgres restore runs, so nothing writes during it.
+  replicas: {{ ternary 0 1 (eq (include "langstroth-postgres.restoring" $ctx) "true") }}
+  # Recreate with either store: two pods would split sign-in and device-code
+  # flows (per process) during a rolling update.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "langstroth-auth.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "langstroth-auth.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "langstroth-auth.config" . | sha256sum }}
+        checksum/secrets: {{ include "langstroth-auth.secretsChecksum" . }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "langstroth-auth.fullname" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: langstroth-auth
+          image: {{ include "langstroth-auth.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve", "--config", "/etc/langstroth-auth/config.json"]
+          ports:
+            - {name: http, containerPort: {{ .Values.service.port }}}
+            {{- if .Values.adminToken.existingSecret }}
+            - {name: admin, containerPort: {{ .Values.service.adminPort }}}
+            {{- end }}
+          env:
+            {{- if .Values.adminToken.existingSecret }}
+            - name: LANGSTROTH_AUTH_ADMIN_TOKEN_FILE
+              value: /etc/langstroth-auth/admin/{{ .Values.adminToken.key }}
+            {{- end }}
+            {{- if $pg }}
+            # The DSN is a file, never an environment variable.
+            - name: LANGSTROTH_AUTH_DATABASE_URL_FILE
+              value: {{ include "langstroth-postgres.dsnPath" $ctx }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/langstroth-auth/config.json, subPath: config.json, readOnly: true}
+            - {name: signing-key, mountPath: /etc/langstroth-auth/key, readOnly: true}
+            {{- if .Values.secretFiles.existingSecret }}
+            - {name: secret-files, mountPath: /etc/langstroth-auth/secrets, readOnly: true}
+            {{- end }}
+            {{- if .Values.adminToken.existingSecret }}
+            - {name: admin-token, mountPath: /etc/langstroth-auth/admin, readOnly: true}
+            {{- end }}
+            {{- if $pg }}
+            - {name: db, mountPath: /etc/langstroth-auth/db, readOnly: true}
+            {{- else }}
+            - {name: state, mountPath: /var/lib/langstroth-auth}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap: {name: {{ include "langstroth-auth.fullname" . }}}
+        # 0400; with fsGroup the kubelet adds group read (0440, group
+        # 65532): readable by the container user only (langstroth-auth refuses
+        # world-readable secret files).
+        - name: signing-key
+          secret:
+            secretName: {{ .Values.signingKey.existingSecret }}
+            defaultMode: 0400
+            items:
+              - {key: {{ .Values.signingKey.key }}, path: signing-key}
+        {{- if .Values.secretFiles.existingSecret }}
+        - name: secret-files
+          secret: {secretName: {{ .Values.secretFiles.existingSecret }}, defaultMode: 0400}
+        {{- end }}
+        {{- if .Values.adminToken.existingSecret }}
+        - name: admin-token
+          secret: {secretName: {{ .Values.adminToken.existingSecret }}, defaultMode: 0400}
+        {{- end }}
+        {{- if $pg }}
+        {{- include "langstroth-postgres.clientVolume" $ctx | nindent 8 }}
+        {{- else }}
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: {claimName: {{ include "langstroth-auth.fullname" . }}}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

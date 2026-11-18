@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1
+#
+# Non-root, distroless image for langstroth-auth (cmd/langstroth-auth), the optional
+# OIDC sign-in and token service that runs beside the relay. Same shape as
+# the relay's deploy/container/Dockerfile: no shell, UID 65532, read-only
+# root filesystem.
+#
+#   docker build -f deploy/container/Dockerfile.langstroth-auth -t langstroth-auth:dev .
+#
+# Mount the configuration at /etc/langstroth-auth/config.json and the issuer key
+# as a file (signing_key_file), never as a build arg or a baked-in layer.
+
+# Base images are pinned by tag and index digest; bump both together.
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/bin/langstroth-auth ./cmd/langstroth-auth && \
+    ln -s langstroth-auth /out/bin/ligus-auth
+
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
+LABEL org.opencontainers.image.title="langstroth-auth" \
+      org.opencontainers.image.description="OIDC sign-in, SCIM deprovisioning and short-lived relay tokens for Ligus" \
+      org.opencontainers.image.source="https://github.com/langstroth-ai/langstroth-relay" \
+      org.opencontainers.image.licenses="MIT"
+# ligus-auth is a symlink to langstroth-auth (the former name, kept until v3.0).
+COPY --from=build /out/bin/ /usr/local/bin/
+USER 65532:65532
+EXPOSE 8090 8091
+ENTRYPOINT ["/usr/local/bin/langstroth-auth"]
+# No --config: the default is /etc/langstroth-auth/config.json, or
+# /etc/ligus-auth/config.json when only that one exists (mounts made before
+# the Langstroth rename). LANGSTROTH_AUTH_CONFIG overrides both.
+CMD ["serve"]

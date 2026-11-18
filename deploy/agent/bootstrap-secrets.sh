@@ -5,8 +5,8 @@
 # a command line: values are written to files in a private temp directory,
 # loaded with --from-file, and the directory is removed.
 #
-#   deploy/agent/bootstrap-secrets.sh --context orbstack --namespace ligus-relay \
-#     --scenario team-bundled [--release ligus-relay] [--json]
+#   deploy/agent/bootstrap-secrets.sh --context orbstack --namespace langstroth-relay \
+#     --scenario team-bundled [--release langstroth-relay] [--json]
 #
 # Values only a human can provide come from files the human wrote:
 #   --dsn-file PATH                 team-external / auth-external: the full DSN
@@ -24,9 +24,9 @@ usage: $0 --scenario S --context CTX [--namespace NS] [--release R]
 EOF
 }
 
-NS=${LIGUS_NAMESPACE:-}
-SCENARIO=${LIGUS_SCENARIO:-}
-RELEASE=${LIGUS_RELEASE:-}
+pick_env NS LANGSTROTH_NAMESPACE LIGUS_NAMESPACE
+pick_env SCENARIO LANGSTROTH_SCENARIO LIGUS_SCENARIO
+pick_env RELEASE LANGSTROTH_RELEASE LIGUS_RELEASE
 DSN_FILE=""
 IDP_FILE=""
 while [ $# -gt 0 ]; do
@@ -94,29 +94,32 @@ else
 fi
 
 # --- Relay settings directory (config.existingSecret) -------------------------
-if [ "$CHARTNAME" = ligus-relay ]; then
+if [ "$CHARTNAME" = langstroth-relay ]; then
   n="$FULL-env"
-  if exists "$n"; then result "$n" exists LIGUS_RELAY_METRICS_TOKEN "left unchanged"
+  # A Secret made before the Langstroth rename holds LIGUS_RELAY_METRICS_TOKEN;
+  # the relay still reads that name, so it is left as it is.
+  if exists "$n"; then result "$n" exists LANGSTROTH_RELAY_METRICS_TOKEN "left unchanged"
   else
     rand_hex 32 >"$TMP/metrics"
-    create_secret "$n" "LIGUS_RELAY_METRICS_TOKEN=$TMP/metrics"
-    result "$n" created LIGUS_RELAY_METRICS_TOKEN "bearer for /metrics"
+    create_secret "$n" "LANGSTROTH_RELAY_METRICS_TOKEN=$TMP/metrics"
+    result "$n" created LANGSTROTH_RELAY_METRICS_TOKEN "bearer for /metrics"
   fi
 fi
 
-# --- ligus-auth issuer key and admin token -------------------------------------
-if [ "$CHARTNAME" = ligus-auth ]; then
+# --- langstroth-auth issuer key and admin token -------------------------------------
+if [ "$CHARTNAME" = langstroth-auth ]; then
   n="$FULL-signing-key"
   if exists "$n"; then
     PUBKEY=$(k -n "$NS" get secret "$n" -o jsonpath='{.metadata.annotations.ligus\.ai/public-key}' 2>/dev/null || true)
     result "$n" exists signing-key "left unchanged"
   else
-    if [ -n "${LIGUS_AUTH_BIN:-}" ]; then
-      out=$("$LIGUS_AUTH_BIN" keygen --out "$TMP/signing-key")
+    pick_env AUTH_BIN LANGSTROTH_AUTH_BIN LIGUS_AUTH_BIN
+    if [ -n "$AUTH_BIN" ]; then
+      out=$("$AUTH_BIN" keygen --out "$TMP/signing-key")
     elif command -v go >/dev/null 2>&1; then
-      out=$(cd "$REPO_ROOT" && go run ./cmd/ligus-auth keygen --out "$TMP/signing-key")
+      out=$(cd "$REPO_ROOT" && go run ./cmd/langstroth-auth keygen --out "$TMP/signing-key")
     else
-      log "need go (or LIGUS_AUTH_BIN pointing at a ligus-auth binary) to generate the issuer key"; exit 3
+      log "need go (or LANGSTROTH_AUTH_BIN pointing at a langstroth-auth binary) to generate the issuer key"; exit 3
     fi
     PUBKEY=$(printf '%s\n' "$out" | sed -n 's/^public_key=//p')
     create_secret "$n" "signing-key=$TMP/signing-key"
@@ -143,7 +146,7 @@ fi
 
 # --- Database ---------------------------------------------------------------------
 role=relay
-[ "$CHARTNAME" = ligus-auth ] && role=ligus_auth
+[ "$CHARTNAME" = langstroth-auth ] && role=ligus_auth
 case $DBMODE in
   bundled)
     n="$FULL-postgres-auth"
@@ -196,6 +199,6 @@ if [ "$JSON" = 1 ]; then
     "$(json_escape "$RELEASE")" "$(json_escape "$FULL")" "$(json_escape "$PUBKEY")" "${RESULTS[*]-}"
   unset IFS
 elif [ -n "$PUBKEY" ]; then
-  log "issuer public key (not secret; LIGUS_RELAY_TOKEN_PUBKEY on the relay): $PUBKEY"
+  log "issuer public key (not secret; LANGSTROTH_RELAY_TOKEN_PUBKEY on the relay): $PUBKEY"
 fi
 exit "$FAILED"

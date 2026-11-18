@@ -6,8 +6,8 @@ import "net/http"
 // github:<id>) need the relay to see the caller's GitHub token. Ligus 2.0
 // doesn't use them: discovery is links, QR codes, co-members and contacts
 // (/v1/contacts/). Since v0.3 they are registered only when
-// LIGUS_RELAY_GITHUB_ROUTES=on (HIVE_RELAY_GITHUB_ROUTES; the spec's name
-// LIGUS_RELAY_GITHUB_SOCIAL=1 is accepted too) for 1.x clients, and every
+// LANGSTROTH_RELAY_GITHUB_ROUTES=on (HIVE_RELAY_GITHUB_ROUTES; the spec's name
+// LANGSTROTH_RELAY_GITHUB_SOCIAL=1 is accepted too) for 1.x clients, and every
 // response carries a deprecation notice. v0.4 removes the handlers, their
 // tables and the GitHub verifier.
 
@@ -15,7 +15,7 @@ import "net/http"
 // (RFC 9745 Deprecation header: "@" + unix seconds).
 const githubRoutesDeprecatedAt = "@1794614400"
 
-const githubRoutesDeprecationLink = `<https://github.com/ligus-ai/relay/blob/main/CHANGELOG.md>; rel="deprecation"`
+const githubRoutesDeprecationLink = `<https://github.com/langstroth-ai/langstroth-relay/blob/main/CHANGELOG.md>; rel="deprecation"`
 
 func githubRoutesFromEnv() bool {
 	return envBool("HIVE_RELAY_GITHUB_ROUTES") || envBool("HIVE_RELAY_GITHUB_SOCIAL")

@@ -1,10 +1,12 @@
-# Ligus Relay
+# Langstroth Relay
 
-A small, **content-blind** rendezvous + envelope-forwarding server for
-[Ligus](https://ligus.ai) ([source](https://github.com/ligus-ai/ligus),
-[docs](https://docs.ligus.ai)). Ligus (LEE-gus) is short for
-*ligustica*, as in *Apis mellifera ligustica*, the Italian honeybee; the project
-was called Hive until v2.0, and this relay was `hive-relay`.
+A small, **content-blind** rendezvous + envelope-forwarding server, part of
+**Langstroth**, the server side of [Ligus](https://ligus.ai)
+([source](https://github.com/langstroth-ai/ligus), [docs](https://docs.ligus.ai)).
+Langstroth is named after the Langstroth frame hive; Ligus (LEE-gus), the
+client apps, is short for *ligustica*, as in *Apis mellifera ligustica*, the
+Italian honeybee. The project was called Hive until v2.0, and this relay was
+`hive-relay`, then `ligus-relay`.
 
 Clients post opaque (end-to-end encrypted) event envelopes keyed by workspace
 and fetch everything after a cursor; the relay also brokers short pairing codes,
@@ -14,15 +16,26 @@ records with sealed drop boxes). **It never sees plaintext, and never a forge
 friend graph of v0.2 are [deprecated](#github-social-routes-deprecated-off-by-default):
 off by default since v0.3, removed in v0.4.
 
-> **Renamed from Hive.** The Go module is now `github.com/ligus-ai/relay`
-> (v0.2.0+; `github.com/honeyhive-ai/relay` v0.1.x is deprecated), the binary is
-> `ligus-relay` (the container image keeps a `hive-relay` alias, and
-> `cmd/hive-relay` still builds, until v3.0), and settings are named
-> `LIGUS_RELAY_*`. Every legacy `HIVE_RELAY_*` name still works: the new name
-> wins if both are set, and the relay logs a one-time deprecation warning per
-> legacy name. Wire formats do not change: the `/v1` API, `hrt1` tokens,
-> `X-Hive-*` headers, the `hive-tunnel.1` subprotocol and the `hive_relay_*`
-> metric names are protocol identifiers from the project's former name.
+> **Renamed to Langstroth (v0.3.0).** The Go module is now
+> `github.com/langstroth-ai/langstroth-relay` (it was `github.com/ligus-ai/relay`
+> in v0.2.x and `github.com/honeyhive-ai/relay` in v0.1.x), the binaries are
+> `langstroth-relay` and `langstroth-auth`, the images are
+> `ghcr.io/langstroth-ai/langstroth-relay` and
+> `ghcr.io/langstroth-ai/langstroth-auth` (the relay image keeps `ligus-relay`
+> and `hive-relay` aliases until v3.0), and the charts are `langstroth-relay`,
+> `langstroth-auth` and the `langstroth-postgres` library, published at
+> `oci://ghcr.io/langstroth-ai/charts/<name>`.
+>
+> Settings are named `LANGSTROTH_RELAY_*` (and `LANGSTROTH_AUTH_*` for
+> `langstroth-auth`). The `LIGUS_RELAY_*`, `LIGUS_AUTH_*` and legacy
+> `HIVE_RELAY_*` names keep working. When a `LANGSTROTH_*` name and an older
+> name for the same setting are both set they must agree, or the process
+> refuses to start. Legacy `HIVE_RELAY_*` names log a one-time deprecation
+> warning. Wire formats do not change: the `/v1` API, `hrt1` tokens,
+> `X-Hive-*` / `X-Ligus-*` headers, the `hive-tunnel.1` subprotocol, the
+> `hive_relay_*` metric names, database table names and crypto
+> domain-separation strings are protocol identifiers from the project's
+> former names.
 
 This is the production relay (Go). It speaks the same JSON `/v1` contract and
 `hrt1` access-token format as the original Rust reference relay
@@ -34,7 +47,7 @@ the Rust client (in the Ligus app repo).
 A coding agent (Claude Code, Codex, Copilot CLI, ...) can deploy the relay
 on Kubernetes or run it locally without guessing. [AGENTS.md](AGENTS.md)
 has the decision table (local binary, `eval-memory`, `team-bundled`,
-`team-external`, `team-cnpg`, `ligus-auth`), the exact commands, the hard
+`team-external`, `team-cnpg`, `langstroth-auth`), the exact commands, the hard
 rules (no secrets in chat or values files, never weaken fail-closed defaults)
 and the steps only a human can do. The scripts in `deploy/agent/`
 (`preflight`, `bootstrap-secrets`, `install`, `verify`, `teardown`,
@@ -45,108 +58,111 @@ and the steps only a human can do. The scripts in `deploy/agent/`
 ## Run
 
 ```sh
-go run ./cmd/ligus-relay            # serves on :8443 (in-memory)
+go run ./cmd/langstroth-relay            # serves on :8443 (in-memory)
 # or build:
-go build -o ligus-relay ./cmd/ligus-relay && ./ligus-relay
+go build -o langstroth-relay ./cmd/langstroth-relay && ./langstroth-relay
 ```
 
 Operator commands (mint/verify signed access tokens — the serving relay
 only ever *verifies*):
 
 ```sh
-ligus-relay keygen                  # prints an Ed25519 issuer keypair
-ligus-relay issue --key <priv-hex> --sub <id> --plan team --exp-days 365 \
+langstroth-relay keygen                  # prints an Ed25519 issuer keypair
+langstroth-relay issue --key <priv-hex> --sub <id> --plan team --exp-days 365 \
   --max-members 50 --turn --cap remove_member
 ```
 
 ## Configuration (env)
 
-Each `LIGUS_RELAY_*` setting below is also read under its legacy
-`HIVE_RELAY_*` name (the new name wins if both are set). Rates are tokens per
+Each `LANGSTROTH_RELAY_*` setting below is also read under its former
+`LIGUS_RELAY_*` name and its legacy `HIVE_RELAY_*` name. If the
+`LANGSTROTH_RELAY_*` name and a former name are both set to different values,
+the relay refuses to start; if only `LIGUS_RELAY_*` and `HIVE_RELAY_*` differ,
+the `LIGUS_RELAY_*` value wins with a warning. Rates are tokens per
 second per client; a client is the TCP peer, or the address a trusted proxy
-names (`LIGUS_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
+names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 
 **Core and access**
 
 | Var | Default | Meaning |
 |---|---|---|
-| `PORT` / `LIGUS_RELAY_ADDR` | `0.0.0.0:8443` | bind address (`$PORT` wins) |
+| `PORT` / `LANGSTROTH_RELAY_ADDR` | `0.0.0.0:8443` | bind address (`$PORT` wins) |
 | `DATABASE_URL` | empty | shared **Postgres** store → horizontal scaling / HA (no data migration) |
-| `LIGUS_RELAY_DATA_DIR` | empty | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
-| `LIGUS_RELAY_REQUIRE_DB` | off | `1`: refuse to start without `DATABASE_URL` instead of falling back to memory |
-| `LIGUS_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** access tokens. A key that doesn't parse denies every token |
-| `LIGUS_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
-| `LIGUS_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
-| `LIGUS_RELAY_TOKEN_PUBKEY_NEXT` | empty | A second issuer public key accepted next to `LIGUS_RELAY_TOKEN_PUBKEY` while the issuer rotates its key. Needs `LIGUS_RELAY_TOKEN_PUBKEY`; a key that doesn't parse denies every token |
-| `LIGUS_RELAY_TENANTS` | unset | Comma-separated tenant ids. When set, a signed token must carry a `tid` claim in this list (tokens without one get `401`). Needs `LIGUS_RELAY_TOKEN_PUBKEY` and `LIGUS_RELAY_WORKSPACE_SCOPE=strict` (the relay refuses to start otherwise, because `tid` alone does not keep one tenant out of another's workspaces). See [Sign-in with your identity provider](#sign-in-with-your-identity-provider-ligus-auth) |
-| `LIGUS_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
-| `LIGUS_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
-| `LIGUS_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
-| `LIGUS_RELAY_CONTACTS` | on | `off`: unregister `/v1/contacts/*` (404, as on a v0.2 relay). See [Contacts](#contacts-v1contacts) |
-| `LIGUS_RELAY_GITHUB_ROUTES` | off | **Deprecated, removed in v0.4.** `on`: register the GitHub social routes (directory, account, friends) for Ligus/Hive 1.x clients; every response then carries a `Deprecation` header. `LIGUS_RELAY_GITHUB_SOCIAL=1` is accepted too. See [GitHub social routes](#github-social-routes-deprecated-off-by-default) |
-| `LIGUS_RELAY_FRIEND_CAP` | none | max accepted friends per account (GitHub routes only) |
-| `LIGUS_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends (GitHub routes only) |
-| `LIGUS_RELAY_TRUSTED_PROXIES` | empty | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used |
-| `LIGUS_RELAY_CLIENT_IP_HEADER` | `X-Forwarded-For` | header read from a trusted proxy (walked right to left past trusted hops), or a single-address header such as `X-Real-IP` |
+| `LANGSTROTH_RELAY_DATA_DIR` | empty | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
+| `LANGSTROTH_RELAY_REQUIRE_DB` | off | `1`: refuse to start without `DATABASE_URL` instead of falling back to memory |
+| `LANGSTROTH_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** access tokens. A key that doesn't parse denies every token |
+| `LANGSTROTH_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
+| `LANGSTROTH_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
+| `LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT` | empty | A second issuer public key accepted next to `LANGSTROTH_RELAY_TOKEN_PUBKEY` while the issuer rotates its key. Needs `LANGSTROTH_RELAY_TOKEN_PUBKEY`; a key that doesn't parse denies every token |
+| `LANGSTROTH_RELAY_TENANTS` | unset | Comma-separated tenant ids. When set, a signed token must carry a `tid` claim in this list (tokens without one get `401`). Needs `LANGSTROTH_RELAY_TOKEN_PUBKEY` and `LANGSTROTH_RELAY_WORKSPACE_SCOPE=strict` (the relay refuses to start otherwise, because `tid` alone does not keep one tenant out of another's workspaces). See [Sign-in with your identity provider](#sign-in-with-your-identity-provider-langstroth-auth) |
+| `LANGSTROTH_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
+| `LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
+| `LANGSTROTH_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
+| `LANGSTROTH_RELAY_CONTACTS` | on | `off`: unregister `/v1/contacts/*` (404, as on a v0.2 relay). See [Contacts](#contacts-v1contacts) |
+| `LANGSTROTH_RELAY_GITHUB_ROUTES` | off | **Deprecated, removed in v0.4.** `on`: register the GitHub social routes (directory, account, friends) for Ligus/Hive 1.x clients; every response then carries a `Deprecation` header. `LANGSTROTH_RELAY_GITHUB_SOCIAL=1` is accepted too. See [GitHub social routes](#github-social-routes-deprecated-off-by-default) |
+| `LANGSTROTH_RELAY_FRIEND_CAP` | none | max accepted friends per account (GitHub routes only) |
+| `LANGSTROTH_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends (GitHub routes only) |
+| `LANGSTROTH_RELAY_TRUSTED_PROXIES` | empty | comma-separated CIDRs/IPs of reverse proxies whose forwarding header names the client (empty = use the TCP peer, ignore every forwarding header). Set it behind an ingress or load balancer, or every client shares one rate-limit bucket. On Fly.io (`FLY_APP_NAME` set) with this unset, `Fly-Client-IP` is used |
+| `LANGSTROTH_RELAY_CLIENT_IP_HEADER` | `X-Forwarded-For` | header read from a trusted proxy (walked right to left past trusted hops), or a single-address header such as `X-Real-IP` |
 
 **Storage, retention and size bounds**
 
 | Var | Default | Meaning |
 |---|---|---|
-| `LIGUS_RELAY_MAX_ENVELOPES` | `50000` | per-workspace retained-envelope cap (`0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly |
-| `LIGUS_RELAY_RETENTION_DAYS` | `0` (off) | prune envelopes older than N days; both stores |
-| `LIGUS_RELAY_MAX_STORE_BYTES` | `0` (unbounded) | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs, per-workspace overhead). Writes past it answer `507`. Set it below your memory limit on any relay reachable by untrusted clients |
-| `LIGUS_RELAY_MAX_BODY_BYTES` | `4194304` (4 MiB) | max JSON request-body size |
-| `LIGUS_RELAY_MAX_LIST_BYTES` | `16777216` (16 MiB) | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (`0` = unbounded). At least one row is always returned |
-| `LIGUS_RELAY_MAX_KEYRING_PER_WS` | `2000` | key rotations stored per workspace. Past it a new rotation gets `507`; stored rotations are never evicted |
-| `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS` | `16777216` (16 MiB) | stored keyring bytes per workspace; `507` past it. Keep it at or below `LIGUS_RELAY_MAX_LIST_BYTES` so `GET …/keyring` always returns the whole keyring |
-| `LIGUS_RELAY_MAX_ROTATION_BYTES` | `262144` (256 KiB) | one key rotation's size; `413` past it (`0` = only the body cap) |
-| `LIGUS_RELAY_MAX_DEVICE_BLOBS_PER_WS` | `1000` | candidate and presence device entries per workspace |
-| `LIGUS_RELAY_MAX_PAIRINGS` | `50000` | live pairing codes per instance (`503` past it) |
-| `LIGUS_RELAY_INBOX_MAX_ROWS` | `5000` | account-inbox rows per recipient (oldest evicted) |
-| `LIGUS_RELAY_INBOX_RETENTION_DAYS` | `30` | Postgres: prune inbox rows older than N days (`0` = off) |
-| `LIGUS_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
-| `LIGUS_RELAY_CONTACT_MAX_RECORD_BYTES` | `65536` (64 KiB) | one contact record's size; `413` past it |
-| `LIGUS_RELAY_CONTACT_MAX_DROP_BYTES` | `65536` (64 KiB) | one sealed drop's size; `413` past it |
-| `LIGUS_RELAY_CONTACT_TTL_DAYS` | `30` | a record expires N days after its last write (clients re-publish on heartbeat); an expired record and its drop box are deleted |
-| `LIGUS_RELAY_CONTACT_RECLAIM_HOLD_DAYS` | `180` | after a record expires, only its old write key may create the cid again for N days (`403` for any other key); then the cid is free. `0` = free at once |
-| `LIGUS_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); see eviction under Contacts |
-| `LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
-| `LIGUS_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
-| `LIGUS_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LIGUS_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
+| `LANGSTROTH_RELAY_MAX_ENVELOPES` | `50000` | per-workspace retained-envelope cap (`0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly |
+| `LANGSTROTH_RELAY_RETENTION_DAYS` | `0` (off) | prune envelopes older than N days; both stores |
+| `LANGSTROTH_RELAY_MAX_STORE_BYTES` | `0` (unbounded) | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs, per-workspace overhead). Writes past it answer `507`. Set it below your memory limit on any relay reachable by untrusted clients |
+| `LANGSTROTH_RELAY_MAX_BODY_BYTES` | `4194304` (4 MiB) | max JSON request-body size |
+| `LANGSTROTH_RELAY_MAX_LIST_BYTES` | `16777216` (16 MiB) | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (`0` = unbounded). At least one row is always returned |
+| `LANGSTROTH_RELAY_MAX_KEYRING_PER_WS` | `2000` | key rotations stored per workspace. Past it a new rotation gets `507`; stored rotations are never evicted |
+| `LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS` | `16777216` (16 MiB) | stored keyring bytes per workspace; `507` past it. Keep it at or below `LANGSTROTH_RELAY_MAX_LIST_BYTES` so `GET …/keyring` always returns the whole keyring |
+| `LANGSTROTH_RELAY_MAX_ROTATION_BYTES` | `262144` (256 KiB) | one key rotation's size; `413` past it (`0` = only the body cap) |
+| `LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS` | `1000` | candidate and presence device entries per workspace |
+| `LANGSTROTH_RELAY_MAX_PAIRINGS` | `50000` | live pairing codes per instance (`503` past it) |
+| `LANGSTROTH_RELAY_INBOX_MAX_ROWS` | `5000` | account-inbox rows per recipient (oldest evicted) |
+| `LANGSTROTH_RELAY_INBOX_RETENTION_DAYS` | `30` | Postgres: prune inbox rows older than N days (`0` = off) |
+| `LANGSTROTH_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
+| `LANGSTROTH_RELAY_CONTACT_MAX_RECORD_BYTES` | `65536` (64 KiB) | one contact record's size; `413` past it |
+| `LANGSTROTH_RELAY_CONTACT_MAX_DROP_BYTES` | `65536` (64 KiB) | one sealed drop's size; `413` past it |
+| `LANGSTROTH_RELAY_CONTACT_TTL_DAYS` | `30` | a record expires N days after its last write (clients re-publish on heartbeat); an expired record and its drop box are deleted |
+| `LANGSTROTH_RELAY_CONTACT_RECLAIM_HOLD_DAYS` | `180` | after a record expires, only its old write key may create the cid again for N days (`403` for any other key); then the cid is free. `0` = free at once |
+| `LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); see eviction under Contacts |
+| `LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
+| `LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
+| `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
 
 **Rate and concurrency limits** (a rate of `0` disables that limit)
 
 | Var | Default | Meaning |
 |---|---|---|
-| `LIGUS_RELAY_PUSH_RATE` / `_BURST` | `100` / `300` | every unauthenticated write (envelopes, keyring, presence, candidates, pairing) per client |
-| `LIGUS_RELAY_WS_WRITER_RATE` / `_BURST` | `20` / `200` | envelope appends per (workspace, writer) |
-| `LIGUS_RELAY_READ_RATE` / `_BURST` | `100` / `400` | workspace reads (envelopes, keyring, presence, candidates, members, SSE connects) per client; `429` past it |
-| `LIGUS_RELAY_MAX_SSE` | `2000` | concurrent SSE streams per instance (`503` past it; `0` = unlimited) |
-| `LIGUS_RELAY_MAX_SSE_PER_CLIENT` | `100` | concurrent SSE streams per client (token subject, else address; `429` past it; `0` = unlimited) |
-| `LIGUS_RELAY_GITHUB_RATE` / `_BURST` | `30` / `120` | GitHub-backed routes (directory, account, friends) per client |
-| `LIGUS_RELAY_INVITE_RATE` / `_BURST` | `0.05` / `10` | account invites per (sender, recipient) |
-| `LIGUS_RELAY_CONTACT_DROP_RATE` / `_BURST` | `0.05` / `10` | contact drops per (sender, cid); the account-invite defaults |
-| `LIGUS_RELAY_CONTACT_DROP_CID_RATE` / `_BURST` | `1` / `60` | contact drops per cid, all senders together |
-| `LIGUS_RELAY_CONTACT_WRITE_RATE` / `_BURST` | `0.2` / `10` | contact record updates per cid (counted only after the key matches) |
-| `LIGUS_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address; IPv6 by /64, and each IPv6 /48 also gets 16x this rate and burst in total) |
+| `LANGSTROTH_RELAY_PUSH_RATE` / `_BURST` | `100` / `300` | every unauthenticated write (envelopes, keyring, presence, candidates, pairing) per client |
+| `LANGSTROTH_RELAY_WS_WRITER_RATE` / `_BURST` | `20` / `200` | envelope appends per (workspace, writer) |
+| `LANGSTROTH_RELAY_READ_RATE` / `_BURST` | `100` / `400` | workspace reads (envelopes, keyring, presence, candidates, members, SSE connects) per client; `429` past it |
+| `LANGSTROTH_RELAY_MAX_SSE` | `2000` | concurrent SSE streams per instance (`503` past it; `0` = unlimited) |
+| `LANGSTROTH_RELAY_MAX_SSE_PER_CLIENT` | `100` | concurrent SSE streams per client (token subject, else address; `429` past it; `0` = unlimited) |
+| `LANGSTROTH_RELAY_GITHUB_RATE` / `_BURST` | `30` / `120` | GitHub-backed routes (directory, account, friends) per client |
+| `LANGSTROTH_RELAY_INVITE_RATE` / `_BURST` | `0.05` / `10` | account invites per (sender, recipient) |
+| `LANGSTROTH_RELAY_CONTACT_DROP_RATE` / `_BURST` | `0.05` / `10` | contact drops per (sender, cid); the account-invite defaults |
+| `LANGSTROTH_RELAY_CONTACT_DROP_CID_RATE` / `_BURST` | `1` / `60` | contact drops per cid, all senders together |
+| `LANGSTROTH_RELAY_CONTACT_WRITE_RATE` / `_BURST` | `0.2` / `10` | contact record updates per cid (counted only after the key matches) |
+| `LANGSTROTH_RELAY_CONTACT_CREATE_RATE` / `_BURST` | `0.01` / `20` | new contact records per client (token subject, else address; IPv6 by /64, and each IPv6 /48 also gets 16x this rate and burst in total) |
 
 **Relay tunnel and push**
 
 | Var | Default | Meaning |
 |---|---|---|
-| `LIGUS_RELAY_TUNNEL` | `off` | relay tunnel (phone ↔ home host): `off` (`/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LIGUS_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
-| `LIGUS_RELAY_TUNNEL_HOSTS` | empty | comma-separated `host_id`s admitted when `LIGUS_RELAY_TUNNEL=allowlist` |
-| `LIGUS_RELAY_APNS_KEY_FILE` | empty | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LIGUS_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
-| `LIGUS_RELAY_APNS_KEY_ID` / `LIGUS_RELAY_APNS_TEAM_ID` | empty | the key's Key ID and your Apple developer Team ID |
-| `LIGUS_RELAY_APNS_TOPIC` | empty | bundle id of the iPhone app build you publish (the default APNs topic) |
-| `LIGUS_RELAY_APNS_TOPICS` | empty | more bundle ids this relay may push to, comma-separated (for example the App Store build and a dev build). Either this or `LIGUS_RELAY_APNS_TOPIC` is enough; without `LIGUS_RELAY_APNS_TOPIC` the first one is the default |
-| `LIGUS_RELAY_APNS_ENV` | `auto` | `auto` (the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
+| `LANGSTROTH_RELAY_TUNNEL` | `off` | relay tunnel (phone ↔ home host): `off` (`/v1/tunnel/*` → 404), `open` (any host may register), `allowlist` (only `LANGSTROTH_RELAY_TUNNEL_HOSTS`). See [Relay tunnel](#relay-tunnel-hive-tunnel1) |
+| `LANGSTROTH_RELAY_TUNNEL_HOSTS` | empty | comma-separated `host_id`s admitted when `LANGSTROTH_RELAY_TUNNEL=allowlist` |
+| `LANGSTROTH_RELAY_APNS_KEY_FILE` | empty | APNs auth key (`AuthKey_<KEYID>.p8`) for the built-in push sender; or `LANGSTROTH_RELAY_APNS_KEY` with the PEM inline (`\n` escapes allowed). Push is **off** unless the key and the three vars below are all set. See [Push from your own relay](#push-from-your-own-relay) |
+| `LANGSTROTH_RELAY_APNS_KEY_ID` / `LANGSTROTH_RELAY_APNS_TEAM_ID` | empty | the key's Key ID and your Apple developer Team ID |
+| `LANGSTROTH_RELAY_APNS_TOPIC` | empty | bundle id of the iPhone app build you publish (the default APNs topic) |
+| `LANGSTROTH_RELAY_APNS_TOPICS` | empty | more bundle ids this relay may push to, comma-separated (for example the App Store build and a dev build). Either this or `LANGSTROTH_RELAY_APNS_TOPIC` is enough; without `LANGSTROTH_RELAY_APNS_TOPIC` the first one is the default |
+| `LANGSTROTH_RELAY_APNS_ENV` | `auto` | `auto` (the environment each phone reports with its token: `development` → sandbox, `production` → production), `sandbox` or `production` |
 
-Storage selection: `DATABASE_URL` → Postgres; else `LIGUS_RELAY_DATA_DIR` →
+Storage selection: `DATABASE_URL` → Postgres; else `LANGSTROTH_RELAY_DATA_DIR` →
 memory+snapshot; else in-memory only.
 
-**Pod roles.** `LIGUS_RELAY_ROUTES=tunnel` serves only `/v1/tunnel/*`,
+**Pod roles.** `LANGSTROTH_RELAY_ROUTES=tunnel` serves only `/v1/tunnel/*`,
 `/v1/health` and `/metrics` (the Helm chart sets it on the tunnel pod, so
 pairing has one store, on relay-sync). APNs settings on a process whose tunnel
 is off are refused at startup: push only goes out through the tunnel, so keep
@@ -154,22 +170,24 @@ the APNs key on the tunnel pod alone.
 
 **Settings from files.** Any setting `X` above (and `DATABASE_URL`) that is
 unset in the environment is read from the file named by `X_FILE` (for example
-`DATABASE_URL_FILE`, `LIGUS_RELAY_ACCESS_TOKENS_FILE`), else from the file
-`$LIGUS_RELAY_SECRETS_DIR/X` (canonical `LIGUS_RELAY_*` name), so secrets can
-be mounted files instead of environment variables. The environment wins over
+`DATABASE_URL_FILE`, `LANGSTROTH_RELAY_ACCESS_TOKENS_FILE`), else from the file
+`$LANGSTROTH_RELAY_SECRETS_DIR/X` (canonical `LANGSTROTH_RELAY_*` name, or the
+former `LIGUS_RELAY_*` name for directories written before the rename; when
+both files exist they must hold the same value), so secrets can be mounted
+files instead of environment variables. The environment wins over
 `X_FILE`, which wins over the directory; one trailing newline is trimmed.
-`LIGUS_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key). The
-relay refuses to start when any `LIGUS_RELAY_*_FILE` or `DATABASE_URL_FILE`
-it is given, or any file in `LIGUS_RELAY_SECRETS_DIR`, can't be read or is
+`LANGSTROTH_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key). The
+relay refuses to start when any `LANGSTROTH_RELAY_*_FILE` or `DATABASE_URL_FILE`
+it is given, or any file in `LANGSTROTH_RELAY_SECRETS_DIR`, can't be read or is
 empty: an unreadable file would otherwise read as unset, and an unset
-`LIGUS_RELAY_TOKEN_PUBKEY` means an open relay.
+`LANGSTROTH_RELAY_TOKEN_PUBKEY` means an open relay.
 
 ## Test
 
 ```sh
 go test -race ./...                            # unit + HTTP + snapshot + seams (+ chart render tests when helm is installed)
 TEST_DATABASE_URL=postgres://… go test ./...   # also runs Postgres integration
-helm lint --strict deploy/helm/ligus-relay     # the Kubernetes chart (also -f each ci/*-values.yaml)
+helm lint --strict deploy/helm/langstroth-relay     # the Kubernetes chart (also -f each ci/*-values.yaml)
 ```
 
 ## Upgrading
@@ -186,18 +204,18 @@ proxy.
 ### Docker (anywhere)
 
 ```sh
-docker build -t ligus-relay .            # or straight from GitHub:
-# docker build -t ligus-relay https://github.com/ligus-ai/relay.git
-docker run -d -p 8443:8443 -v ligus-data:/data -e LIGUS_RELAY_DATA_DIR=/data ligus-relay
+docker build -t langstroth-relay .            # or straight from GitHub:
+# docker build -t langstroth-relay https://github.com/langstroth-ai/langstroth-relay.git
+docker run -d -p 8443:8443 -v langstroth-data:/data -e LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay
 curl localhost:8443/v1/health           # → ok
 ```
 
 ### Container platforms
 
 No lock-in — it's a standard container. The binary honors `$PORT` (else
-`$LIGUS_RELAY_ADDR`, else `0.0.0.0:8443`), so most PaaS work with zero config:
+`$LANGSTROTH_RELAY_ADDR`, else `0.0.0.0:8443`), so most PaaS work with zero config:
 point Render / Railway / Cloud Run / Kubernetes / a VM at the image (or the
-Dockerfile), attach a disk at `/data`, and set `LIGUS_RELAY_DATA_DIR=/data`.
+Dockerfile), attach a disk at `/data`, and set `LANGSTROTH_RELAY_DATA_DIR=/data`.
 
 A sample **`deploy/fly.toml`** is included as one worked example (`fly launch
 --copy-config --no-deploy` → `fly volumes create hive_data …` → `fly deploy`) —
@@ -217,7 +235,7 @@ relay.example.com {
 
 ### Persistence & scaling
 
-- **Single instance:** mount a volume at `/data` and set `LIGUS_RELAY_DATA_DIR=/data`
+- **Single instance:** mount a volume at `/data` and set `LANGSTROTH_RELAY_DATA_DIR=/data`
   (JSON snapshot store; survives restarts). Nothing to back up but that volume.
 - **Multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
   precedence over the snapshot dir, so every instance shares stored state (no
@@ -227,14 +245,14 @@ relay.example.com {
 - **On Kubernetes** the chart's `database.mode` picks the Postgres: `external`
   (managed), `cnpg` (a CloudNativePG cluster in the release namespace, HA and
   PITR) or `bundled` (one hardened pod with TLS and nightly dumps, no HA).
-  See `deploy/helm/ligus-relay/README.md`, "Database".
+  See `deploy/helm/langstroth-relay/README.md`, "Database".
 
 #### Envelope retention
 
 The in-memory / snapshot store bounds how many envelopes it keeps per workspace
 so a long-running self-host doesn't grow without limit and eventually OOM. By
-default each workspace retains its newest `LIGUS_RELAY_MAX_ENVELOPES` (50 000)
-envelopes; set `LIGUS_RELAY_RETENTION_DAYS` to also drop envelopes older than N
+default each workspace retains its newest `LANGSTROTH_RELAY_MAX_ENVELOPES` (50 000)
+envelopes; set `LANGSTROTH_RELAY_RETENTION_DAYS` to also drop envelopes older than N
 days. Set either to `0` to disable that bound (`0` for both = unbounded, the old
 behavior).
 
@@ -247,7 +265,7 @@ that still holds history. Size the bounds above your expected offline window.
 The Postgres backend applies the same two settings, hourly rather than on write
 (so a workspace can briefly exceed the cap). Its history is on disk rather than
 in RAM, so it can afford a much larger cap; for unbounded history set
-`LIGUS_RELAY_MAX_ENVELOPES=0` (and leave `LIGUS_RELAY_RETENTION_DAYS` at `0`)
+`LANGSTROTH_RELAY_MAX_ENVELOPES=0` (and leave `LANGSTROTH_RELAY_RETENTION_DAYS` at `0`)
 and watch the database's disk.
 
 ### Envelope paging
@@ -286,8 +304,8 @@ content-blind **nudge** channel — never envelope bodies:
 
 Read-authorized exactly like the other workspace reads (`enforceRead`), and
 counted against the read rate. Each client may hold at most
-`LIGUS_RELAY_MAX_SSE_PER_CLIENT` streams (`429` past it), and the instance at
-most `LIGUS_RELAY_MAX_SSE` (`503`). Fan-out
+`LANGSTROTH_RELAY_MAX_SSE_PER_CLIENT` streams (`429` past it), and the instance at
+most `LANGSTROTH_RELAY_MAX_SSE` (`503`). Fan-out
 is **single-instance / in-process** today; cross-instance push (Postgres
 `LISTEN/NOTIFY`) is tracked as a follow-up, and multi-instance deployments keep
 the `?after=` poll as the backstop.
@@ -353,12 +371,12 @@ record and drop into the box. Every route goes through the access gate.
   address (IPv6 /64); it is stored only as a salted hash. So a flood from a few
   addresses that know the cid evicts its own drops, not an unread invite from
   someone else. `limit` defaults to 100 (max 1000) and a page is
-  also bounded by `LIGUS_RELAY_MAX_LIST_BYTES`.
+  also bounded by `LANGSTROTH_RELAY_MAX_LIST_BYTES`.
 - A request on these routes that carries a forge token (any
   `X-*-Github-Token`, `X-*-Gitlab-Token`, `X-*-Forge-Token`, ... header, or a
   `ghp_` / `github_pat_` / `glpat-` style bearer) is refused with `400`; the
   token is never verified, logged or forwarded.
-- A relay without contacts (v0.2, or `LIGUS_RELAY_CONTACTS=off`) answers
+- A relay without contacts (v0.2, or `LANGSTROTH_RELAY_CONTACTS=off`) answers
   `404`, and clients fall back to links and QR codes.
 
 **What the relay still sees:** which `cid`s exist, when records change, drop
@@ -371,7 +389,7 @@ record; clients reject a record older than the newest they've seen for that
 The identity directory, account and friends routes (`/v1/directory/*`,
 `/v1/account/*`, `/v1/friends/*`, keyed by `github:<id>`) need the relay to
 see each caller's GitHub token. Ligus 2.0 doesn't use them. Since v0.3 they are
-**not registered** (404) unless `LIGUS_RELAY_GITHUB_ROUTES=on`, which exists
+**not registered** (404) unless `LANGSTROTH_RELAY_GITHUB_ROUTES=on`, which exists
 only for Ligus/Hive 1.x clients; when on, every response carries
 `Deprecation: @1794614400` and `Link: <…CHANGELOG.md>; rel="deprecation"`.
 **v0.4 removes them**, together with their tables and the GitHub verifier.
@@ -388,9 +406,9 @@ you trust.
 
 Open by default (self-host — the URL isn't a secret). To gate:
 
-- **Allowlist:** `LIGUS_RELAY_ACCESS_TOKENS=tokA,tokB` (opaque bearer tokens).
-- **Signed tokens:** set `LIGUS_RELAY_TOKEN_PUBKEY=<hex>` and mint per-subject
-  tokens with `ligus-relay keygen` / `ligus-relay issue` — keep the issuer private
+- **Allowlist:** `LANGSTROTH_RELAY_ACCESS_TOKENS=tokA,tokB` (opaque bearer tokens).
+- **Signed tokens:** set `LANGSTROTH_RELAY_TOKEN_PUBKEY=<hex>` and mint per-subject
+  tokens with `langstroth-relay keygen` / `langstroth-relay issue` — keep the issuer private
   key off the relay host (the relay only ever verifies).
 - **Durable users + tokens:** manage per-person access over the admin API
   (below) instead of an env list — no redeploy, survives restarts, instant
@@ -398,10 +416,10 @@ Open by default (self-host — the URL isn't a secret). To gate:
   access gate.
 
 Workspace keyrings are bounded by refusal, not eviction: past
-`LIGUS_RELAY_MAX_KEYRING_PER_WS` rotations or `LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS`
+`LANGSTROTH_RELAY_MAX_KEYRING_PER_WS` rotations or `LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS`
 bytes, a new rotation gets `507` and the stored ones stay, so a flood of junk
 rotations can't push a workspace's real rotations out. One rotation is capped at
-`LIGUS_RELAY_MAX_ROTATION_BYTES`.
+`LANGSTROTH_RELAY_MAX_ROTATION_BYTES`.
 
 Gating applies symmetrically to **reads and writes**: both `GET`
 (envelopes / keyring / presence / candidates) and `POST` on a workspace require
@@ -412,11 +430,11 @@ presented token, never the body — so workspace ciphertext + keyring are no
 longer readable by anyone who merely learns a workspace id. Clients already send
 their access token on every request, so no client change is needed.
 
-**Per-workspace token scope (opt-in, `LIGUS_RELAY_WORKSPACE_SCOPE`).** The
+**Per-workspace token scope (opt-in, `LANGSTROTH_RELAY_WORKSPACE_SCOPE`).** The
 token gate is coarse: any admitted caller may read and write any workspace.
-Signed tokens can carry an optional `workspaces` claim (`ligus-relay issue …
+Signed tokens can carry an optional `workspaces` claim (`langstroth-relay issue …
 --workspace <id> [--workspace <id>]`, `*` = any). With
-`LIGUS_RELAY_WORKSPACE_SCOPE=claims` a token that carries the claim is confined
+`LANGSTROTH_RELAY_WORKSPACE_SCOPE=claims` a token that carries the claim is confined
 to those ids on every `/v1/workspaces/{id}/…` route (envelopes, events,
 keyring, presence, candidates, and the membership routes); tokens without it
 keep coarse access. `strict` requires the claim on every workspace route (so
@@ -424,7 +442,7 @@ it needs signed tokens; the open policy and static allowlist get `403`). `off`
 (default) ignores the claim. The claim lives inside the signed claims JSON, so
 the `hrt1` format is unchanged, but a relay that doesn't enforce it (older, or
 `off`) ignores it: a scoped token is only confined where the operator turns
-this on. Relay-managed membership (`LIGUS_RELAY_MEMBERSHIP=1`) is the
+this on. Relay-managed membership (`LANGSTROTH_RELAY_MEMBERSHIP=1`) is the
 alternative when the roster, not the issuer, should decide.
 
 **Deferred (known, needs a design decision — not implemented here):**
@@ -432,10 +450,10 @@ alternative when the roster, not the issuer, should decide.
   possibly-guessable room *name*. Making ids high-entropy (so an id can't be
   guessed at all) is a client-side + invite-model change, not a relay change.
 
-### Sign-in with your identity provider (ligus-auth)
+### Sign-in with your identity provider (langstroth-auth)
 
-`ligus-auth` (`cmd/ligus-auth`, image `deploy/container/Dockerfile.ligus-auth`,
-chart `deploy/helm/ligus-auth`) is an optional, separate service that lets
+`langstroth-auth` (`cmd/langstroth-auth`, image `deploy/container/Dockerfile.langstroth-auth`,
+chart `deploy/helm/langstroth-auth`) is an optional, separate service that lets
 people sign in with any OIDC provider (Pocket ID, Dex, Keycloak, Authentik,
 Okta, Entra ID, ...) and receive short-lived relay tokens. It never runs
 inside the relay; the relay only needs its public key.
@@ -443,12 +461,12 @@ inside the relay; the relay only needs its public key.
 - **Flows:** authorization code + PKCE for apps with a browser (loopback
   redirect on the desktop, the system browser on iOS) and the device
   authorization grant (RFC 8628) for `ligus serve`, workers and the CLI.
-- **Tokens:** ordinary `hrt1` tokens, signed with the ligus-auth issuer key.
+- **Tokens:** ordinary `hrt1` tokens, signed with the langstroth-auth issuer key.
   `sub` is `<tenant>:<user>`, `exp` is at most an hour away (15 minutes by
   default), and three claims are added, each omitted when empty: `tid`
   (tenant), `uid` (a hash of the IdP subject) and `did` (the device id whose
   Ed25519 key signed the token request). `workspaces` comes from group grants
-  and is never empty, so set `LIGUS_RELAY_WORKSPACE_SCOPE=strict`.
+  and is never empty, so set `LANGSTROTH_RELAY_WORKSPACE_SCOPE=strict`.
   Refresh tokens are opaque, rotate on every use (reuse revokes the session)
   and only work from the device key they were issued to.
 - **SCIM 2.0** at `/t/<tenant>/scim/v2` (Users, Groups) for provisioning and
@@ -461,17 +479,17 @@ inside the relay; the relay only needs its public key.
   roster are refused by every client, whatever the relay forwards.
 - **Tenants** each have their own IdP, SCIM token and workspaces. A workspace
   belongs to one tenant; grants can name only the tenant's own workspaces, and
-  `LIGUS_RELAY_TENANTS` makes the relay refuse other tenants' tokens.
+  `LANGSTROTH_RELAY_TENANTS` makes the relay refuse other tenants' tokens.
 
 ```sh
-ligus-auth keygen --out /etc/ligus-auth/signing-key   # prints only the public key
-LIGUS_RELAY_TOKEN_PUBKEY=<that key> LIGUS_RELAY_WORKSPACE_SCOPE=strict \
-  LIGUS_RELAY_TENANTS=home ligus-relay
-ligus-auth serve --config /etc/ligus-auth/config.json
+langstroth-auth keygen --out /etc/langstroth-auth/signing-key   # prints only the public key
+LANGSTROTH_RELAY_TOKEN_PUBKEY=<that key> LANGSTROTH_RELAY_WORKSPACE_SCOPE=strict \
+  LANGSTROTH_RELAY_TENANTS=home langstroth-relay
+langstroth-auth serve --config /etc/langstroth-auth/config.json
 ```
 
-Examples: `deploy/compose/ligus-auth-pocket-id` (home lab, passkeys) and
-`deploy/compose/ligus-auth-dex` (federation; Kubeflow shops can reuse their
+Examples: `deploy/compose/langstroth-auth-pocket-id` (home lab, passkeys) and
+`deploy/compose/langstroth-auth-dex` (federation; Kubeflow shops can reuse their
 Dex). The Ligus docs have the full setup guides.
 
 ### User/token admin API (`/v1/admin/*`)
@@ -479,8 +497,8 @@ Dex). The Ligus docs have the full setup guides.
 The relay has a durable user + token store (both backends implement it) and a
 management API, gated by the `AdminAuthorizer` seam. It's **disabled by
 default** (no authorizer → `404`); supply one via `Options{AdminAuth: …}` to
-enable it. The open `ligus-relay` binary has no environment switch for it
-(there is no `LIGUS_RELAY_ADMIN_LOGINS`): it needs a downstream build. Tokens are stored only as SHA-256 hashes; the raw value is returned
+enable it. The open `langstroth-relay` binary has no environment switch for it
+(there is no `LANGSTROTH_RELAY_ADMIN_LOGINS`): it needs a downstream build. Tokens are stored only as SHA-256 hashes; the raw value is returned
 once at creation.
 
 - `POST /v1/admin/users` `{name, login?}` → create user + first token (raw once)
@@ -494,7 +512,7 @@ returned: a failing store answers `500 internal error`.
 
 ### Status page
 
-`GET /` serves a small public HTML status page ("Ligus relay · online") so a
+`GET /` serves a small public HTML status page ("Langstroth relay · online") so a
 human who opens the URL sees an intentional page rather than a `401`. `GET
 /v1/health` round-trips the store and returns `200 ok`, or `503` if the backend
 is unreachable — wire it to your orchestrator's liveness/readiness probe.
@@ -510,10 +528,10 @@ impersonate either side. The protocol is open; the spec lives in the Ligus repo
 (`docs/relay-tunnel.md`, with golden vectors in `docs/relay-tunnel/`).
 
 **Off by default.** A relay upgraded to this version does not become a public
-tunnel provider. Enable it with `LIGUS_RELAY_TUNNEL=open` (any host may
-register) or `LIGUS_RELAY_TUNNEL=allowlist` + `LIGUS_RELAY_TUNNEL_HOSTS=<host_id>,…`.
-When the relay's access gate is configured (`LIGUS_RELAY_TOKEN_PUBKEY` /
-`LIGUS_RELAY_ACCESS_TOKENS`), a host's first registration must also present a
+tunnel provider. Enable it with `LANGSTROTH_RELAY_TUNNEL=open` (any host may
+register) or `LANGSTROTH_RELAY_TUNNEL=allowlist` + `LANGSTROTH_RELAY_TUNNEL_HOSTS=<host_id>,…`.
+When the relay's access gate is configured (`LANGSTROTH_RELAY_TOKEN_PUBKEY` /
+`LANGSTROTH_RELAY_ACCESS_TOKENS`), a host's first registration must also present a
 token that passes it (`ligus remote enable --reg-token …`).
 
 Endpoints (WebSockets require the subprotocol `hive-tunnel.1`, else `426`;
@@ -545,7 +563,7 @@ tunnel socket is closed with `4011 shutting_down` (wired via
 single relay instance for the tunnel, or route `/v1/tunnel/connect?host=H` and
 `/v1/tunnel/accept` to the instance holding H's control connection.
 
-**Self-hosting the tunnel.** `LIGUS_RELAY_TUNNEL=open` turns on remote access
+**Self-hosting the tunnel.** `LANGSTROTH_RELAY_TUNNEL=open` turns on remote access
 on your own relay: every registered host is `active`. `GET /v1/tunnel/info`
 then reports `"billing":"none"`, and the Ligus app shows "ask the relay
 operator" when a session is refused with `4006`. The `billing` field is a
@@ -574,13 +592,13 @@ your relay can push to it with the built-in APNs sender:
 2. Run the relay with the tunnel on and the key configured:
 
    ```sh
-   LIGUS_RELAY_TUNNEL=open \
-   LIGUS_RELAY_APNS_KEY_FILE=/secrets/AuthKey_ABC123DEFG.p8 \
-   LIGUS_RELAY_APNS_KEY_ID=ABC123DEFG \
-   LIGUS_RELAY_APNS_TEAM_ID=<your team id> \
-   LIGUS_RELAY_APNS_TOPIC=<your app's bundle id> \
-   LIGUS_RELAY_APNS_TOPICS=<your dev build's bundle id> \
-   ligus-relay
+   LANGSTROTH_RELAY_TUNNEL=open \
+   LANGSTROTH_RELAY_APNS_KEY_FILE=/secrets/AuthKey_ABC123DEFG.p8 \
+   LANGSTROTH_RELAY_APNS_KEY_ID=ABC123DEFG \
+   LANGSTROTH_RELAY_APNS_TEAM_ID=<your team id> \
+   LANGSTROTH_RELAY_APNS_TOPIC=<your app's bundle id> \
+   LANGSTROTH_RELAY_APNS_TOPICS=<your dev build's bundle id> \
+   langstroth-relay
    ```
 
    The relay logs `tunnel push via APNs (topics …; default …; env auto)`, and
@@ -600,12 +618,12 @@ it; the phone sends a fresh one on its next connect.
 
 A dev build and an App Store build have different bundle ids. The app reports
 its bundle id with its token (`apns.topic` in the phone's `auth`), and the
-relay pushes with that topic when it is `LIGUS_RELAY_APNS_TOPIC` or listed in
-`LIGUS_RELAY_APNS_TOPICS`; any other topic is refused (the token is kept, so
+relay pushes with that topic when it is `LANGSTROTH_RELAY_APNS_TOPIC` or listed in
+`LANGSTROTH_RELAY_APNS_TOPICS`; any other topic is refused (the token is kept, so
 adding the topic and restarting is enough). A phone that doesn't report one
 (an older app) gets the default topic, and `DeviceTokenNotForTopic` for it
 leaves its token alone: the relay's default was wrong, not the token. With
-`LIGUS_RELAY_APNS_ENV=auto` a debug build from Xcode (sandbox token) and a
+`LANGSTROTH_RELAY_APNS_ENV=auto` a debug build from Xcode (sandbox token) and a
 TestFlight/App Store build (production token) both work.
 
 Every push the relay handles is logged at info as `tunnel push` with
@@ -639,10 +657,10 @@ Seams:
 - **`Hooks`** — optional lifecycle observers (e.g. audit / metrics; no-op by
   default).
 - **`TunnelPolicy`** / **`PushSender`** — relay-tunnel host admission and
-  access (`nil` = `LIGUS_RELAY_TUNNEL` env policy), and end-to-end
+  access (`nil` = `LANGSTROTH_RELAY_TUNNEL` env policy), and end-to-end
   encrypted push delivery (`nil` = the built-in APNs sender when
-  `LIGUS_RELAY_APNS_*` is set, else unavailable). The sender itself is the
-  importable `github.com/ligus-ai/relay/apns` package; a sender that wraps
+  `LANGSTROTH_RELAY_APNS_*` is set, else unavailable). The sender itself is the
+  importable `github.com/langstroth-ai/langstroth-relay/apns` package; a sender that wraps
   `relay.ErrPushTokenGone` makes the relay forget that phone's token. A `Store` that also implements
   `TunnelStore` keeps tunnel state durable (both built-in backends do).
 

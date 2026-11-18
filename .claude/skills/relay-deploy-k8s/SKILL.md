@@ -1,9 +1,9 @@
 ---
 name: relay-deploy-k8s
-description: Deploy, verify, upgrade or remove the Ligus relay (ligus-relay) and the optional ligus-auth sign-in service on Kubernetes with the non-interactive scripts in deploy/agent. Use when asked to install the relay on a cluster (kind, k3d, OrbStack, EKS, GKE, ...), pick a database mode (bundled, CloudNativePG, external), check a cluster is ready, or tear an install down.
+description: Deploy, verify, upgrade or remove the Langstroth relay (langstroth-relay) and the optional langstroth-auth sign-in service on Kubernetes with the non-interactive scripts in deploy/agent. Use when asked to install the relay on a cluster (kind, k3d, OrbStack, EKS, GKE, ...), pick a database mode (bundled, CloudNativePG, external), check a cluster is ready, or tear an install down.
 ---
 
-# Deploy the Ligus relay on Kubernetes
+# Deploy the Langstroth relay on Kubernetes
 
 Follow these steps in order. Every script takes `--json` and prints one
 object with `ok` and `checks[]`; on `ok:false` read each failed check's
@@ -29,7 +29,7 @@ Ask, and do not guess:
   client id, tenants, grants, ingress) and writes the IdP client secret to a
   file.
 
-Set `C`, `NS`, `S` (and `R`, default `ligus-relay` / `ligus-auth`).
+Set `C`, `NS`, `S` (and `R`, default `langstroth-relay` / `langstroth-auth`).
 
 ## 2. Preflight (read-only)
 
@@ -58,7 +58,7 @@ deploy/agent/bootstrap-secrets.sh --context $C --namespace $NS --scenario $S --r
 
 Entries with status `needs-human` mean a file from step 1 is missing. For
 `auth-*`, the output's `public_key` (not secret) is the issuer key the relay
-needs as `LIGUS_RELAY_TOKEN_PUBKEY`.
+needs as `LANGSTROTH_RELAY_TOKEN_PUBKEY`.
 
 ## 4. Dry run, then install
 

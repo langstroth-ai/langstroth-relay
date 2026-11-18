@@ -1,9 +1,0 @@
-dex.example.com {
-	reverse_proxy dex:5556
-}
-auth.example.com {
-	reverse_proxy ligus-auth:8090
-}
-relay.example.com {
-	reverse_proxy relay:8443
-}

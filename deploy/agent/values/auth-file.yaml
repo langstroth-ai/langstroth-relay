@@ -1,4 +1,4 @@
-# Scenario auth-file: ligus-auth with its file store on a PVC (one replica).
+# Scenario auth-file: langstroth-auth with its file store on a PVC (one replica).
 store:
   driver: file
 persistence:

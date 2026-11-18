@@ -1,9 +1,11 @@
-# AGENTS.md: deploying the Ligus relay
+# AGENTS.md: deploying the Langstroth relay
 
 For coding agents (Claude Code, Codex, Copilot CLI, ...) and the humans who
-drive them. Ligus (LEE-gus) is short for *ligustica*, the Italian honeybee.
-This repository holds the relay (`ligus-relay`) and the optional sign-in
-service (`ligus-auth`), their Helm charts (`deploy/helm/`) and the agent
+drive them. Langstroth is the server side, named after the Langstroth frame
+hive; the client apps are Ligus (LEE-gus), short for *ligustica*, the Italian
+honeybee.
+This repository holds the relay (`langstroth-relay`) and the optional sign-in
+service (`langstroth-auth`), their Helm charts (`deploy/helm/`) and the agent
 tooling in `deploy/agent/`. Step-by-step skills: `.claude/skills/relay-deploy-k8s`
 and `.claude/skills/relay-run-local` (plain Markdown; any agent can follow them).
 
@@ -17,14 +19,17 @@ and `.claude/skills/relay-run-local` (plain Markdown; any agent can follow them)
 | Team with a managed/existing Postgres | scenario `team-external` | external, `sslmode=verify-full` | DSN file, database CIDRs, exposure |
 | Production-shaped, HA database | scenario `team-cnpg` | CloudNativePG, 3 instances, backups | operator install, backup bucket + credentials, exposure |
 | Evaluate the CloudNativePG path | scenario `team-cnpg-eval` | CNPG, 1 instance, backups OFF | operator install |
-| Sign-in with your IdP in front of a relay | scenario `auth-file` / `auth-bundled` / `auth-cnpg-eval` / `auth-external` (chart `ligus-auth`) | as named | IdP client + secret, public URL, tenants, exposure |
+| Sign-in with your IdP in front of a relay | scenario `auth-file` / `auth-bundled` / `auth-cnpg-eval` / `auth-external` (chart `langstroth-auth`) | as named | IdP client + secret, public URL, tenants, exposure |
 
 Not sure? Ask the human. Default to `local.sh` for one person and
 `team-bundled` for a team on Kubernetes.
 
 ## Tooling contract (all of `deploy/agent/*.sh`)
 
-- Non-interactive: flags or environment only; never a prompt.
+- Non-interactive: flags or environment only; never a prompt. Environment
+  names are `LANGSTROTH_*` (`LANGSTROTH_NAMESPACE`, `LANGSTROTH_RELEASE`, ...);
+  the `LIGUS_*` names from before the rename still work, and both set to
+  different values is a usage error (exit 2).
 - Idempotent: rerunning leaves the same state (existing Secrets are never
   changed; `install` is `helm upgrade --install`).
 - `--json` prints exactly one JSON object on stdout:
@@ -43,22 +48,22 @@ Not sure? Ask the human. Default to `local.sh` for one person and
 ## Kubernetes: exact commands
 
 ```sh
-C=<kube context the human named>  NS=ligus-relay  S=team-bundled
+C=<kube context the human named>  NS=langstroth-relay  S=team-bundled
 deploy/agent/preflight.sh         --context $C --namespace $NS --scenario $S --probe --json
 deploy/agent/bootstrap-secrets.sh --context $C --namespace $NS --scenario $S --json
 deploy/agent/install.sh           --context $C --namespace $NS --scenario $S --dry-run --json
 deploy/agent/install.sh           --context $C --namespace $NS --scenario $S --json
-deploy/agent/verify.sh            --context $C --namespace $NS --release ligus-relay --json
+deploy/agent/verify.sh            --context $C --namespace $NS --release langstroth-relay --json
 ```
 
 - **preflight** is read-only (with `--probe` it creates and deletes one
-  `ligus-preflight-*` namespace to prove NetworkPolicy enforcement and
+  `langstroth-preflight-*` namespace to prove NetworkPolicy enforcement and
   ReadWriteOncePod). Checks: Helm >= 3.14, context, reachability, server
   version, RBAC, Pod Security, DNS selector, NetworkPolicy, StorageClass,
   RWOP, CNPG operator (cnpg scenarios), ingress classes, openssl.
 - **bootstrap-secrets** creates the namespace (Pod Security `restricted`) and
   the scenario's Secrets from fresh randomness: the relay's metrics token,
-  the bundled Postgres password and a per-release TLS CA, the ligus-auth
+  the bundled Postgres password and a per-release TLS CA, the langstroth-auth
   issuer key and admin token. Values go file to Secret and are never printed.
   Inputs only a human has come from files they wrote: `--dsn-file`,
   `--idp-client-secret-file`. Missing ones are reported as `needs-human`.
@@ -81,9 +86,9 @@ deploy/agent/verify.sh            --context $C --namespace $NS --release ligus-r
 ### Roll back or uninstall
 
 ```sh
-helm --kube-context $C -n $NS history ligus-relay
-helm --kube-context $C -n $NS rollback ligus-relay <revision>
-deploy/agent/teardown.sh --context $C --namespace $NS --release ligus-relay --json
+helm --kube-context $C -n $NS history langstroth-relay
+helm --kube-context $C -n $NS rollback langstroth-relay <revision>
+deploy/agent/teardown.sh --context $C --namespace $NS --release langstroth-relay --json
 #   keeps PVCs and bootstrap Secrets; add --delete-data / --delete-secrets /
 #   --delete-namespace only when the human said the data can go.
 #   --delete-namespace only deletes a namespace bootstrap-secrets.sh created.
@@ -92,18 +97,18 @@ deploy/agent/teardown.sh --context $C --namespace $NS --release ligus-relay --js
 ## Local: exact commands
 
 ```sh
-D=${LIGUS_RELAY_DATA_DIR:-$HOME/.local/state/ligus-relay}
-deploy/agent/local.sh build  --json                 # go build -> bin/ligus-relay
+D=${LANGSTROTH_RELAY_DATA_DIR:-$HOME/.local/state/langstroth-relay}
+deploy/agent/local.sh build  --json                 # go build -> bin/langstroth-relay
 deploy/agent/local.sh start  --data-dir $D --json   # 127.0.0.1:8443, background (OrbStack also uses 8443: --port 18443)
 deploy/agent/local.sh verify --data-dir $D --json   # health, /metrics gated, loopback
 deploy/agent/local.sh stop   --data-dir $D --json   # data kept
 ```
 
 The data dir holds `relay-state.json` (the store), `secrets/` (mode 700,
-read through `LIGUS_RELAY_SECRETS_DIR`) and `run/` (pid, log). Clients use
+read through `LANGSTROTH_RELAY_SECRETS_DIR`) and `run/` (pid, log). Clients use
 `http://127.0.0.1:8443`. A non-loopback `--addr` is refused unless the human
 chose it (`--human-approved-exposure`); put TLS in front. The
-`deploy/compose/` stacks (relay + ligus-auth + an IdP behind Caddy) are
+`deploy/compose/` stacks (relay + langstroth-auth + an IdP behind Caddy) are
 examples that need a human throughout (domains, TLS, IdP client).
 
 ## Hard rules for agents
@@ -130,13 +135,13 @@ examples that need a human throughout (domains, TLS, IdP client).
 - Choosing the cluster, namespace and scenario; cloud credentials and
   kubeconfig access.
 - Exposure: ingress/Gateway host, DNS, TLS certificates,
-  `clientIP.trustedProxies` (relay) or `config.trusted_proxies` (ligus-auth), any non-loopback local bind.
+  `clientIP.trustedProxies` (relay) or `config.trusted_proxies` (langstroth-auth), any non-loopback local bind.
 - Installing the cluster-wide CloudNativePG operator.
 - `team-external`: the DSN file and the database CIDRs.
 - `team-cnpg`: the backup object store and its credentials Secret.
-- `ligus-auth`: registering the OIDC client at the IdP, its client-secret
+- `langstroth-auth`: registering the OIDC client at the IdP, its client-secret
   file, the public URL, tenants and group grants, and pointing the relay at
-  the issuer public key (`LIGUS_RELAY_TOKEN_PUBKEY`). Passkey sign-in at the
+  the issuer public key (`LANGSTROTH_RELAY_TOKEN_PUBKEY`). Passkey sign-in at the
   IdP is the human's.
 - Turning on the tunnel (`tunnel.mode`, allowed hosts) and APNs push keys.
 - Workspace invites and device approval happen in the Ligus app, not here.
@@ -145,4 +150,4 @@ examples that need a human throughout (domains, TLS, IdP client).
 
 `go test ./...` (includes `agent_deploy_test.go`: shellcheck, exit codes,
 the `--json` contract, scenario renders), `go vet ./...`,
-`helm lint --strict deploy/helm/ligus-relay` (and each `ci/*-values.yaml`).
+`helm lint --strict deploy/helm/langstroth-relay` (and each `ci/*-values.yaml`).

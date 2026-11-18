@@ -1,0 +1,22 @@
+apiVersion: v2
+name: langstroth-auth
+description: Optional OIDC sign-in, SCIM deprovisioning and short-lived relay tokens for a Langstroth relay. Gates transport only; workspace membership stays in the signed roster.
+type: application
+version: 0.1.0
+appVersion: "0.3.0"
+home: https://github.com/langstroth-ai/langstroth-relay
+sources:
+  - https://github.com/langstroth-ai/langstroth-relay
+keywords:
+  - langstroth
+  - ligus
+  - oidc
+  - scim
+kubeVersion: ">=1.27.0-0"
+# Shared Postgres templates (database.mode). charts/langstroth-postgres is a
+# symlink to ../langstroth-postgres in this repository, so no
+# `helm dependency build` is needed.
+dependencies:
+  - name: langstroth-postgres
+    version: 0.1.0
+    repository: file://../langstroth-postgres

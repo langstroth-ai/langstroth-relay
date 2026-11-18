@@ -5,16 +5,16 @@
 # anything holding data that matters). --delete-namespace only deletes a
 # namespace bootstrap-secrets.sh created (label ligus.ai/created-by).
 #
-#   deploy/agent/teardown.sh --context orbstack --namespace ligus-relay \
-#     --release ligus-relay [--delete-data] [--delete-secrets] [--delete-namespace] [--json]
+#   deploy/agent/teardown.sh --context orbstack --namespace langstroth-relay \
+#     --release langstroth-relay [--delete-data] [--delete-secrets] [--delete-namespace] [--json]
 #
 # Exit: 0 done (also when there was nothing to remove), 1 a step failed,
 # 2 usage, 3 tool/cluster.
 source "$(dirname "$0")/lib.sh"
 
 usage() { echo "usage: $0 --context CTX --namespace NS [--release R] [--delete-data] [--delete-secrets] [--delete-namespace] [--json]" >&2; }
-NS=${LIGUS_NAMESPACE:-}
-RELEASE=${LIGUS_RELEASE:-}
+pick_env NS LANGSTROTH_NAMESPACE LIGUS_NAMESPACE
+pick_env RELEASE LANGSTROTH_RELEASE LIGUS_RELEASE
 DEL_DATA=0 DEL_SEC=0 DEL_NS=0
 while [ $# -gt 0 ]; do
   case $1 in
@@ -31,7 +31,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$NS" ] || { usage; die_usage "--namespace is required"; }
 case $NS in default|kube-system|kube-public|kube-node-lease) [ "$DEL_NS" = 1 ] && die_usage "refusing to delete namespace $NS" ;; esac
-RELEASE=${RELEASE:-ligus-relay}
+RELEASE=${RELEASE:-langstroth-relay}
 require_context
 valid --namespace "$NS" "$DNS1123"
 valid --release "$RELEASE" "$DNS1123"
@@ -52,7 +52,7 @@ else
   else
     check uninstall pass "no release $RELEASE in $NS"
   fi
-  FULL=$(fullname "${chart:-ligus-relay}" "$RELEASE")
+  FULL=$(fullname "${chart:-langstroth-relay}" "$RELEASE")
   others=$(h -n "$NS" list -q -a 2>/dev/null | grep -vx "$RELEASE" | tr '\n' ' ' || true)
   if [ "$DEL_NS" = 1 ] && [ -n "$others" ]; then
     check namespace fail "namespace $NS still holds other Helm releases ($others); refusing to delete it with theirs" \

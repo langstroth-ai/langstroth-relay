@@ -67,7 +67,7 @@ func TestAPNsSenderFromEnv(t *testing.T) {
 	delete(partial, "HIVE_RELAY_APNS_TEAM_ID")
 	delete(partial, "HIVE_RELAY_APNS_TOPIC")
 	if _, err := apnsPushSenderFrom(envMap(partial)); err == nil ||
-		!strings.Contains(err.Error(), "HIVE_RELAY_APNS_TEAM_ID") || !strings.Contains(err.Error(), "HIVE_RELAY_APNS_TOPIC") {
+		!strings.Contains(err.Error(), "LANGSTROTH_RELAY_APNS_TEAM_ID") || !strings.Contains(err.Error(), "LANGSTROTH_RELAY_APNS_TOPIC") {
 		t.Fatalf("partial config: %v", err)
 	}
 

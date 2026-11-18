@@ -1,3 +1,3 @@
-# Scenario auth-bundled: ligus-auth on its own bundled Postgres pod.
+# Scenario auth-bundled: langstroth-auth on its own bundled Postgres pod.
 database:
   mode: bundled

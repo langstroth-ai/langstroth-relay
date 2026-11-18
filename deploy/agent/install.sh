@@ -4,10 +4,10 @@
 # then the real helm upgrade --install --wait. --dry-run stops before the
 # real install.
 #
-#   deploy/agent/install.sh --context orbstack --namespace ligus-relay \
+#   deploy/agent/install.sh --context orbstack --namespace langstroth-relay \
 #     --scenario team-bundled [--values my.yaml] [--dry-run] [--json]
 #
-# Images: the charts default to ghcr.io/ligus-ai/<chart>:<appVersion>. Use
+# Images: the charts default to ghcr.io/langstroth-ai/<chart>:<appVersion>. Use
 # --build-image to build them from this checkout (docker); on a kind context
 # they are loaded into the cluster, on OrbStack / Docker Desktop the cluster
 # shares the docker image store. Or --image-repo/--image-tag.
@@ -25,12 +25,12 @@ usage: $0 --scenario S --context CTX [--namespace NS] [--release R]
 EOF
 }
 
-NS=${LIGUS_NAMESPACE:-}
-SCENARIO=${LIGUS_SCENARIO:-}
-RELEASE=${LIGUS_RELEASE:-}
+pick_env NS LANGSTROTH_NAMESPACE LIGUS_NAMESPACE
+pick_env SCENARIO LANGSTROTH_SCENARIO LIGUS_SCENARIO
+pick_env RELEASE LANGSTROTH_RELEASE LIGUS_RELEASE
 EXTRA=()
-IMG_REPO=${LIGUS_IMAGE_REPO:-}
-IMG_TAG=${LIGUS_IMAGE_TAG:-}
+pick_env IMG_REPO LANGSTROTH_IMAGE_REPO LIGUS_IMAGE_REPO
+pick_env IMG_TAG LANGSTROTH_IMAGE_TAG LIGUS_IMAGE_TAG
 BUILD=0
 TIMEOUT=10m
 DRY=0
@@ -133,7 +133,7 @@ if [ "$BUILD" = 1 ]; then
   IMG_REPO=$CHARTNAME
   IMG_TAG=${IMG_TAG:-dev}
   df=deploy/container/Dockerfile
-  [ "$CHARTNAME" = ligus-auth ] && df=deploy/container/Dockerfile.ligus-auth
+  [ "$CHARTNAME" = langstroth-auth ] && df=deploy/container/Dockerfile.langstroth-auth
   (cd "$REPO_ROOT" && docker build -q -f "$df" -t "$IMG_REPO:$IMG_TAG" . >&2) || finish false "docker build failed" "read the build output above"
   case $KCTX in
     kind-*) need_tool kind "install kind"; kind load docker-image "$IMG_REPO:$IMG_TAG" --name "${KCTX#kind-}" >&2 ;;
@@ -147,7 +147,7 @@ ARGS=()
 ARGS+=(-f "$(scenario_values "$SCENARIO")")
 for f in "${EXTRA[@]+"${EXTRA[@]}"}"; do ARGS+=(-f "$f"); done
 # Secret NAMES only (never values) go on the command line.
-if [ "$CHARTNAME" = ligus-relay ]; then
+if [ "$CHARTNAME" = langstroth-relay ]; then
   ARGS+=(--set "config.existingSecret=$FULL-env")
 else
   ARGS+=(--set "signingKey.existingSecret=$FULL-signing-key" --set "adminToken.existingSecret=$FULL-admin")

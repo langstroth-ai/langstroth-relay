@@ -1,11 +1,11 @@
 # Continuous deploy to Fly.io. After `ci` passes on a push to main, deploy the
-# OPEN relay binary (cmd/ligus-relay) to the project's public relay instance on
+# OPEN relay binary (cmd/langstroth-relay) to the project's public relay instance on
 # Fly (app hive-relay-enterprise; a legacy name, see below). It runs the same
 # open binary anyone can self-host and must only ever be deployed from this repo.
 #
 # Requires the FLY_API_TOKEN repo secret (a deploy token):
 #   fly tokens create deploy -x 999999h
-#   -> ligus-ai/relay -> Settings -> Secrets and variables -> Actions -> FLY_API_TOKEN
+#   -> langstroth-ai/langstroth-relay -> Settings -> Secrets and variables -> Actions -> FLY_API_TOKEN
 # Until that secret exists the deploy step skips cleanly (no failed run).
 #
 # Gated on `ci` (workflow_run) so a red build never deploys. `deploy/fly.toml`

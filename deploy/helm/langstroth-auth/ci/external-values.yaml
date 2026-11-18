@@ -1,0 +1,6 @@
+# CI (with dex-values.yaml): langstroth-auth on an external Postgres.
+database:
+  mode: external
+  external:
+    existingSecret: langstroth-auth-database
+    cidrs: [10.20.0.16/32]

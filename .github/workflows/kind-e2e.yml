@@ -26,7 +26,7 @@ jobs:
       - name: lint every documented values file
         run: |
           set -e
-          c=deploy/helm/ligus-relay
+          c=deploy/helm/langstroth-relay
           helm lint --strict $c
           # One per database mode (external, cnpg, bundled) and the
           # deprecated in-chart Postgres.
@@ -35,7 +35,7 @@ jobs:
         run: |
           set -e
           refuse() { if helm template "$@" >/dev/null 2>&1; then echo "chart rendered but must refuse: $*"; exit 1; fi; }
-          c=deploy/helm/ligus-relay
+          c=deploy/helm/langstroth-relay
           helm template t $c >/dev/null
           helm template t $c -f $c/ci/split-postgres-values.yaml >/dev/null
           helm template t $c -f $c/ci/single-memory-values.yaml >/dev/null
@@ -72,11 +72,11 @@ jobs:
           refuse t $c --set database.mode=external --set database.external.existingSecret=d --set database.external.cidrs[0]=0.0.0.0/0
           refuse t $c --set database.mode=external --set database.external.existingSecret=d --set database.external.cidrs[0]=169.254.0.0/16
           refuse t $c --set database.mode=external --set database.external.existingSecret=d --set postgres.enabled=true
-      - name: ligus-auth chart
+      - name: langstroth-auth chart
         run: |
           set -e
           refuse() { if helm template "$@" >/dev/null 2>&1; then echo "chart rendered but must refuse: $*"; exit 1; fi; }
-          a=deploy/helm/ligus-auth
+          a=deploy/helm/langstroth-auth
           helm lint --strict $a -f $a/ci/dex-values.yaml
           for m in cnpg bundled external; do helm lint --strict $a -f $a/ci/dex-values.yaml -f $a/ci/$m-values.yaml; done
           helm template t $a -f $a/ci/dex-values.yaml >/dev/null
@@ -109,12 +109,12 @@ jobs:
         with:
           context: .
           file: deploy/container/Dockerfile
-          tags: ligus-relay:ci
+          tags: langstroth-relay:ci
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: image runs as non-root
-        run: test "$(docker inspect -f '{{.Config.User}}' ligus-relay:ci)" = "65532:65532"
+        run: test "$(docker inspect -f '{{.Config.User}}' langstroth-relay:ci)" = "65532:65532"
       - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
         with:
           cluster_name: relay-e2e
@@ -122,69 +122,69 @@ jobs:
         with:
           version: v3.22.1
       - name: load image
-        run: kind load docker-image ligus-relay:ci --name relay-e2e
+        run: kind load docker-image langstroth-relay:ci --name relay-e2e
       - name: install
         run: |
-          kubectl create namespace ligus-relay
-          kubectl label namespace ligus-relay pod-security.kubernetes.io/enforce=restricted
+          kubectl create namespace langstroth-relay
+          kubectl label namespace langstroth-relay pod-security.kubernetes.io/enforce=restricted
           # The in-chart dev Postgres reads its password and DSN from a
           # Secret the operator creates (the chart generates none).
           PW=$(openssl rand -hex 24)
-          kubectl -n ligus-relay create secret generic relay-dev-postgres \
+          kubectl -n langstroth-relay create secret generic relay-dev-postgres \
             --from-literal=password="$PW" \
-            --from-literal=DATABASE_URL="postgres://relay:$PW@ligus-relay-postgres:5432/relay?sslmode=disable"
+            --from-literal=DATABASE_URL="postgres://relay:$PW@langstroth-relay-postgres:5432/relay?sslmode=disable"
           # The bundled Postgres (bundled-values.yaml): the role's password
           # and pgpass line, and a server certificate from a throwaway CA.
-          kubectl -n ligus-relay create secret generic relay-postgres-auth \
+          kubectl -n langstroth-relay create secret generic relay-postgres-auth \
             --from-literal=password="$PW" --from-literal=pgpass="*:*:*:relay:$PW"
-          n=ligus-relay-postgres; d=$(mktemp -d)
+          n=langstroth-relay-postgres; d=$(mktemp -d)
           openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
             -subj /CN=ci-postgres-ca -keyout $d/ca.key -out $d/ca.crt
           openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj /CN=$n -keyout $d/tls.key -out $d/tls.csr
-          printf 'subjectAltName=DNS:%s,DNS:%s.ligus-relay,DNS:%s.ligus-relay.svc\nextendedKeyUsage=serverAuth\n' $n $n $n > $d/ext
+          printf 'subjectAltName=DNS:%s,DNS:%s.langstroth-relay,DNS:%s.langstroth-relay.svc\nextendedKeyUsage=serverAuth\n' $n $n $n > $d/ext
           openssl x509 -req -in $d/tls.csr -CA $d/ca.crt -CAkey $d/ca.key -CAcreateserial -days 2 -extfile $d/ext -out $d/tls.crt
-          kubectl -n ligus-relay create secret generic relay-postgres-tls \
+          kubectl -n langstroth-relay create secret generic relay-postgres-tls \
             --from-file=$d/tls.crt --from-file=$d/tls.key --from-file=$d/ca.crt
-          # Settings delivered as files (LIGUS_RELAY_SECRETS_DIR).
-          kubectl -n ligus-relay create secret generic relay-env \
-            --from-literal=LIGUS_RELAY_METRICS_TOKEN="$(openssl rand -hex 16)"
-          helm install ligus-relay deploy/helm/ligus-relay -n ligus-relay \
+          # Settings delivered as files (LANGSTROTH_RELAY_SECRETS_DIR).
+          kubectl -n langstroth-relay create secret generic relay-env \
+            --from-literal=LANGSTROTH_RELAY_METRICS_TOKEN="$(openssl rand -hex 16)"
+          helm install langstroth-relay deploy/helm/langstroth-relay -n langstroth-relay \
             --set config.existingSecret=relay-env \
-            -f deploy/helm/ligus-relay/ci/${{ matrix.values }} --wait --timeout 5m
+            -f deploy/helm/langstroth-relay/ci/${{ matrix.values }} --wait --timeout 5m
       - name: helm test
-        run: helm test ligus-relay -n ligus-relay --logs
+        run: helm test langstroth-relay -n langstroth-relay --logs
       - name: metrics and health through the Service
         run: |
-          svc=$(kubectl -n ligus-relay get svc -l app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
-          kubectl -n ligus-relay port-forward svc/$svc 8443:8443 &
+          svc=$(kubectl -n langstroth-relay get svc -l app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
+          kubectl -n langstroth-relay port-forward svc/$svc 8443:8443 &
           for i in $(seq 30); do curl -fsS http://127.0.0.1:8443/v1/health && break; sleep 1; done
           # The metrics token came from the mounted secrets directory: without
           # it /metrics is refused, with it it answers.
-          tok=$(kubectl -n ligus-relay get secret relay-env -o jsonpath='{.data.LIGUS_RELAY_METRICS_TOKEN}' | base64 -d)
+          tok=$(kubectl -n langstroth-relay get secret relay-env -o jsonpath='{.data.LANGSTROTH_RELAY_METRICS_TOKEN}' | base64 -d)
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8443/metrics)" != 200
           curl -fsS -H "Authorization: Bearer $tok" http://127.0.0.1:8443/metrics | grep -q relay_requests_total
           # No secret reaches the pod environment.
-          pod=$(kubectl -n ligus-relay get pod -l app.kubernetes.io/name=ligus-relay,app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
-          if kubectl -n ligus-relay get pod "$pod" -o yaml | grep -q secretKeyRef; then echo "::error::secret in env"; exit 1; fi
+          pod=$(kubectl -n langstroth-relay get pod -l app.kubernetes.io/name=langstroth-relay,app.kubernetes.io/component!=postgres -o jsonpath='{.items[0].metadata.name}')
+          if kubectl -n langstroth-relay get pod "$pod" -o yaml | grep -q secretKeyRef; then echo "::error::secret in env"; exit 1; fi
       - name: bundled Postgres backup and restore
         if: matrix.values == 'bundled-values.yaml'
         run: |
           set -e
-          ns=ligus-relay
-          kubectl -n $ns create job --from=cronjob/ligus-relay-postgres-backup ci-backup
+          ns=langstroth-relay
+          kubectl -n $ns create job --from=cronjob/langstroth-relay-postgres-backup ci-backup
           kubectl -n $ns wait --for=condition=Complete job/ci-backup --timeout=5m
           kubectl -n $ns logs job/ci-backup
           f=$(kubectl -n $ns logs job/ci-backup | sed -n 's|^wrote /backups/\([^ ]*\) .*|\1|p')
-          helm upgrade ligus-relay deploy/helm/ligus-relay -n $ns --reuse-values \
+          helm upgrade langstroth-relay deploy/helm/langstroth-relay -n $ns --reuse-values \
             --set database.bundled.backups.restore.file="$f" --wait --timeout 5m
           kubectl -n $ns wait --for=condition=Complete "$(kubectl -n $ns get job -o name | grep postgres-restore-)" --timeout=5m
-          test "$(kubectl -n $ns get deploy ligus-relay-sync -o jsonpath='{.spec.replicas}')" = 0
-          helm upgrade ligus-relay deploy/helm/ligus-relay -n $ns --reuse-values \
+          test "$(kubectl -n $ns get deploy langstroth-relay-sync -o jsonpath='{.spec.replicas}')" = 0
+          helm upgrade langstroth-relay deploy/helm/langstroth-relay -n $ns --reuse-values \
             --set database.bundled.backups.restore.file= --wait --timeout 5m
-          helm test ligus-relay -n $ns --logs
+          helm test langstroth-relay -n $ns --logs
       - name: diagnostics
         if: failure()
         run: |
-          kubectl -n ligus-relay get all,pvc,networkpolicy
-          kubectl -n ligus-relay describe pods
-          kubectl -n ligus-relay logs -l app.kubernetes.io/name=ligus-relay --all-containers --tail=200
+          kubectl -n langstroth-relay get all,pvc,networkpolicy
+          kubectl -n langstroth-relay describe pods
+          kubectl -n langstroth-relay logs -l app.kubernetes.io/name=langstroth-relay --all-containers --tail=200

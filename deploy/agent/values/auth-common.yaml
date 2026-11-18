@@ -1,4 +1,4 @@
-# ligus-auth (optional OIDC sign-in in front of a relay). Every auth-*
+# langstroth-auth (optional OIDC sign-in in front of a relay). Every auth-*
 # scenario layers on this file plus one values file the HUMAN provides with
 # --values: config.public_url, config.tenants (the IdP issuer, client id,
 # workspaces and grants), config.trusted_proxies and the ingress host/TLS.

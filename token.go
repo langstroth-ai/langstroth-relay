@@ -30,15 +30,15 @@ type TokenClaims struct {
 	Turn          bool     `json:"turn"`
 	Caps          []string `json:"caps"`
 	// Workspaces optionally confines the token to these workspace ids ("*" =
-	// any). Enforced only when LIGUS_RELAY_WORKSPACE_SCOPE is claims or strict
+	// any). Enforced only when LANGSTROTH_RELAY_WORKSPACE_SCOPE is claims or strict
 	// (scope.go); omitted from the JSON when empty, so tokens minted without it
 	// are byte-identical to before.
 	Workspaces []string `json:"workspaces,omitempty"`
-	// Tid, Uid and Did are set by ligus-auth (cmd/ligus-auth): the tenant, a
+	// Tid, Uid and Did are set by langstroth-auth (cmd/langstroth-auth): the tenant, a
 	// hash of the upstream IdP subject, and the device id whose key proved
 	// possession at mint time. All are omitted from the JSON when empty, so
 	// tokens minted without them are byte-identical to before. The relay
-	// enforces only Tid, and only when LIGUS_RELAY_TENANTS is set.
+	// enforces only Tid, and only when LANGSTROTH_RELAY_TENANTS is set.
 	Tid string `json:"tid,omitempty"`
 	Uid string `json:"uid,omitempty"`
 	Did string `json:"did,omitempty"`
@@ -87,7 +87,7 @@ func verifyToken(token string, pub ed25519.PublicKey) (TokenClaims, bool) {
 }
 
 // IssueToken mints a compact hrt1 token with the issuer's Ed25519 key. It is
-// the exported form of the issuer used by ligus-relay issue and ligus-auth.
+// the exported form of the issuer used by langstroth-relay issue and langstroth-auth.
 func IssueToken(priv ed25519.PrivateKey, claims TokenClaims) string { return issueToken(priv, claims) }
 
 // VerifyToken checks a compact hrt1 token against an issuer public key and
@@ -157,35 +157,35 @@ const (
 func entitlementConfigError() error {
 	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
 		if _, ok := parsePubkey(pk); !ok {
-			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY is set but is not an Ed25519 public key (64 hex chars or base64)")
+			return errors.New("LANGSTROTH_RELAY_TOKEN_PUBKEY is set but is not an Ed25519 public key (64 hex chars or base64)")
 		}
 	}
 	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY_NEXT"); pk != "" {
 		if getenv("HIVE_RELAY_TOKEN_PUBKEY") == "" {
-			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY_NEXT is set without LIGUS_RELAY_TOKEN_PUBKEY")
+			return errors.New("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT is set without LANGSTROTH_RELAY_TOKEN_PUBKEY")
 		}
 		if _, ok := parsePubkey(pk); !ok {
-			return errors.New("LIGUS_RELAY_TOKEN_PUBKEY_NEXT is set but is not an Ed25519 public key (64 hex chars or base64)")
+			return errors.New("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT is set but is not an Ed25519 public key (64 hex chars or base64)")
 		}
 	}
 	if ts := tenantsFromEnv(); ts != nil {
 		if getenv("HIVE_RELAY_TOKEN_PUBKEY") == "" {
-			return errors.New("LIGUS_RELAY_TENANTS needs signed tokens: set LIGUS_RELAY_TOKEN_PUBKEY")
+			return errors.New("LANGSTROTH_RELAY_TENANTS needs signed tokens: set LANGSTROTH_RELAY_TOKEN_PUBKEY")
 		}
 		if len(ts) == 0 {
-			return errors.New("LIGUS_RELAY_TENANTS is set but lists no tenant id")
+			return errors.New("LANGSTROTH_RELAY_TENANTS is set but lists no tenant id")
 		}
 		// tid confines which tokens are admitted, not which workspaces they
 		// reach: without strict scope one tenant's token would read and write
 		// every other tenant's workspaces.
 		if workspaceScopeFromEnv() != scopeStrict {
-			return errors.New("LIGUS_RELAY_TENANTS needs LIGUS_RELAY_WORKSPACE_SCOPE=strict, or one tenant's tokens reach every workspace")
+			return errors.New("LANGSTROTH_RELAY_TENANTS needs LANGSTROTH_RELAY_WORKSPACE_SCOPE=strict, or one tenant's tokens reach every workspace")
 		}
 	}
 	return nil
 }
 
-// tenantsFromEnv reads LIGUS_RELAY_TENANTS (comma-separated tenant ids). It
+// tenantsFromEnv reads LANGSTROTH_RELAY_TENANTS (comma-separated tenant ids). It
 // returns nil when the setting is unset (tenant confinement off, the default)
 // and an empty non-nil slice when it is set but lists nothing.
 func tenantsFromEnv() []string {
@@ -208,9 +208,13 @@ func lookupRelayEnv(name string) (string, bool) {
 	if v := getenv(name); v != "" {
 		return v, true
 	}
-	canonical := envPrefix + strings.TrimPrefix(name, legacyEnvPrefix)
-	if _, ok := os.LookupEnv(canonical); ok {
-		return "", true
+	if short, ok := settingSuffix(name); ok {
+		for _, p := range envPrefixes {
+			if _, set := os.LookupEnv(p + short); set {
+				return "", true
+			}
+		}
+		return "", false
 	}
 	_, ok := os.LookupEnv(name)
 	return "", ok
@@ -225,11 +229,11 @@ type entitlementPolicy struct {
 	// lookup, which could leak a valid token's length/prefix by timing (P3-13).
 	tokenHashes []string
 	pubkey      ed25519.PublicKey // entSigned
-	// nextPubkey is an optional second issuer key (LIGUS_RELAY_TOKEN_PUBKEY_NEXT)
+	// nextPubkey is an optional second issuer key (LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT)
 	// accepted alongside pubkey while the issuer rotates its signing key.
 	nextPubkey ed25519.PublicKey
 	// tenants, when non-nil, confines signed tokens to these "tid" claims
-	// (LIGUS_RELAY_TENANTS). A token without a tid is refused. Off (nil) by
+	// (LANGSTROTH_RELAY_TENANTS). A token without a tid is refused. Off (nil) by
 	// default.
 	tenants []string
 }
@@ -245,7 +249,7 @@ func entitlementFromEnv() entitlementPolicy {
 			if next := getenv("HIVE_RELAY_TOKEN_PUBKEY_NEXT"); next != "" {
 				nk, ok := parsePubkey(next)
 				if !ok {
-					os.Stderr.WriteString("LIGUS_RELAY_TOKEN_PUBKEY_NEXT is set but unparseable; denying every token\n")
+					os.Stderr.WriteString("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT is set but unparseable; denying every token\n")
 					return entitlementPolicy{kind: entDeny}
 				}
 				p.nextPubkey = nk
@@ -254,7 +258,7 @@ func entitlementFromEnv() entitlementPolicy {
 		}
 		// Parsing failed: fail closed. Falling through would run the relay on
 		// the allowlist or, with none, open: a typo would silently ungate it.
-		os.Stderr.WriteString("LIGUS_RELAY_TOKEN_PUBKEY is set but unparseable; denying every token\n")
+		os.Stderr.WriteString("LANGSTROTH_RELAY_TOKEN_PUBKEY is set but unparseable; denying every token\n")
 		return entitlementPolicy{kind: entDeny}
 	}
 	if v := strings.TrimSpace(getenv("HIVE_RELAY_ACCESS_TOKENS")); v != "" {

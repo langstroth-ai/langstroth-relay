@@ -1,0 +1,25 @@
+# CI: split topology on a CloudNativePG cluster (3 instances), WAL archiving
+# and scheduled backups to object storage, PodMonitor.
+image:
+  repository: langstroth-relay
+  tag: ci
+database:
+  mode: cnpg
+  # Lint and template have no cluster to ask for the operator's API.
+  skipCapabilityCheck: true
+  cnpg:
+    instances: 3
+    storage:
+      size: 1Gi
+    backups:
+      barmanObjectStore:
+        destinationPath: s3://relay-backups/ci
+        s3Credentials:
+          accessKeyId: {name: relay-backup-s3, key: ACCESS_KEY_ID}
+          secretAccessKey: {name: relay-backup-s3, key: ACCESS_SECRET_KEY}
+        wal:
+          compression: gzip
+    podMonitor:
+      enabled: true
+tunnel:
+  mode: open

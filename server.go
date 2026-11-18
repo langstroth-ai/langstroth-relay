@@ -72,7 +72,7 @@ type Options struct {
 	PushSender PushSender
 	// GitHubRoutes registers the deprecated GitHub social routes (directory,
 	// account, friends) for 1.x clients. Also enabled by env
-	// LIGUS_RELAY_GITHUB_ROUTES=on. Off (the v0.3 default) → 404. Removed in v0.4.
+	// LANGSTROTH_RELAY_GITHUB_ROUTES=on. Off (the v0.3 default) → 404. Removed in v0.4.
 	GitHubRoutes bool
 }
 
@@ -117,11 +117,11 @@ type Server struct {
 
 	tunnel *tunnelHub // nil = tunnel off
 
-	wsScope string // LIGUS_RELAY_WORKSPACE_SCOPE: off | claims | strict (scope.go)
+	wsScope string // LANGSTROTH_RELAY_WORKSPACE_SCOPE: off | claims | strict (scope.go)
 
-	maxListBytes int // LIGUS_RELAY_MAX_LIST_BYTES: keyring/candidates/presence response bound (listcap.go)
+	maxListBytes int // LANGSTROTH_RELAY_MAX_LIST_BYTES: keyring/candidates/presence response bound (listcap.go)
 
-	maxRotationBytes int // LIGUS_RELAY_MAX_ROTATION_BYTES: one key rotation's size (0 = body cap only)
+	maxRotationBytes int // LANGSTROTH_RELAY_MAX_ROTATION_BYTES: one key rotation's size (0 = body cap only)
 
 	githubRoutes bool // deprecated GitHub social routes registered (github_routes.go)
 
@@ -229,7 +229,7 @@ func New(o Options) *Server {
 			if vk, ok := parsePubkey(pk); ok {
 				s.memberVerifier = vk
 			} else {
-				os.Stderr.WriteString("HIVE_RELAY_MEMBERSHIP_PUBKEY set but unparseable; ignoring\n")
+				os.Stderr.WriteString("LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY set but unparseable; ignoring\n")
 			}
 		}
 	}
@@ -285,7 +285,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/pair/{code}", s.resolvePairing)
 
 	// Deprecated GitHub social routes (directory / account / friends): only
-	// with Options.GitHubRoutes or LIGUS_RELAY_GITHUB_ROUTES=on, else 404. Removed
+	// with Options.GitHubRoutes or LANGSTROTH_RELAY_GITHUB_ROUTES=on, else 404. Removed
 	// in v0.4.
 	s.registerGitHubRoutes(mux)
 
@@ -1339,7 +1339,7 @@ func (s *Server) verifyGitHub(ctx context.Context, token string) (*githubUser, e
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "ligus-relay")
+	req.Header.Set("User-Agent", "langstroth-relay")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err

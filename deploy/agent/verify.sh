@@ -5,16 +5,16 @@
 # Pod Security "restricted". Read-only apart from helm test's own test pod
 # and a short-lived port-forward.
 #
-#   deploy/agent/verify.sh --context orbstack --namespace ligus-relay \
-#     --release ligus-relay [--json]
+#   deploy/agent/verify.sh --context orbstack --namespace langstroth-relay \
+#     --release langstroth-relay [--json]
 #
 # Exit: 0 healthy, 1 a check failed (see "fix"), 2 usage, 3 tool/cluster.
 source "$(dirname "$0")/lib.sh"
 
 usage() { echo "usage: $0 --context CTX --namespace NS [--release R] [--skip-helm-test] [--json]" >&2; }
 
-NS=${LIGUS_NAMESPACE:-}
-RELEASE=${LIGUS_RELEASE:-}
+pick_env NS LANGSTROTH_NAMESPACE LIGUS_NAMESPACE
+pick_env RELEASE LANGSTROTH_RELEASE LIGUS_RELEASE
 SKIP_TEST=0
 while [ $# -gt 0 ]; do
   case $1 in
@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$NS" ] || { usage; die_usage "--namespace is required"; }
-RELEASE=${RELEASE:-ligus-relay}
+RELEASE=${RELEASE:-langstroth-relay}
 require_context
 valid --namespace "$NS" "$DNS1123"
 valid --release "$RELEASE" "$DNS1123"
@@ -112,7 +112,7 @@ port_forward() { # svc remoteport -> sets LPORT
 stop_pf() { if [ -n "$PF" ]; then kill "$PF" >/dev/null 2>&1 || true; wait "$PF" 2>/dev/null || true; fi; PF=""; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@" || true; }
 
-if [ "$CHARTNAME" = ligus-relay ]; then
+if [ "$CHARTNAME" = langstroth-relay ]; then
   svc=$FULL
   k -n "$NS" get svc "$FULL-sync" >/dev/null 2>&1 && svc="$FULL-sync"
   if port_forward "$svc" 8443; then
@@ -122,10 +122,12 @@ if [ "$CHARTNAME" = ligus-relay ]; then
     fi
     c=$(code "http://127.0.0.1:$LPORT/metrics")
     if [ "$c" = 200 ]; then
-      check metrics-gated fail "/metrics answers without a token" "set LIGUS_RELAY_METRICS_TOKEN in the $FULL-env Secret (bootstrap-secrets.sh does)"
+      check metrics-gated fail "/metrics answers without a token" "set LANGSTROTH_RELAY_METRICS_TOKEN in the $FULL-env Secret (bootstrap-secrets.sh does)"
     else
       # The token goes to curl through a header file, never argv.
-      if k -n "$NS" get secret "$FULL-env" -o jsonpath='{.data.LIGUS_RELAY_METRICS_TOKEN}' 2>/dev/null | base64 -d >"$TMP/tok" 2>/dev/null && [ -s "$TMP/tok" ]; then
+      # LIGUS_RELAY_METRICS_TOKEN: a Secret made before the Langstroth rename.
+      if { k -n "$NS" get secret "$FULL-env" -o jsonpath='{.data.LANGSTROTH_RELAY_METRICS_TOKEN}' 2>/dev/null | base64 -d >"$TMP/tok" 2>/dev/null && [ -s "$TMP/tok" ]; } ||
+        { k -n "$NS" get secret "$FULL-env" -o jsonpath='{.data.LIGUS_RELAY_METRICS_TOKEN}' 2>/dev/null | base64 -d >"$TMP/tok" 2>/dev/null && [ -s "$TMP/tok" ]; }; then
         { printf 'Authorization: Bearer '; cat "$TMP/tok"; printf '\n'; } >"$TMP/hdr"; rm -f "$TMP/tok"
         c2=$(code -H @"$TMP/hdr" "http://127.0.0.1:$LPORT/metrics")
         if [ "$c2" = 200 ]; then check metrics-gated pass "/metrics $c without the token, 200 with it"
@@ -144,7 +146,7 @@ if [ "$CHARTNAME" = ligus-relay ]; then
     if [ "$c" = 200 ]; then check tunnel-health pass "svc/$FULL-tunnel /v1/health 200"; else check tunnel-health fail "svc/$FULL-tunnel /v1/health $c" "kubectl --context $KCTX -n $NS logs svc/$FULL-tunnel"; fi
     stop_pf
   fi
-elif [ "$CHARTNAME" = ligus-auth ]; then
+elif [ "$CHARTNAME" = langstroth-auth ]; then
   if port_forward "$FULL" 8090; then
     c=$(code "http://127.0.0.1:$LPORT/healthz")
     if [ "$c" = 200 ]; then check health pass "svc/$FULL /healthz 200"; else check health fail "svc/$FULL /healthz $c" "kubectl --context $KCTX -n $NS logs deploy/$FULL"; fi

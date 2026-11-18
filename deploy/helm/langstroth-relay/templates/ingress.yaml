@@ -1,0 +1,51 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "langstroth-relay.fullname" . -}}
+{{- $syncSvc := ternary $fullname (printf "%s-sync" $fullname) (eq (include "langstroth-relay.topology" .) "single") -}}
+{{- $tunnelSvc := ternary $fullname (printf "%s-tunnel" $fullname) (eq (include "langstroth-relay.topology" .) "single") -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "langstroth-relay.labels" . | nindent 4 }}
+  {{- $ann := dict -}}
+  {{- if .Values.ingress.streamingDefaults }}
+  {{- $ann = dict "nginx.ingress.kubernetes.io/proxy-read-timeout" "3600" "nginx.ingress.kubernetes.io/proxy-send-timeout" "3600" "nginx.ingress.kubernetes.io/proxy-buffering" "off" "alb.ingress.kubernetes.io/load-balancer-attributes" "idle_timeout.timeout_seconds=3600" -}}
+  {{- end }}
+  {{- $ann = merge (deepCopy (default (dict) .Values.ingress.annotations)) $ann }}
+  {{- with $ann }}
+  annotations:
+    {{- range $k, $v := . }}
+    {{ $k }}: {{ $v | toString | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.secretName }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- if ne .Values.tunnel.mode "off" }}
+          - path: /v1/tunnel
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $tunnelSvc }}
+                port:
+                  name: http
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $syncSvc }}
+                port:
+                  name: http
+{{- end }}

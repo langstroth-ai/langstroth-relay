@@ -1,4 +1,0 @@
-{{- /* ligus-auth's database (database.mode; ligus-postgres library). */ -}}
-{{- $ctx := include "ligus-auth.dbCtx" . | fromYaml -}}
-{{- $_ := set $ctx "root" . -}}
-{{- include "ligus-postgres.resources" $ctx -}}

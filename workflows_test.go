@@ -94,7 +94,7 @@ func TestDeployWorkflow_OnlyTestedOpenRelayFromMain(t *testing.T) {
 		}
 	}
 	df := readRepoFile(t, "Dockerfile")
-	if !strings.Contains(df, "go build -trimpath -ldflags=\"-s -w\" -o /out/ligus-relay ./cmd/ligus-relay") {
-		t.Error("root Dockerfile must build the open cmd/ligus-relay binary")
+	if !strings.Contains(df, "go build -trimpath -ldflags=\"-s -w\" -o /out/langstroth-relay ./cmd/langstroth-relay") {
+		t.Error("root Dockerfile must build the open cmd/langstroth-relay binary")
 	}
 }

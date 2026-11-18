@@ -1,4 +1,4 @@
-# Scenario auth-external: ligus-auth on an external Postgres (DSN from the
+# Scenario auth-external: langstroth-auth on an external Postgres (DSN from the
 # human via bootstrap-secrets.sh --dsn-file; cidrs in the human's values).
 database:
   mode: external

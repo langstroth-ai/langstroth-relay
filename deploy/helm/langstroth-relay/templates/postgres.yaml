@@ -1,0 +1,4 @@
+{{- /* The relay's database (database.mode; langstroth-postgres library). */ -}}
+{{- $ctx := include "langstroth-relay.dbCtx" . | fromYaml -}}
+{{- $_ := set $ctx "root" . -}}
+{{- include "langstroth-postgres.resources" $ctx -}}

@@ -21,22 +21,22 @@ import (
 // HIVE_RELAY_TOKEN_PUBKEY.
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `ligus-relay — self-hostable rendezvous + forwarding relay
+	fmt.Fprint(os.Stderr, `langstroth-relay — self-hostable rendezvous + forwarding relay
 
-Run the server (default):   ligus-relay
-Generate an issuer keypair: ligus-relay keygen
-Mint an access token:       ligus-relay issue --key <priv-hex> --sub <id> \
+Run the server (default):   langstroth-relay
+Generate an issuer keypair: langstroth-relay keygen
+Mint an access token:       langstroth-relay issue --key <priv-hex> --sub <id> \
                               [--plan team] [--exp-days 365] [--max-members 50] \
                               [--turn] [--cap remove_member --cap rotate_key]
-                              [--workspace <id> ...]  (scope; see LIGUS_RELAY_WORKSPACE_SCOPE)
-                              [--tenant <id>]         (tid; see LIGUS_RELAY_TENANTS)
-Bootstrap a remote agent:   ligus-relay bootstrap-agent --key <priv-hex> \
+                              [--workspace <id> ...]  (scope; see LANGSTROTH_RELAY_WORKSPACE_SCOPE)
+                              [--tenant <id>]         (tid; see LANGSTROTH_RELAY_TENANTS)
+Bootstrap a remote agent:   langstroth-relay bootstrap-agent --key <priv-hex> \
                               --relay <url> --room <room> --ws-key <passphrase> \
                               --sub github:<agent-id> --admin-sub github:<owner-id> \
                               [--role contributor] [--label agent] [--exp-days 365]
                             → prints one copy-paste line the dev runs on the box.
 
-Set the relay's HIVE_RELAY_TOKEN_PUBKEY to the keygen public key; keep the
+Set the relay's LANGSTROTH_RELAY_TOKEN_PUBKEY to the keygen public key; keep the
 private key with your issuer backend only.
 `)
 }
@@ -52,7 +52,7 @@ func cmdKeygen() error {
 	pub := priv.Public().(ed25519.PublicKey)
 	fmt.Println("# Ed25519 issuer keypair")
 	fmt.Printf("private_key=%s   # SECRET — keep on the issuer only (never on the relay)\n", hex.EncodeToString(seed))
-	fmt.Printf("public_key=%s    # set as HIVE_RELAY_TOKEN_PUBKEY on the relay\n", hex.EncodeToString(pub))
+	fmt.Printf("public_key=%s    # set as LANGSTROTH_RELAY_TOKEN_PUBKEY on the relay\n", hex.EncodeToString(pub))
 	return nil
 }
 
@@ -99,7 +99,7 @@ func cmdIssue(args []string) error {
 		case "--tenant":
 			claims.Tid = next()
 		default:
-			return fmt.Errorf("unknown flag %s (try `ligus-relay help`)", args[i])
+			return fmt.Errorf("unknown flag %s (try `langstroth-relay help`)", args[i])
 		}
 	}
 
@@ -155,7 +155,7 @@ func cmdBootstrapAgent(args []string) error {
 		case "--exp-days":
 			expDays, _ = strconv.ParseInt(next(), 10, 64)
 		default:
-			return fmt.Errorf("unknown flag %s (try `ligus-relay help`)", args[i])
+			return fmt.Errorf("unknown flag %s (try `langstroth-relay help`)", args[i])
 		}
 	}
 	priv, ok := parseSigningKey(keyHex)
@@ -202,7 +202,7 @@ func cmdBootstrapAgent(args []string) error {
 
 	// The one line the developer pastes on the remote box.
 	fmt.Println("# Run on the remote agent box:")
-	fmt.Printf("brew install ligus-ai/ligus/ligus && \\\n")
+	fmt.Printf("brew install langstroth-ai/hive/ligus && \\\n")
 	fmt.Printf("  ligus enroll %q --token %q && \\\n", invite, tok)
 	fmt.Printf("  ligus worker --label %s\n", label)
 

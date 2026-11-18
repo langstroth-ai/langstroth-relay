@@ -11,11 +11,11 @@ import (
 // These routes return every retained row in one response. With up to
 // defaultMaxKeyringPerWS keyring rows and defaultMaxDeviceBlobsPerWS device
 // blobs per workspace, each up to the request body cap, one unbounded GET could
-// make the relay load and encode gigabytes. LIGUS_RELAY_MAX_LIST_BYTES bounds
+// make the relay load and encode gigabytes. LANGSTROTH_RELAY_MAX_LIST_BYTES bounds
 // each response by stored blob bytes (default 16 MiB; 0 = unbounded). Real
 // rows are small (a rotation sealed per device, a presence or candidate
 // blob), so the bound only bites on abuse. The keyring itself is capped at
-// LIGUS_RELAY_MAX_KEYRING_BYTES_PER_WS (default: this same 16 MiB), so with the
+// LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS (default: this same 16 MiB), so with the
 // defaults its listing is never cut; if an operator lowers the list bound below
 // it, the keyring keeps its newest rows, in order. A device-blob map keeps a
 // subset (by device id). At least one row is always returned.

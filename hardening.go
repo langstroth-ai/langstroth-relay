@@ -58,11 +58,11 @@ const (
 
 	// Workspace reads (envelopes / keyring / presence / candidates / members /
 	// SSE connects) share one per-client bucket. Generous, since clients behind
-	// an ingress without LIGUS_RELAY_TRUSTED_PROXIES share one address.
+	// an ingress without LANGSTROTH_RELAY_TRUSTED_PROXIES share one address.
 	defaultReadRate  = 100.0
 	defaultReadBurst = 400.0
 	// Concurrent SSE streams per client (token subject, else address);
-	// LIGUS_RELAY_MAX_SSE still caps the instance.
+	// LANGSTROTH_RELAY_MAX_SSE still caps the instance.
 	defaultMaxSSEPerClient = 100
 
 	// /v1/health caches its store Ping result for this long so a flood of probes
