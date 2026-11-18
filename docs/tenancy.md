@@ -278,3 +278,31 @@ against the new schema):
 - SCIM deprovisioning still ends access only as short-lived tokens lapse
   (langstroth-auth), and removing a member from the Ligus roster still needs
   an Admin's device.
+- Relay-wide caps are shared. `LANGSTROTH_RELAY_MAX_STORE_BYTES`,
+  `_MAX_TOTAL_ROOM_BYTES`, `_MAX_ROOMS`, `_MAX_CONTACTS` and
+  `_MAX_PAIRINGS` count every tenant together, and a tenant limit of 0
+  means none, so one tenant can fill them for all. Give every tenant
+  `max_bytes`, `max_rooms` and `max_pairings` (in `defaults`) that sum below
+  the relay-wide caps. Contacts have no per-tenant cap.
+- Tenancy is for new deployments. Rooms and tunnel hosts written before it
+  was turned on are not migrated: rooms are hidden under unprefixed keys,
+  and a host registered earlier keeps working with no tenant (outside the
+  tenant host and push limits). A pre-tenancy workspace id containing an
+  encoded `/` (for example `acme%2Fteam`) occupies tenant `acme`'s room
+  `team`, roster included; start tenancy on an empty store.
+
+## Known limits of room retention
+
+- A room is idle when nothing has been appended to it (envelope or key
+  rotation). Reads, event streams and presence don't count, so a team that
+  syncs daily but writes nothing for N days loses its room.
+- When a device that was away past the window writes again, the room starts
+  over at its old sequence without its seed. Devices that already folded the
+  room carry on; a device joining afterwards folds from a log that has no
+  `SessionSnapshot` and fails. The client should treat a fresh fold whose
+  first envelope is not seq 1 as an expired room (re-seed it or start a new
+  workspace) rather than failing silently.
+- Postgres: the one-time `relay_rooms` backfill runs inside the migration
+  transaction, which gives up after 2 minutes (`migrateLockWait`). On a very
+  large `relay_envelopes` table, run it ahead of the upgrade or raise the
+  wait, or the relay exits at startup and retries the backfill each restart.
