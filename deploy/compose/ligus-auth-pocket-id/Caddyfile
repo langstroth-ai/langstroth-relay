@@ -1,9 +1,0 @@
-id.example.com {
-	reverse_proxy pocket-id:1411
-}
-auth.example.com {
-	reverse_proxy ligus-auth:8090
-}
-relay.example.com {
-	reverse_proxy relay:8443
-}

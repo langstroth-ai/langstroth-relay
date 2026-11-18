@@ -16,21 +16,21 @@ import (
 // every forwarding header: a header is only as trustworthy as the hop that
 // set it, and a client can send any header it likes.
 //
-//	LIGUS_RELAY_TRUSTED_PROXIES   comma-separated CIDRs or IPs of the reverse
+//	LANGSTROTH_RELAY_TRUSTED_PROXIES   comma-separated CIDRs or IPs of the reverse
 //	                              proxies in front of the relay (an ingress
 //	                              controller's pod CIDR, a load balancer).
 //	                              Empty (default) = trust no forwarding header.
-//	LIGUS_RELAY_CLIENT_IP_HEADER  the header those proxies set. Default
+//	LANGSTROTH_RELAY_CLIENT_IP_HEADER  the header those proxies set. Default
 //	                              X-Forwarded-For (walked right to left,
 //	                              skipping trusted hops); any other name
 //	                              (X-Real-IP, CF-Connecting-IP, ...) is read
 //	                              as a single address.
 //
-// Only when the peer is inside LIGUS_RELAY_TRUSTED_PROXIES is the header read.
+// Only when the peer is inside LANGSTROTH_RELAY_TRUSTED_PROXIES is the header read.
 //
 // Fly.io: the Fly edge overwrites Fly-Client-IP on every request, and the
 // platform sets FLY_APP_NAME in every machine. When FLY_APP_NAME is set and
-// LIGUS_RELAY_TRUSTED_PROXIES is not, the relay keeps its earlier behavior and
+// LANGSTROTH_RELAY_TRUSTED_PROXIES is not, the relay keeps its earlier behavior and
 // takes Fly-Client-IP as the client address. Anywhere else Fly-Client-IP is an
 // ordinary client-supplied header and is ignored.
 type clientIPPolicy struct {
@@ -57,7 +57,7 @@ func clientIPPolicyFromEnv() *clientIPPolicy {
 		if err != nil {
 			addr, aerr := netip.ParseAddr(part)
 			if aerr != nil {
-				fmt.Fprintf(os.Stderr, "ligus-relay: LIGUS_RELAY_TRUSTED_PROXIES: %q is not a CIDR or IP; ignoring it\n", part)
+				fmt.Fprintf(os.Stderr, "langstroth-relay: LANGSTROTH_RELAY_TRUSTED_PROXIES: %q is not a CIDR or IP; ignoring it\n", part)
 				continue
 			}
 			addr = addr.Unmap()

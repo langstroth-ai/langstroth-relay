@@ -1,0 +1,43 @@
+{{- include "langstroth-relay.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "langstroth-relay.fullname" . }}
+  labels:
+    {{- include "langstroth-relay.labels" . | nindent 4 }}
+data:
+  LANGSTROTH_RELAY_ADDR: "0.0.0.0:8443"
+  {{- $require := .Values.requireDatabase }}
+  {{- if kindIs "invalid" $require }}{{ $require = (include "langstroth-relay.hasDatabase" . | eq "true") }}{{ end }}
+  {{- if $require }}
+  LANGSTROTH_RELAY_REQUIRE_DB: "1"
+  {{- end }}
+  {{- if and (not (include "langstroth-relay.hasDatabase" .)) .Values.memoryStore.maxBytes }}
+  LANGSTROTH_RELAY_MAX_STORE_BYTES: {{ .Values.memoryStore.maxBytes | int64 | quote }}
+  {{- end }}
+  {{- with .Values.clientIP.trustedProxies }}
+  LANGSTROTH_RELAY_TRUSTED_PROXIES: {{ join "," . | quote }}
+  {{- end }}
+  {{- with .Values.clientIP.header }}
+  LANGSTROTH_RELAY_CLIENT_IP_HEADER: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.contacts }}
+  {{- if not .enabled }}
+  LANGSTROTH_RELAY_CONTACTS: "off"
+  {{- end }}
+  {{- $contactEnv := dict "maxRecordBytes" "LANGSTROTH_RELAY_CONTACT_MAX_RECORD_BYTES" "maxDropBytes" "LANGSTROTH_RELAY_CONTACT_MAX_DROP_BYTES" "ttlDays" "LANGSTROTH_RELAY_CONTACT_TTL_DAYS" "dropMaxRows" "LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS" "dropMaxBoxBytes" "LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES" "dropRetentionDays" "LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS" "reclaimHoldDays" "LANGSTROTH_RELAY_CONTACT_RECLAIM_HOLD_DAYS" "maxContacts" "LANGSTROTH_RELAY_MAX_CONTACTS" "dropRate" "LANGSTROTH_RELAY_CONTACT_DROP_RATE" "dropBurst" "LANGSTROTH_RELAY_CONTACT_DROP_BURST" "dropCidRate" "LANGSTROTH_RELAY_CONTACT_DROP_CID_RATE" "dropCidBurst" "LANGSTROTH_RELAY_CONTACT_DROP_CID_BURST" "writeRate" "LANGSTROTH_RELAY_CONTACT_WRITE_RATE" "writeBurst" "LANGSTROTH_RELAY_CONTACT_WRITE_BURST" "createRate" "LANGSTROTH_RELAY_CONTACT_CREATE_RATE" "createBurst" "LANGSTROTH_RELAY_CONTACT_CREATE_BURST" }}
+  {{- $c := . }}
+  {{- range $key := keys $contactEnv | sortAlpha }}
+  {{- $v := get $c $key }}
+  {{- if not (kindIs "invalid" $v) }}
+  {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
+  {{ get $contactEnv $key }}: {{ $v | toString | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.githubRoutes }}
+  LANGSTROTH_RELAY_GITHUB_ROUTES: "on"
+  {{- end }}
+  {{- range $k, $val := .Values.config.env }}
+  {{ $k }}: {{ $val | quote }}
+  {{- end }}

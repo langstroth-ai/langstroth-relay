@@ -1,0 +1,28 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "langstroth-relay.fullname" . }}
+  labels:
+    {{- include "langstroth-relay.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "langstroth-relay.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      {{- $b := .Values.metrics.serviceMonitor.bearerTokenSecret }}
+      {{- $name := default .Values.metrics.token.existingSecret $b.name }}
+      {{- if $name }}
+      authorization:
+        credentials:
+          name: {{ $name }}
+          key: {{ ternary $b.key .Values.metrics.token.key (not (empty $b.name)) }}
+      {{- end }}
+{{- end }}

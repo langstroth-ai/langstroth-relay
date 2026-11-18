@@ -1,0 +1,11 @@
+# CI (with dex-values.yaml): langstroth-auth on the bundled single-instance
+# Postgres, TLS from an existing Secret.
+database:
+  mode: bundled
+  bundled:
+    auth:
+      existingSecret: langstroth-auth-postgres-auth
+    tls:
+      existingSecret: langstroth-auth-postgres-tls
+    persistence:
+      size: 256Mi

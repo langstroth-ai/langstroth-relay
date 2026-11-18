@@ -16,8 +16,8 @@ set -o errexit -o nounset -o pipefail
 
 AGENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$AGENT_DIR/../.." && pwd)"
-RELAY_CHART="$REPO_ROOT/deploy/helm/ligus-relay"
-AUTH_CHART="$REPO_ROOT/deploy/helm/ligus-auth"
+RELAY_CHART="$REPO_ROOT/deploy/helm/langstroth-relay"
+AUTH_CHART="$REPO_ROOT/deploy/helm/langstroth-auth"
 JSON=0
 
 log() { printf '%s\n' "$*" >&2; }
@@ -56,6 +56,17 @@ checks_json() {
 
 die_usage() { log "usage error: $*"; exit 2; }
 
+# pick_env VAR NEW OLD [DEFAULT]: sets VAR to $NEW, else to $OLD (the name
+# before the Langstroth rename, e.g. LIGUS_NAMESPACE), else to DEFAULT. Both
+# set to different values is a usage error rather than a guess.
+pick_env() {
+  local new=${!2-} old=${!3-}
+  if [ -n "$new" ] && [ -n "$old" ] && [ "$new" != "$old" ]; then
+    die_usage "$2 and $3 are both set, to different values: set only $2"
+  fi
+  printf -v "$1" '%s' "${new:-${old:-${4-}}}"
+}
+
 need_tool() {
   command -v "$1" >/dev/null 2>&1 || {
     log "missing tool: $1 ($2)"
@@ -90,7 +101,7 @@ IMAGE_TAG_RE='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
 
 # release_pvcs FULL: from "persistentvolumeclaim/NAME" lines on stdin, the
 # ones this release's charts create (exact names, never a prefix match: a
-# release named ligus-relay must not take ligus-relay-b's data with it).
+# release named langstroth-relay must not take langstroth-relay-b's data with it).
 release_pvcs() {
   grep -E "^persistentvolumeclaim/($1|$1-data|data-$1-postgres-[0-9]+|$1-db-[0-9]+(-wal)?)\$" || true
 }
@@ -104,8 +115,8 @@ check_rendered() {
   printf '%s\n' "$f" | grep -q '^kind: NetworkPolicy' || bad="$bad no NetworkPolicy (networkPolicy.enabled);"
   printf '%s\n' "$f" | grep -qE '^[[:space:]]*(privileged|hostNetwork|hostPID|hostIPC|allowPrivilegeEscalation): true' \
     && bad="$bad a privileged or host-namespace pod (security contexts);"
-  n=$(printf '%s\n' "$f" | grep -c 'name: LIGUS_RELAY_TUNNEL$' || true)
-  off=$(printf '%s\n' "$f" | grep -A1 'name: LIGUS_RELAY_TUNNEL$' | grep -c 'value: "off"' || true)
+  n=$(printf '%s\n' "$f" | grep -c 'name: LANGSTROTH_RELAY_TUNNEL$' || true)
+  off=$(printf '%s\n' "$f" | grep -A1 'name: LANGSTROTH_RELAY_TUNNEL$' | grep -c 'value: "off"' || true)
   if [ "$n" != "$off" ] && [ "${1:-0}" != 1 ]; then
     bad="$bad the tunnel is on (tunnel.mode: exposure is the human's decision; after they chose it, rerun with --human-approved-exposure);"
   fi

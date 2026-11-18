@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Preflight for installing the ligus-relay / ligus-auth charts. Read-only:
+# Preflight for installing the langstroth-relay / langstroth-auth charts. Read-only:
 # it changes nothing, unless --probe is given, which creates one throwaway
-# namespace (ligus-preflight-<random>), tests NetworkPolicy enforcement and
+# namespace (langstroth-preflight-<random>), tests NetworkPolicy enforcement and
 # ReadWriteOncePod there, and deletes it.
 #
-#   deploy/agent/preflight.sh --context orbstack --namespace ligus-relay \
+#   deploy/agent/preflight.sh --context orbstack --namespace langstroth-relay \
 #     --scenario team-bundled [--probe] [--json]
 #
 # Exit: 0 every check passed or warned, 1 a check failed, 2 usage,
@@ -15,15 +15,15 @@ usage() {
   cat >&2 <<EOF
 usage: $0 --context CTX [--namespace NS] [--scenario S] [--probe] [--json]
   --context    kube context to check (required; never the current one by default)
-  --namespace  target namespace (default: ligus-relay)
+  --namespace  target namespace (default: langstroth-relay)
   --scenario   one of: $SCENARIOS
   --probe      also prove NetworkPolicy enforcement and RWOP with a throwaway namespace
   --json       one JSON object on stdout
 EOF
 }
 
-NS=${LIGUS_NAMESPACE:-ligus-relay}
-SCENARIO=${LIGUS_SCENARIO:-}
+pick_env NS LANGSTROTH_NAMESPACE LIGUS_NAMESPACE langstroth-relay
+pick_env SCENARIO LANGSTROTH_SCENARIO LIGUS_SCENARIO
 PROBE=0
 while [ $# -gt 0 ]; do
   case $1 in
@@ -157,7 +157,7 @@ PNS=""
 probe_cleanup() { if [ -n "$PNS" ]; then k delete namespace "$PNS" --wait=false >/dev/null 2>&1 || true; PNS=""; fi; }
 probe() {
   local pns
-  pns=$(printf 'ligus-preflight-%04x%04x' "$RANDOM" "$RANDOM")
+  pns=$(printf 'langstroth-preflight-%04x%04x' "$RANDOM" "$RANDOM")
   PNS=$pns
   trap probe_cleanup EXIT
   k create namespace "$pns" >/dev/null

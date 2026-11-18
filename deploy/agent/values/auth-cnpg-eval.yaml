@@ -1,4 +1,4 @@
-# Scenario auth-cnpg-eval: ligus-auth on a one-instance CloudNativePG cluster,
+# Scenario auth-cnpg-eval: langstroth-auth on a one-instance CloudNativePG cluster,
 # backups acknowledged OFF. Evaluation only.
 database:
   mode: cnpg

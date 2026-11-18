@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # deploy.yml and release.yml run this first on a release tag.
+  workflow_call:
 
 permissions:
   contents: read
@@ -41,5 +43,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker build -t ligus-relay:ci .
-      - run: docker build -f deploy/container/Dockerfile.ligus-auth -t ligus-auth:ci .
+      - run: docker build -t langstroth-relay:ci .
+      - run: docker build -f deploy/container/Dockerfile.langstroth-auth -t langstroth-auth:ci .

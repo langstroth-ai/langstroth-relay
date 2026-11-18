@@ -1,4 +1,0 @@
-{{- /* The relay's database (database.mode; ligus-postgres library). */ -}}
-{{- $ctx := include "ligus-relay.dbCtx" . | fromYaml -}}
-{{- $_ := set $ctx "root" . -}}
-{{- include "ligus-postgres.resources" $ctx -}}

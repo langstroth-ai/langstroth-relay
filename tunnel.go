@@ -102,12 +102,11 @@ func defaultTunnelLimits() tunnelLimits {
 }
 
 type tunnelHub struct {
-	store   TunnelStore
-	policy  TunnelPolicy
-	push    PushSender
-	billing string
-	lim     tunnelLimits
-	now     func() time.Time
+	store  TunnelStore
+	policy TunnelPolicy
+	push   PushSender
+	lim    tunnelLimits
+	now    func() time.Time
 
 	// tap, when set (tests only), sees every spliced binary message. It exists
 	// to prove the relay only ever handles ciphertext (T-relay-canary).
@@ -204,21 +203,17 @@ type dayCount struct {
 	n   int
 }
 
-func newTunnelHub(store Store, policy TunnelPolicy, push PushSender, billing string) *tunnelHub {
+func newTunnelHub(store Store, policy TunnelPolicy, push PushSender) *tunnelHub {
 	ts, ok := store.(TunnelStore)
 	if !ok {
 		slog.Warn("store does not implement TunnelStore; tunnel host registrations and revocations are kept in memory only")
 		ts = newMemTunnel()
-	}
-	if billing == "" {
-		billing = "none"
 	}
 	lim := defaultTunnelLimits()
 	h := &tunnelHub{
 		store:    ts,
 		policy:   policy,
 		push:     push,
-		billing:  billing,
 		lim:      lim,
 		now:      time.Now,
 		hosts:    map[string]*hostCtl{},
@@ -264,8 +259,12 @@ func (h *tunnelHub) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/tunnel/connect", h.handleConnect)
 }
 
+// tunnelBilling is the "billing" field of GET /v1/tunnel/info. Clients still
+// read it, so it stays on the wire, fixed at "none".
+const tunnelBilling = "none"
+
 func (h *tunnelHub) handleInfo(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"versions": []int{tunnelVersion}, "push": h.push != nil, "billing": h.billing})
+	writeJSON(w, http.StatusOK, map[string]any{"versions": []int{tunnelVersion}, "push": h.push != nil, "billing": tunnelBilling})
 }
 
 // upgrade enforces the subprotocol (426 otherwise), upgrades, clears the

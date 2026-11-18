@@ -6,32 +6,32 @@ import (
 	"strings"
 )
 
-// Pod roles for the split Kubernetes topology (deploy/helm/ligus-relay):
+// Pod roles for the split Kubernetes topology (deploy/helm/langstroth-relay):
 //
-//   - LIGUS_RELAY_ROUTES=tunnel makes a process serve only the tunnel
+//   - LANGSTROTH_RELAY_ROUTES=tunnel makes a process serve only the tunnel
 //     (/v1/tunnel/*) plus /v1/health and /metrics. The tunnel pod would
 //     otherwise also answer pairing, contacts and workspace routes, a third
 //     in-process pairing store beside relay-sync's for anything that reaches
 //     its Service directly.
 //   - APNs settings on a process with the tunnel off are refused: push only
 //     ever goes out through the tunnel, so an APNs key there (for example an
-//     inline LIGUS_RELAY_APNS_KEY in a Secret shared with relay-sync) is a key
+//     inline LANGSTROTH_RELAY_APNS_KEY in a Secret shared with relay-sync) is a key
 //     where it can only leak.
 
 const routesTunnel = "tunnel"
 
-// routesConfigError validates LIGUS_RELAY_ROUTES against the tunnel mode.
+// routesConfigError validates LANGSTROTH_RELAY_ROUTES against the tunnel mode.
 func routesConfigError(get func(string) string) error {
 	switch r := strings.ToLower(strings.TrimSpace(get("HIVE_RELAY_ROUTES"))); r {
 	case "", "all":
 		return nil
 	case routesTunnel:
 		if tunnelOff(get) {
-			return fmt.Errorf("LIGUS_RELAY_ROUTES=tunnel with LIGUS_RELAY_TUNNEL off would serve nothing")
+			return fmt.Errorf("LANGSTROTH_RELAY_ROUTES=tunnel with LANGSTROTH_RELAY_TUNNEL off would serve nothing")
 		}
 		return nil
 	default:
-		return fmt.Errorf("LIGUS_RELAY_ROUTES=%q: use all or tunnel", r)
+		return fmt.Errorf("LANGSTROTH_RELAY_ROUTES=%q: use all or tunnel", r)
 	}
 }
 
@@ -47,13 +47,13 @@ func apnsWithoutTunnelError(get func(string) string) error {
 	}
 	for _, k := range []string{"HIVE_RELAY_APNS_KEY", "HIVE_RELAY_APNS_KEY_FILE", "HIVE_RELAY_APNS_KEY_ID", "HIVE_RELAY_APNS_TEAM_ID"} {
 		if strings.TrimSpace(get(k)) != "" {
-			return fmt.Errorf("%s is set but the tunnel is off on this process: APNs keys belong only on the tunnel pod (push goes out through the tunnel); remove it here", strings.Replace(k, "HIVE_", "LIGUS_", 1))
+			return fmt.Errorf("%s is set but the tunnel is off on this process: APNs keys belong only on the tunnel pod (push goes out through the tunnel); remove it here", strings.Replace(k, legacyEnvPrefix, envPrefix, 1))
 		}
 	}
 	return nil
 }
 
-// restrictRoutes wraps h per LIGUS_RELAY_ROUTES.
+// restrictRoutes wraps h per LANGSTROTH_RELAY_ROUTES.
 func restrictRoutes(h http.Handler, get func(string) string) http.Handler {
 	if strings.ToLower(strings.TrimSpace(get("HIVE_RELAY_ROUTES"))) != routesTunnel {
 		return h

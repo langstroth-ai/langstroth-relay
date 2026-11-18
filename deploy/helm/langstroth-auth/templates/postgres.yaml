@@ -1,0 +1,4 @@
+{{- /* langstroth-auth's database (database.mode; langstroth-postgres library). */ -}}
+{{- $ctx := include "langstroth-auth.dbCtx" . | fromYaml -}}
+{{- $_ := set $ctx "root" . -}}
+{{- include "langstroth-postgres.resources" $ctx -}}

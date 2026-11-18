@@ -124,7 +124,7 @@ var (
 	ErrNotPending     = errors.New("request not pending")
 	ErrTooManyPending = errors.New("too many pending outbound requests")
 	// ErrStoreFull is returned when a write would exceed the store's byte
-	// budget (LIGUS_RELAY_MAX_STORE_BYTES); the handler answers 507.
+	// budget (LANGSTROTH_RELAY_MAX_STORE_BYTES); the handler answers 507.
 	ErrStoreFull = errors.New("relay storage budget exhausted")
 	// ErrKeyringFull is returned when a workspace's keyring is at its rotation
 	// count or byte cap. It wraps ErrStoreFull, so the handler answers 507.

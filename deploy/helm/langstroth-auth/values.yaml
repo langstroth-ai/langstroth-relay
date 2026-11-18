@@ -1,0 +1,312 @@
+# Default values for langstroth-auth. See docs (langstroth-auth) for the model: the
+# service signs people in at your IdP and mints short-lived relay tokens; it
+# never makes anyone a workspace member.
+
+image:
+  repository: ghcr.io/langstroth-ai/langstroth-auth
+  tag: ""          # defaults to the chart appVersion
+  digest: ""       # pin by digest in production; overrides tag
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# The langstroth-auth config file (rendered to /etc/langstroth-auth/config.json).
+# listen/admin_listen/signing_key_file/store are set by the chart; put the
+# rest here. Secret files referenced by the config (client secrets, SCIM
+# tokens) live in secretFiles.existingSecret, mounted at
+# /etc/langstroth-auth/secrets/<key>.
+config:
+  public_url: ""   # required, e.g. https://auth.example.com
+  access_ttl: "15m"
+  refresh_idle_ttl: "168h"
+  session_max_age: "720h"
+  # Exact addresses of your ingress controller or load balancer (never the
+  # whole pod CIDR); required with ingress.enabled.
+  trusted_proxies: []
+  tenants: []
+  # - id: home
+  #   oidc:
+  #     issuer: https://dex.example.com
+  #     client_id: langstroth-auth
+  #     client_secret_file: /etc/langstroth-auth/secrets/dex-client-secret
+  #   idp_groups: true
+  #   workspaces: ["<workspace-uuid>"]
+  #   grants: {"ligus-users": ["<workspace-uuid>"]}
+
+# Required: a Secret holding the issuer Ed25519 seed (langstroth-auth keygen --out).
+signingKey:
+  existingSecret: ""
+  key: signing-key
+
+# Optional: a Secret whose keys are mounted as files under
+# /etc/langstroth-auth/secrets (IdP client secrets, SCIM tokens).
+secretFiles:
+  existingSecret: ""
+
+# Optional: enables the admin API on adminPort (never exposed by the Ingress).
+adminToken:
+  existingSecret: ""
+  key: admin-token
+
+# Store: "file" (one replica, state on a volume) or "postgres" (shared;
+# database.mode below picks which Postgres).
+store:
+  driver: file
+  # DEPRECATED (use database.mode=external, database.external.*): with
+  # driver=postgres and database.mode empty, a Secret with the DSN.
+  databaseUrl:
+    existingSecret: ""
+    key: database-url
+
+# The Postgres store (README of the langstroth-relay chart, "Database"; the same
+# three modes, from the shared langstroth-postgres library). Any mode but none
+# sets store.driver=postgres. Empty (default): store.driver=postgres with
+# store.databaseUrl (deprecated) means external, else the file store.
+database:
+  mode: ""
+  name: ligus_auth
+  user: ligus_auth
+  # The chart checks that the cluster serves the operator APIs it renders
+  # (postgresql.cnpg.io/v1, cert-manager.io/v1, monitoring.coreos.com/v1).
+  # helm template and GitOps tools without cluster access see none: pass
+  # --api-versions, or set this to skip the check.
+  skipCapabilityCheck: false
+
+  external:
+    # A Secret holding the full DSN, mounted as a file
+    # (LANGSTROTH_AUTH_DATABASE_URL_FILE).
+    # Use sslmode=verify-full with sslrootcert= pointing at a CA file you
+    # mount (secretFiles.existingSecret is a directory of files), or
+    # sslrootcert=system for a publicly trusted server certificate.
+    existingSecret: ""
+    existingSecretKey: DATABASE_URL
+    # The database's addresses for the egress NetworkPolicy (ipBlock). Must
+    # not contain a cloud metadata address; anything broader than /8 (IPv4)
+    # or /48 (IPv6), and IPv4-mapped or NAT64 IPv6 forms, are refused. Empty: add it to networkPolicy.extraEgress yourself.
+    cidrs: []
+    port: 5432
+
+  cnpg:
+    # 1 for a single instance; 3 (or more) for HA with automatic failover.
+    instances: 1
+    # Postgres image (CloudNativePG's own, by default the operator's); pin a
+    # digest in production. Or imageCatalogRef.
+    imageName: ""
+    imageCatalogRef: {}
+    storage:
+      size: 2Gi
+      storageClass: ""
+    walStorage: {}
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    affinity: {}
+    # null keeps the operator's default (a PDB on the primary, which blocks
+    # node drains with one instance).
+    enablePDB: null
+    # postgresql.conf parameters.
+    parameters: {}
+    # Replaces the default bootstrap (initdb of database.name owned by
+    # database.user), e.g. {recovery: {source: origin}} with externalClusters
+    # to restore from a backup.
+    bootstrap: {}
+    externalClusters: []
+    backups:
+      # Backups are on unless you say otherwise: enabled=false renders only
+      # with acknowledgeNoBackups=true.
+      enabled: true
+      acknowledgeNoBackups: false
+      # barmanObjectStore (in-tree, spec.backup.barmanObjectStore) or plugin
+      # (the Barman Cloud plugin, CloudNativePG 1.26+).
+      method: barmanObjectStore
+      # Passed through verbatim, e.g.
+      #   destinationPath: s3://bucket/langstroth-auth
+      #   s3Credentials:
+      #     accessKeyId: {name: langstroth-auth-backup-s3, key: ACCESS_KEY_ID}
+      #     secretAccessKey: {name: langstroth-auth-backup-s3, key: ACCESS_SECRET_KEY}
+      #   wal: {compression: gzip}
+      barmanObjectStore: {}
+      retentionPolicy: 30d
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        # e.g. {barmanObjectName: langstroth-auth-store} (an ObjectStore you create).
+        parameters: {}
+      # Six fields, seconds first (CloudNativePG's cron format).
+      schedule: "0 0 3 * * *"
+      immediate: true
+    podMonitor:
+      enabled: false
+      interval: ""
+      labels: {}
+    networkPolicy:
+      # Ingress to the instances: the langstroth-auth pod, the cluster's own
+      # instances, and the operator's namespace (match yours).
+      enabled: true
+      operatorNamespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cnpg-system
+      operatorPodSelector: {}
+      # Who may scrape metrics on 9187, as NetworkPolicy peers.
+      metricsFrom: []
+
+  bundled:
+    image:
+      repository: docker.io/library/postgres
+      # Pinned by tag and digest (required). Stays on Postgres 16: a major
+      # bump needs a pg_upgrade of the existing data volume.
+      tag: 16.16-alpine3.24@sha256:0adbf25a9e96d38823bb813f3ac0ed41fadb665c88f1df7fe6dbfb060cbdc106
+      pullPolicy: IfNotPresent
+    auth:
+      # Required: a Secret with `password` (the role's password) and
+      # `pgpass` (a libpq password-file line for langstroth-auth):
+      #   PW=$(openssl rand -hex 24)
+      #   kubectl -n <ns> create secret generic langstroth-auth-postgres-auth \
+      #     --from-literal=password=$PW --from-literal=pgpass="*:*:*:ligus_auth:$PW"
+      existingSecret: ""
+      pgpassKey: pgpass
+    tls:
+      # A kubernetes.io/tls Secret with tls.crt, tls.key and the issuing CA
+      # (caKey), for DNS name <release>-langstroth-auth-postgres; or
+      # certManager.issuerRef to have cert-manager issue it (use a CA or
+      # self-signed-CA Issuer, so the Secret carries ca.crt).
+      existingSecret: ""
+      caKey: ca.crt
+      certManager:
+        issuerRef: {}
+        #   name: ligus-ca
+        #   kind: Issuer
+        duration: ""
+        renewBefore: ""
+    # Without TLS the chart refuses to render; true accepts plaintext inside
+    # the namespace (development only).
+    allowPlaintextInNamespace: false
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+      # ReadWriteOncePod: never mounted by two pods at once. Use
+      # ReadWriteOnce where the storage provisioner refuses it.
+      accessModes: [ReadWriteOncePod]
+    # postgresql.conf parameters (passed as -c key=value). ssl*, hba_file,
+    # ident_file, config_file, password_encryption and listen_addresses are
+    # the chart's and refused.
+    parameters: {}
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    nodeSelector: {}
+    tolerations: []
+    backups:
+      # pg_dump to a PVC. enabled=false renders only with
+      # acknowledgeNoBackups=true.
+      enabled: true
+      acknowledgeNoBackups: false
+      schedule: "17 3 * * *"
+      timeZone: ""
+      # Dumps kept on the volume (newest first).
+      keep: 7
+      activeDeadlineSeconds: 3600
+      persistence:
+        size: 2Gi
+        storageClass: ""
+        accessModes: [ReadWriteOnce]
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { memory: 512Mi }
+      restore:
+        # A dump file name on the backup volume (ligus_auth-<UTC time>.dump). While
+        # set, the chart runs a restore Job, scales langstroth-auth to zero and
+        # suspends the CronJob. Unset it when the Job has succeeded.
+        file: ""
+
+persistence:
+  # The file store needs it: without it every session is lost on restart and
+  # rendering fails unless allowEphemeral (CI only).
+  enabled: false
+  allowEphemeral: false
+  size: 1Gi
+  storageClass: ""
+
+# Exactly one in 2.0 (rendering fails otherwise): sign-in and device-code
+# flow state is per process, and no affinity can pin a browser, a device-code
+# poller and a phone to the same pod.
+replicas: 1
+
+service:
+  type: ClusterIP
+  port: 8090
+  adminPort: 8091
+
+# Clients require https://: an Ingress without tls.secretName fails unless
+# tls.terminatedUpstream (a load balancer in front terminates TLS). With an
+# Ingress, config.trusted_proxies must list the exact addresses the
+# controller connects from (else every client shares one rate-limit bucket)
+# unless ingress.allowSharedBucket.
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    secretName: ""
+    terminatedUpstream: false
+  allowSharedBucket: false
+
+networkPolicy:
+  enabled: true
+  # Who reaches the public port (8090). Empty = anywhere (clients come through
+  # your ingress controller); list the controller's namespace to narrow it.
+  ingressFrom: []
+  # Who reaches the admin API (8091). Empty = no pod at all (the default):
+  # agent-running serve pods and everything else in the cluster are refused.
+  # kubectl port-forward still works.
+  adminIngressFrom: []
+  # Default-deny egress except DNS, idpEgress and extraEgress.
+  restrictEgress: true
+  # HTTPS to the IdP. NetworkPolicy can't match host names, so the default is
+  # any address on 443 except cloud metadata and private ranges; narrow it to
+  # your IdP's addresses if you can.
+  idpEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16      # cloud instance metadata
+              - 100.100.100.200/32  # Alibaba Cloud metadata
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - {port: 443, protocol: TCP}
+  # Anything else. The database's rule comes from database.mode.
+  extraEgress: []
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+
+resources:
+  requests: {cpu: 20m, memory: 32Mi}
+  limits: {memory: 128Mi}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: {type: RuntimeDefault}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

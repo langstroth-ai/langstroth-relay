@@ -191,18 +191,18 @@ func TestAgentScenariosRender(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	relay, auth := "deploy/helm/ligus-relay", "deploy/helm/ligus-auth"
+	relay, auth := "deploy/helm/langstroth-relay", "deploy/helm/langstroth-auth"
 	v := func(s string) string { return "deploy/agent/values/" + s + ".yaml" }
 	backup := filepath.Join(t.TempDir(), "backup.yaml")
 	_ = os.WriteFile(backup, []byte("database:\n  cnpg:\n    backups:\n      barmanObjectStore:\n        destinationPath: s3://b/r\n        s3Credentials:\n          accessKeyId: {name: s3, key: id}\n          secretAccessKey: {name: s3, key: key}\n"), 0o600)
 	cidrs := filepath.Join(t.TempDir(), "cidrs.yaml")
 	_ = os.WriteFile(cidrs, []byte("database:\n  external:\n    cidrs: [10.20.0.15/32]\n"), 0o600)
 	cases := map[string][]string{
-		"eval-memory":    {relay, "-f", v("eval-memory"), "--set", "config.existingSecret=t-ligus-relay-env"},
-		"team-bundled":   {relay, "-f", v("team-bundled"), "--set", "config.existingSecret=t-ligus-relay-env", "--set", "database.bundled.auth.existingSecret=a", "--set", "database.bundled.tls.existingSecret=b"},
-		"team-cnpg-eval": {relay, "-f", v("team-cnpg-eval"), "--set", "config.existingSecret=t-ligus-relay-env"},
-		"team-cnpg":      {relay, "-f", v("team-cnpg"), "-f", backup, "--set", "config.existingSecret=t-ligus-relay-env"},
-		"team-external":  {relay, "-f", v("team-external"), "-f", cidrs, "--set", "config.existingSecret=t-ligus-relay-env", "--set", "database.external.existingSecret=d"},
+		"eval-memory":    {relay, "-f", v("eval-memory"), "--set", "config.existingSecret=t-langstroth-relay-env"},
+		"team-bundled":   {relay, "-f", v("team-bundled"), "--set", "config.existingSecret=t-langstroth-relay-env", "--set", "database.bundled.auth.existingSecret=a", "--set", "database.bundled.tls.existingSecret=b"},
+		"team-cnpg-eval": {relay, "-f", v("team-cnpg-eval"), "--set", "config.existingSecret=t-langstroth-relay-env"},
+		"team-cnpg":      {relay, "-f", v("team-cnpg"), "-f", backup, "--set", "config.existingSecret=t-langstroth-relay-env"},
+		"team-external":  {relay, "-f", v("team-external"), "-f", cidrs, "--set", "config.existingSecret=t-langstroth-relay-env", "--set", "database.external.existingSecret=d"},
 	}
 	authBase := []string{auth, "-f", v("auth-common"), "-f", v("auth-example-human"), "--set", "signingKey.existingSecret=k", "--set", "adminToken.existingSecret=a"}
 	cases["auth-file"] = append(append([]string{}, authBase...), "-f", v("auth-file"))
@@ -218,7 +218,7 @@ func TestAgentScenariosRender(t *testing.T) {
 		if !strings.Contains(out, "kind: NetworkPolicy") {
 			t.Errorf("scenario %s renders no NetworkPolicy", name)
 		}
-		if args[0] == relay && !regexp.MustCompile(`name: LIGUS_RELAY_TUNNEL\s+value: "off"`).MatchString(out) {
+		if args[0] == relay && !regexp.MustCompile(`name: LANGSTROTH_RELAY_TUNNEL\s+value: "off"`).MatchString(out) {
 			t.Errorf("scenario %s must keep the tunnel off", name)
 		}
 	}
@@ -279,18 +279,18 @@ func libCall(t *testing.T, stdin, script string) (int, string) {
 // teardown --delete-data matches this release's PVC names exactly.
 func TestAgentTeardownPVCsAreThisReleasesOnly(t *testing.T) {
 	in := strings.Join([]string{
-		"persistentvolumeclaim/ligus-relay-data",
-		"persistentvolumeclaim/data-ligus-relay-postgres-0",
-		"persistentvolumeclaim/ligus-relay-db-1",
-		"persistentvolumeclaim/ligus-relay-b-data",
-		"persistentvolumeclaim/data-ligus-relay-b-postgres-0",
-		"persistentvolumeclaim/other-ligus-relay-data",
+		"persistentvolumeclaim/langstroth-relay-data",
+		"persistentvolumeclaim/data-langstroth-relay-postgres-0",
+		"persistentvolumeclaim/langstroth-relay-db-1",
+		"persistentvolumeclaim/langstroth-relay-b-data",
+		"persistentvolumeclaim/data-langstroth-relay-b-postgres-0",
+		"persistentvolumeclaim/other-langstroth-relay-data",
 	}, "\n") + "\n"
-	_, out := libCall(t, in, "release_pvcs ligus-relay")
+	_, out := libCall(t, in, "release_pvcs langstroth-relay")
 	got := strings.Fields(out)
-	want := []string{"persistentvolumeclaim/ligus-relay-data", "persistentvolumeclaim/data-ligus-relay-postgres-0", "persistentvolumeclaim/ligus-relay-db-1"}
+	want := []string{"persistentvolumeclaim/langstroth-relay-data", "persistentvolumeclaim/data-langstroth-relay-postgres-0", "persistentvolumeclaim/langstroth-relay-db-1"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("release_pvcs ligus-relay = %v, want %v", got, want)
+		t.Fatalf("release_pvcs langstroth-relay = %v, want %v", got, want)
 	}
 }
 
@@ -301,7 +301,7 @@ func TestAgentRenderedFailClosed(t *testing.T) {
 		t.Skip("helm not installed")
 	}
 	render := func(extra ...string) string {
-		args := append([]string{"template", "t", "deploy/helm/ligus-relay", "--kube-version", "1.30.0",
+		args := append([]string{"template", "t", "deploy/helm/langstroth-relay", "--kube-version", "1.30.0",
 			"-f", "deploy/agent/values/eval-memory.yaml", "--set", "config.existingSecret=t-env"}, extra...)
 		out, err := exec.Command(helm, args...).Output()
 		if err != nil {
@@ -350,6 +350,26 @@ func TestAgentGitignoreKeepsClaudeDirPrivate(t *testing.T) {
 	for _, p := range []string{".claude/settings.json", ".claude/skills/private/SKILL.md", ".claude/skills/relay-run-local/notes.md", ".claude/worktrees/x"} {
 		if !ignored(p) {
 			t.Errorf("%s must be ignored", p)
+		}
+	}
+}
+
+// The scripts read LANGSTROTH_* settings and still accept the LIGUS_* names
+// from before the rename; two different values are a usage error.
+func TestAgentPickEnv(t *testing.T) {
+	for _, tc := range []struct {
+		env, want string
+		code      int
+	}{
+		{"", "dflt", 0},
+		{"LIGUS_NAMESPACE=old", "old", 0},
+		{"LANGSTROTH_NAMESPACE=new", "new", 0},
+		{"LANGSTROTH_NAMESPACE=same LIGUS_NAMESPACE=same", "same", 0},
+		{"LANGSTROTH_NAMESPACE=new LIGUS_NAMESPACE=old", "", 2},
+	} {
+		code, out := libCall(t, "", "unset LANGSTROTH_NAMESPACE LIGUS_NAMESPACE; export "+tc.env+" X=1; pick_env NS LANGSTROTH_NAMESPACE LIGUS_NAMESPACE dflt; printf %s \"$NS\"")
+		if code != tc.code || (code == 0 && out != tc.want) {
+			t.Errorf("%q: exit %d %q, want exit %d %q", tc.env, code, out, tc.code, tc.want)
 		}
 	}
 }

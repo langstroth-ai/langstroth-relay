@@ -1,9 +1,9 @@
 ---
 name: relay-run-local
-description: Build and run the Ligus relay as a single local binary (no Kubernetes or Docker) with deploy/agent/local.sh, then verify, check status or stop it. Use when someone wants a personal or development relay on their own machine, or a relay for local testing of the Ligus app.
+description: Build and run the Langstroth relay as a single local binary (no Kubernetes or Docker) with deploy/agent/local.sh, then verify, check status or stop it. Use when someone wants a personal or development relay on their own machine, or a relay for local testing of the Ligus app.
 ---
 
-# Run the Ligus relay locally
+# Run the Langstroth relay locally
 
 `deploy/agent/local.sh` is non-interactive, idempotent and prints one JSON
 object with `--json` (exit 0 ok, 1 failed with a `fix`, 2 usage, 3 missing
@@ -12,7 +12,7 @@ widen the bind address on your own.
 
 ## 1. Choose the data directory
 
-Default: `$LIGUS_RELAY_DATA_DIR`, else `~/.local/state/ligus-relay`. For a
+Default: `$LANGSTROTH_RELAY_DATA_DIR`, else `~/.local/state/langstroth-relay`. For a
 throwaway test use `mktemp -d`. The relay's store lives there
 (`relay-state.json`); deleting it deletes every workspace's envelopes on this
 relay, so only do that when the human says so.
@@ -56,4 +56,4 @@ deploy/agent/local.sh stop --data-dir "$D" --json     # data kept
 deploy/agent/local.sh status --data-dir "$D" --json   # exit 1 when stopped
 ```
 
-Logs: `$D/run/ligus-relay.log`.
+Logs: `$D/run/langstroth-relay.log`.

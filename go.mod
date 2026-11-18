@@ -1,4 +1,4 @@
-module github.com/ligus-ai/relay
+module github.com/langstroth-ai/langstroth-relay
 
 go 1.27.0
 

@@ -1,0 +1,29 @@
+{
+  "listen": ":8090",
+  "public_url": "https://auth.example.com",
+  "signing_key_file": "/etc/langstroth-auth/secrets/signing-key",
+  "store": {"driver": "file", "path": "/var/lib/langstroth-auth/state.json"},
+  "access_ttl": "15m",
+  "refresh_idle_ttl": "24h",
+  "session_max_age": "24h",
+  "trusted_proxies": ["172.16.0.0/12"],
+  "tenants": [
+    {
+      "id": "acme",
+      "display_name": "Acme",
+      "oidc": {
+        "issuer": "https://dex.example.com",
+        "client_id": "langstroth-auth",
+        "client_secret_file": "/etc/langstroth-auth/secrets/dex-client-secret",
+        "scopes": ["openid", "email", "profile", "groups"]
+      },
+      "provisioning": "jit",
+      "idp_groups": true,
+      "workspaces": ["7f0c2a5e-3d4b-4b8e-9a51-2a6f3c1d9e01", "b3a1c9d0-5e2f-4c7a-8d16-0f9e4b2a7c55"],
+      "grants": {
+        "acme:platform": ["7f0c2a5e-3d4b-4b8e-9a51-2a6f3c1d9e01", "b3a1c9d0-5e2f-4c7a-8d16-0f9e4b2a7c55"],
+        "acme:ml": ["b3a1c9d0-5e2f-4c7a-8d16-0f9e4b2a7c55"]
+      }
+    }
+  ]
+}

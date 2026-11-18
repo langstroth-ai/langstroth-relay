@@ -1,0 +1,9 @@
+dex.example.com {
+	reverse_proxy dex:5556
+}
+auth.example.com {
+	reverse_proxy langstroth-auth:8090
+}
+relay.example.com {
+	reverse_proxy relay:8443
+}

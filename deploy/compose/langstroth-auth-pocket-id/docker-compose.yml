@@ -1,0 +1,53 @@
+# Example only (not run in CI): a home-lab relay with Pocket ID (passkey-only
+# OIDC) and langstroth-auth, behind Caddy for TLS. Replace example.com with your
+# own names, then follow docs/langstroth-auth-pocket-id.
+#
+# Before the first start:
+#   mkdir -p secrets && chmod 700 secrets
+#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/langstroth-ai/langstroth-auth:0.3.0 keygen --out /out/signing-key
+#     (prints public_key=...; put it in .env as LANGSTROTH_RELAY_TOKEN_PUBKEY)
+#   After creating the OIDC client in Pocket ID, save its secret:
+#   printf %s '<client secret>' > secrets/pocket-id-client-secret && chmod 600 secrets/pocket-id-client-secret
+services:
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:v1
+    environment:
+      APP_URL: https://id.example.com
+      TRUST_PROXY: "true"
+    volumes:
+      - pocket-id-data:/app/data
+    restart: unless-stopped
+
+  langstroth-auth:
+    image: ghcr.io/langstroth-ai/langstroth-auth:0.3.0
+    command: ["serve", "--config", "/etc/langstroth-auth/config.json"]
+    volumes:
+      - ./langstroth-auth.json:/etc/langstroth-auth/config.json:ro
+      - ./secrets:/etc/langstroth-auth/secrets:ro
+      - langstroth-auth-state:/var/lib/langstroth-auth
+    restart: unless-stopped
+
+  relay:
+    image: ghcr.io/langstroth-ai/langstroth-relay:0.3.0
+    environment:
+      LANGSTROTH_RELAY_TOKEN_PUBKEY: ${LANGSTROTH_RELAY_TOKEN_PUBKEY:?set it from langstroth-auth keygen}
+      LANGSTROTH_RELAY_WORKSPACE_SCOPE: strict
+      LANGSTROTH_RELAY_TENANTS: home
+      LANGSTROTH_RELAY_DATA_DIR: /data
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  pocket-id-data:
+  langstroth-auth-state:
+  relay-data:

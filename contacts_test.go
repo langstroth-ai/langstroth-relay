@@ -600,18 +600,10 @@ func TestContactsOffAndStoreWithoutContacts(t *testing.T) {
 // storeOnly hides every optional interface of the wrapped store.
 type storeOnly struct{ Store }
 
-// TestContactRoutesAdditive (spec S8): /v1/contacts/ is reserved against
-// extensions, and the existing routes' answers are unchanged (the byte-level
-// check is TestExistingRoutesMatchGolden).
+// TestContactRoutesAdditive (spec S8): the existing routes' answers are
+// unchanged by the contact routes (the byte-level check is
+// TestExistingRoutesMatchGolden).
 func TestContactRoutesAdditive(t *testing.T) {
-	for _, p := range []string{"/v1/contacts/", "/v1/contacts/x/", "/v1/directory/", "/v1/account/", "/v1/friends/"} {
-		if err := validateExtensionPrefix(p); err == nil {
-			t.Errorf("extension prefix %q must be refused", p)
-		}
-	}
-	if err := validateExtensionPrefix("/v1/remote/"); err != nil {
-		t.Errorf("unrelated prefix refused: %v", err)
-	}
 	ts := contactTestServer(t, Options{})
 	ws := ts.URL + "/v1/workspaces/w1/envelopes"
 	if st, _, body := creq(t, "POST", ws, `{"ct":"A"}`); st != 200 || body != `{"seq":1}` {

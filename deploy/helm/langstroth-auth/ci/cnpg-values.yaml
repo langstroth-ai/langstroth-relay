@@ -1,0 +1,10 @@
+# CI (with dex-values.yaml): langstroth-auth on its own CloudNativePG cluster.
+database:
+  mode: cnpg
+  skipCapabilityCheck: true
+  cnpg:
+    backups:
+      method: plugin
+      plugin:
+        parameters:
+          barmanObjectName: langstroth-auth-store

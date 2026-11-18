@@ -1,0 +1,16 @@
+langstroth-auth is running at {{ .Values.config.public_url }}.
+
+Register this redirect URI at your IdP for every tenant:
+{{- range .Values.config.tenants }}
+  {{ $.Values.config.public_url }}/t/{{ .id }}/callback
+{{- end }}
+
+Point the relay at the issuer key: set LANGSTROTH_RELAY_TOKEN_PUBKEY to the
+public key printed by `langstroth-auth keygen` (or `langstroth-auth pubkey`), and
+consider LANGSTROTH_RELAY_WORKSPACE_SCOPE=strict and LANGSTROTH_RELAY_TENANTS.
+
+langstroth-auth gates relay access only. People still need an Admin's signed
+MemberAdded to join a workspace.
+{{- $ctx := include "langstroth-auth.dbCtx" . | fromYaml }}
+{{- $_ := set $ctx "root" . }}
+{{- include "langstroth-postgres.notes" $ctx }}

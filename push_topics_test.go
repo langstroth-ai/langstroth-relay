@@ -82,7 +82,7 @@ func TestAPNsTopicsFromEnv(t *testing.T) {
 		t.Fatal("malformed topic accepted")
 	}
 	// No topic at all is still incomplete.
-	if _, err := apnsPushSenderFrom(envMap(base(nil))); err == nil || !strings.Contains(err.Error(), "HIVE_RELAY_APNS_TOPIC") {
+	if _, err := apnsPushSenderFrom(envMap(base(nil))); err == nil || !strings.Contains(err.Error(), "LANGSTROTH_RELAY_APNS_TOPIC") {
 		t.Fatalf("no topic: %v", err)
 	}
 }

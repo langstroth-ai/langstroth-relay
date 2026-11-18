@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// ligus-relay — the rendezvous + envelope-forwarding server.
+// langstroth-relay — the rendezvous + envelope-forwarding server.
 //
 // Address resolution (cloud-friendly), most specific first:
 //  1. $PORT (set by Fly / Cloud Run / Railway / Heroku) → 0.0.0.0:$PORT
@@ -26,17 +26,8 @@ import (
 //
 // $HIVE_RELAY_FRIEND_CAP (optional) caps accepted friends per account.
 
-// Main runs the open relay binary (cmd/ligus-relay).
-func Main() { MainWith(Extension{}) }
-
-// MainWith runs the relay binary with a downstream Extension. Everything the
-// open binary does is unchanged: subcommands, storage selection
-// (DATABASE_URL / HIVE_RELAY_DATA_DIR / HIVE_RELAY_REQUIRE_DB), the address
-// ($PORT / HIVE_RELAY_ADDR), every env knob, the access gate, the /v1
-// sync and admin routes, snapshot flushing, pruning and graceful shutdown. An
-// extension only supplies the tunnel seams and extra routes (see Extension).
-// MainWith(Extension{}) is exactly Main().
-func MainWith(ext Extension) {
+// Main runs the open relay binary (cmd/langstroth-relay).
+func Main() {
 	// Structured JSON logs (request lines come from the observability middleware).
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
@@ -56,14 +47,13 @@ func MainWith(ext Extension) {
 			printUsage()
 			return
 		}
-		if run, ok := ext.Commands[args[0]]; ok {
-			fatalIf(run(args[1:]))
-			return
-		}
 	}
 
-	// Before anything reads a setting: an unreadable secret file would
-	// otherwise read as unset (an open access gate, the memory store).
+	// Before anything reads a setting: one setting given two different
+	// values under its new and a former name, or an unreadable secret file
+	// (which would otherwise read as unset: an open access gate, the memory
+	// store), stops the relay.
+	fatalIf(envAliasConflictError(os.Environ(), os.Getenv))
 	fatalIf(secretFilesConfigError(os.Getenv))
 	fatalIf(entitlementConfigError())
 	fatalIf(routesConfigError(getenv))
@@ -77,12 +67,7 @@ func MainWith(ext Extension) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	a, err := Assemble(ctx, store, ext)
-	if err != nil {
-		// An extension never takes the relay down: it serves as the open
-		// binary would (Assemble already fell back).
-		slog.Error("relay extension disabled; serving the open relay", "error", err)
-	}
+	srv := New(Options{Store: store, FriendCap: friendCapFromEnv()})
 
 	// Periodically snapshot durable state so an unexpected crash loses at most a
 	// few seconds; a graceful shutdown flushes once more below.
@@ -109,7 +94,7 @@ func MainWith(ext Extension) {
 	// deadlines are safe.
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           restrictRoutes(a.Handler, getenv),
+		Handler:           restrictRoutes(srv.Handler(), getenv),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -117,12 +102,12 @@ func MainWith(ext Extension) {
 	}
 	// Tunnel WebSockets are hijacked (Shutdown doesn't see them): close them
 	// with shutting_down so clients reconnect with backoff.
-	httpServer.RegisterOnShutdown(a.Server.ShutdownTunnels)
+	httpServer.RegisterOnShutdown(srv.ShutdownTunnels)
 
 	go func() {
-		fmt.Printf("ligus-relay listening on %s\n", addr)
+		fmt.Printf("langstroth-relay listening on %s\n", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "ligus-relay: serve error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "langstroth-relay: serve error: %v\n", err)
 			stop()
 		}
 	}()
@@ -133,11 +118,10 @@ func MainWith(ext Extension) {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutCtx)
-	a.Close()
 
 	// Final flush on the way out so a planned redeploy never loses state.
 	if err := store.Flush(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "ligus-relay: final flush failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: final flush failed: %v\n", err)
 	}
 }
 
@@ -151,7 +135,7 @@ func MainWith(ext Extension) {
 func buildStore(ctx context.Context) (Store, error) {
 	dsn := getenv("DATABASE_URL")
 	if envBool("HIVE_RELAY_REQUIRE_DB") && dsn == "" {
-		return nil, fmt.Errorf("HIVE_RELAY_REQUIRE_DB is set but DATABASE_URL is empty: refusing to boot on the ephemeral in-memory store")
+		return nil, fmt.Errorf("LANGSTROTH_RELAY_REQUIRE_DB is set but DATABASE_URL is empty: refusing to boot on the ephemeral in-memory store")
 	}
 	if dsn != "" {
 		return newPostgresStore(ctx, dsn)
@@ -190,7 +174,7 @@ func flushLoop(store Store, stop <-chan struct{}) {
 			return
 		case <-tick.C:
 			if err := store.Flush(context.Background()); err != nil {
-				fmt.Fprintf(os.Stderr, "ligus-relay: snapshot flush failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "langstroth-relay: snapshot flush failed: %v\n", err)
 			}
 		}
 	}
@@ -271,7 +255,7 @@ func daysEnv(name string, def int) time.Duration {
 
 func fatalIf(err error) {
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ligus-relay: %v\n", err)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: %v\n", err)
 		os.Exit(1)
 	}
 }

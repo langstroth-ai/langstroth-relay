@@ -7,7 +7,7 @@ import (
 
 // Extension seams.
 //
-// This package is a complete, self-hostable relay on its own (see cmd/ligus-relay).
+// This package is a complete, self-hostable relay on its own (see cmd/langstroth-relay).
 // The interfaces below are extension points: a downstream build can implement
 // them and pass them to New(Options{...}) to add custom authorization,
 // auditing, or storage without forking. The default (nil) implementations

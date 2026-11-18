@@ -1,0 +1,9 @@
+# CI: split topology on an external (managed) Postgres.
+image:
+  repository: langstroth-relay
+  tag: ci
+database:
+  mode: external
+  external:
+    existingSecret: relay-database
+    cidrs: [10.20.0.15/32]

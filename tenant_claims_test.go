@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Frozen hrt1 vectors: tokens minted before the ligus-auth claims (tid, uid,
+// Frozen hrt1 vectors: tokens minted before the langstroth-auth claims (tid, uid,
 // did) existed. Adding the optional claims must leave these bytes unchanged.
 const (
 	frozenHrt1Team  = "hrt1.eyJzdWIiOiJvcmdfYWNtZSIsInBsYW4iOiJ0ZWFtIiwiZXhwIjoxODkzNDU2MDAwLCJtYXhfbWVtYmVycyI6NTAsInJldGVudGlvbl9kYXlzIjpudWxsLCJ0dXJuIjp0cnVlLCJjYXBzIjpbInJlbW92ZV9tZW1iZXIiXX0.rh_sCYEkkaVTwN7M3MErF5k5Ys7c7s2UhqNFiUeFvte4vpvnIrdDiCwyVNZv9Jl-MGrbMfmraTvQNeQBAfowDw"
@@ -30,7 +30,7 @@ func TestFrozenHrt1VectorsUnchanged(t *testing.T) {
 	}
 }
 
-// The ligus-auth claims serialize after the existing ones, in a fixed order.
+// The langstroth-auth claims serialize after the existing ones, in a fixed order.
 func TestLigusAuthClaimsJSONOrder(t *testing.T) {
 	got := string(mustJSON(TokenClaims{Sub: "home:u1", Exp: 5, Caps: []string{}, Workspaces: []string{"w"}, Tid: "home", Uid: "ab", Did: "d1"}))
 	want := `{"sub":"home:u1","plan":"","exp":5,"max_members":null,"retention_days":null,"turn":false,"caps":[],"workspaces":["w"],"tid":"home","uid":"ab","did":"d1"}`

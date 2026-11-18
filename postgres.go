@@ -104,7 +104,7 @@ func (s *postgresStore) Close() error { s.pool.Close(); return nil }
 func (s *postgresStore) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 // migrationLockKey is the pg_advisory_lock key every relay process takes
-// while migrating ("ligusrly" in ASCII). ligus-auth uses its own key.
+// while migrating ("ligusrly" in ASCII). langstroth-auth uses its own key.
 const migrationLockKey int64 = 0x6c69677573726c79
 
 // migrateLockWait bounds how long startup waits for the migration lock (a

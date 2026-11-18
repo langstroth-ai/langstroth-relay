@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ligus-ai/relay/apns"
+	"github.com/langstroth-ai/langstroth-relay/apns"
 )
 
 // Built-in APNs PushSender (spec §14) for a relay run by the app's publisher.
@@ -18,19 +18,19 @@ import (
 // APNs accepts a push only when it's signed with a key from the Apple
 // developer team that publishes the app, so this is useful only to someone
 // who builds and signs the iPhone app under their own team (and points
-// LIGUS_RELAY_APNS_TOPIC / LIGUS_RELAY_APNS_TOPICS at that build's bundle
+// LANGSTROTH_RELAY_APNS_TOPIC / LANGSTROTH_RELAY_APNS_TOPICS at that build's bundle
 // ids). It's off unless configured; then GET /v1/tunnel/info and the host's
 // welcome report "push": true. The relay only ever forwards the host's
-// ciphertext. (Each LIGUS_RELAY_* name also works as the legacy HIVE_RELAY_*.)
+// ciphertext. (Each LANGSTROTH_RELAY_* name also works as the legacy HIVE_RELAY_*.)
 //
-//	LIGUS_RELAY_APNS_KEY_FILE  path to the AuthKey_<KEYID>.p8 file (or LIGUS_RELAY_APNS_KEY: the PEM inline, "\n" escapes allowed)
-//	LIGUS_RELAY_APNS_KEY_ID    the key's 10-character Key ID
-//	LIGUS_RELAY_APNS_TEAM_ID   the Apple developer Team ID
-//	LIGUS_RELAY_APNS_TOPIC     the app's bundle id: the default topic
-//	LIGUS_RELAY_APNS_TOPICS    more allowed bundle ids, comma-separated (e.g.
+//	LANGSTROTH_RELAY_APNS_KEY_FILE  path to the AuthKey_<KEYID>.p8 file (or LANGSTROTH_RELAY_APNS_KEY: the PEM inline, "\n" escapes allowed)
+//	LANGSTROTH_RELAY_APNS_KEY_ID    the key's 10-character Key ID
+//	LANGSTROTH_RELAY_APNS_TEAM_ID   the Apple developer Team ID
+//	LANGSTROTH_RELAY_APNS_TOPIC     the app's bundle id: the default topic
+//	LANGSTROTH_RELAY_APNS_TOPICS    more allowed bundle ids, comma-separated (e.g.
 //	                           the release and the lab build); the first is the
-//	                           default when LIGUS_RELAY_APNS_TOPIC is unset
-//	LIGUS_RELAY_APNS_ENV       auto (default: the environment the phone reports with its token) | sandbox | production
+//	                           default when LANGSTROTH_RELAY_APNS_TOPIC is unset
+//	LANGSTROTH_RELAY_APNS_ENV       auto (default: the environment the phone reports with its token) | sandbox | production
 //
 // A phone reports its bundle id with its token (apns.topic); the relay pushes
 // with that topic when it is allowed and refuses the push otherwise. A phone
@@ -146,7 +146,7 @@ func (s *APNsPushSender) SendDetailed(ctx context.Context, hostID, pid string, t
 	if tok.Topic != "" {
 		out.Topic = tok.Topic
 		if !s.allowed(tok.Topic) {
-			out.Reason = "topic not allowed on this relay (add it to LIGUS_RELAY_APNS_TOPICS)"
+			out.Reason = "topic not allowed on this relay (add it to LANGSTROTH_RELAY_APNS_TOPICS)"
 			return out, fmt.Errorf("%w: %s", ErrPushTopicNotAllowed, tok.Topic)
 		}
 	}
@@ -233,9 +233,9 @@ func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {
 	}
 	var missing []string
 	if keyFile == "" && keyPEM == "" {
-		missing = append(missing, "HIVE_RELAY_APNS_KEY_FILE")
+		missing = append(missing, "LANGSTROTH_RELAY_APNS_KEY_FILE")
 	}
-	for _, kv := range [][2]string{{"HIVE_RELAY_APNS_KEY_ID", keyID}, {"HIVE_RELAY_APNS_TEAM_ID", teamID}, {"HIVE_RELAY_APNS_TOPIC (or HIVE_RELAY_APNS_TOPICS)", topic}} {
+	for _, kv := range [][2]string{{"LANGSTROTH_RELAY_APNS_KEY_ID", keyID}, {"LANGSTROTH_RELAY_APNS_TEAM_ID", teamID}, {"LANGSTROTH_RELAY_APNS_TOPIC (or LANGSTROTH_RELAY_APNS_TOPICS)", topic}} {
 		if kv[1] == "" {
 			missing = append(missing, kv[0])
 		}
@@ -250,7 +250,7 @@ func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {
 	case "development":
 		env = APNsEnvSandbox
 	default:
-		return nil, fmt.Errorf("HIVE_RELAY_APNS_ENV=%q is not auto|sandbox|production", env)
+		return nil, fmt.Errorf("LANGSTROTH_RELAY_APNS_ENV=%q is not auto|sandbox|production", env)
 	}
 	var pemBytes []byte
 	if keyPEM != "" {
@@ -258,7 +258,7 @@ func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {
 	} else {
 		b, err := os.ReadFile(keyFile)
 		if err != nil {
-			return nil, fmt.Errorf("HIVE_RELAY_APNS_KEY_FILE: %w", err)
+			return nil, fmt.Errorf("LANGSTROTH_RELAY_APNS_KEY_FILE: %w", err)
 		}
 		pemBytes = b
 	}
@@ -275,12 +275,12 @@ func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {
 func pushSenderFromEnv() PushSender {
 	s, err := APNsPushSenderFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ligus-relay: %v; tunnel push stays off\n", err)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: %v; tunnel push stays off\n", err)
 		return nil
 	}
 	if s == nil {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "ligus-relay: tunnel push via APNs (topics %s; default %s; env %s)\n", strings.Join(s.Topics, ", "), s.Client.Topic, s.Env)
+	fmt.Fprintf(os.Stderr, "langstroth-relay: tunnel push via APNs (topics %s; default %s; env %s)\n", strings.Join(s.Topics, ", "), s.Client.Topic, s.Env)
 	return s
 }

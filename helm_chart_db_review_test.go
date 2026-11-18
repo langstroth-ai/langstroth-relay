@@ -63,7 +63,7 @@ func TestChartDatabaseBundledParametersCannotOverrideSecurity(t *testing.T) {
 // log. The session must turn statement logging off first.
 func TestChartDatabaseBundledInitDoesNotLogPassword(t *testing.T) {
 	out := renderChart(t, bundledArgs...)
-	cm := docNamed(out, "ConfigMap", "t-ligus-relay-postgres-conf")
+	cm := docNamed(out, "ConfigMap", "t-langstroth-relay-postgres-conf")
 	create := strings.Index(cm, "CREATE ROLE")
 	for _, want := range []string{"SET log_statement = 'none'", "SET log_min_error_statement = 'panic'", "SET log_min_duration_statement = -1"} {
 		i := strings.Index(cm, want)

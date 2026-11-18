@@ -1,0 +1,80 @@
+# Publish a release. A pushed tag v<X.Y.Z> runs `ci`, then publishes:
+#   - images ghcr.io/langstroth-ai/langstroth-relay:<X.Y.Z> and
+#     ghcr.io/langstroth-ai/langstroth-auth:<X.Y.Z> (linux/amd64 + linux/arm64,
+#     the non-root distroless Dockerfiles under deploy/container/);
+#   - charts oci://ghcr.io/langstroth-ai/charts/langstroth-relay,
+#     .../langstroth-auth and the .../langstroth-postgres library, each at the
+#     version in its Chart.yaml.
+# The tag must match the appVersion of both application charts, so a chart
+# never defaults to an image tag this release did not push.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency: release-${{ github.ref }}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push images and charts to ghcr.io/langstroth-ai
+    env:
+      REGISTRY: ghcr.io/langstroth-ai
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
+      - name: Check the tag against the charts
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "tag $GITHUB_REF_NAME is not v<semver>"; exit 1; }
+          for c in langstroth-relay langstroth-auth; do
+            app=$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "deploy/helm/$c/Chart.yaml")
+            if [ "$app" != "$version" ]; then
+              echo "deploy/helm/$c/Chart.yaml appVersion is $app, the tag says $version"; exit 1
+            fi
+          done
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Log in to ghcr.io
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and push images
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -f deploy/container/Dockerfile \
+            -t "$REGISTRY/langstroth-relay:$VERSION" --push .
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -f deploy/container/Dockerfile.langstroth-auth \
+            -t "$REGISTRY/langstroth-auth:$VERSION" --push .
+      - name: Package and push charts
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          for c in langstroth-postgres langstroth-relay langstroth-auth; do
+            helm package "deploy/helm/$c" -d "$out"
+          done
+          for f in "$out"/*.tgz; do
+            helm push "$f" "oci://$REGISTRY/charts"
+          done

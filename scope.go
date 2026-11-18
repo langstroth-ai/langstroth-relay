@@ -10,7 +10,7 @@ import (
 // Per-workspace token scope (opt-in).
 //
 // The access gate is coarse: any admitted token reads and writes every
-// workspace. LIGUS_RELAY_WORKSPACE_SCOPE narrows that with an optional
+// workspace. LANGSTROTH_RELAY_WORKSPACE_SCOPE narrows that with an optional
 // "workspaces" claim in signed hrt1 tokens:
 //
 //	off (default)  the claim is ignored; behavior is unchanged.
@@ -40,7 +40,7 @@ func workspaceScopeFromEnv() string {
 		return v
 	default:
 		// Fail closed on a typo: the operator asked for some scoping.
-		fmt.Fprintf(os.Stderr, "ligus-relay: LIGUS_RELAY_WORKSPACE_SCOPE=%q is not off|claims|strict; using strict\n", v)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: LANGSTROTH_RELAY_WORKSPACE_SCOPE=%q is not off|claims|strict; using strict\n", v)
 		return scopeStrict
 	}
 }
