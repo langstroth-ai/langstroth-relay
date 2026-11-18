@@ -268,3 +268,43 @@ func TestTunnelRevoke_MessageLayout(t *testing.T) {
 		t.Fatalf("preimage\n got %q\nwant %q", got, want)
 	}
 }
+
+// raceStore runs hook right after the first TunnelPhoneRevoked check of pid
+// answered "not revoked": a revocation landing between the relay's
+// revocation check and the session (and its push token) going live.
+type raceStore struct {
+	TunnelStore
+	pid  string
+	once sync.Once
+	hook func()
+}
+
+func (s *raceStore) TunnelPhoneRevoked(ctx context.Context, hostID, pid string, now int64) (bool, error) {
+	rv, err := s.TunnelStore.TunnelPhoneRevoked(ctx, hostID, pid, now)
+	if err == nil && !rv && pid == s.pid {
+		s.once.Do(s.hook)
+	}
+	return rv, err
+}
+
+// A revocation that lands while a session is being admitted (after its
+// revocation check, before it is live) must neither leave the session open
+// nor let the phone's push token survive.
+func TestTunnelRevoke_RacingSessionKeepsNoSessionOrPushToken(t *testing.T) {
+	env := newTunnelEnv(t, nil, &fakePush{}, nil)
+	h := newFakeHost(t, env)
+	h.connect()
+	p := newFakePhone()
+	now := time.Now().Unix()
+	env.hub.store = &raceStore{TunnelStore: env.hub.store, pid: p.pid, hook: func() {
+		if _, _, _, err := env.hub.revokePhone(context.Background(), h.id, p.pid, now+3600); err != nil {
+			t.Error(err)
+		}
+	}}
+	phone := p.connect(t, env, h.id, h.cred(p.pid, p.pub(), now, now+86400), map[string]any{"apns": map[string]any{"token": "abcdef01", "env": "production"}})
+	expectClose(t, phone, 4003)
+	if tok, _ := env.hub.store.TunnelPushToken(context.Background(), h.id, p.pid); tok != nil {
+		t.Fatal("the push token survived a revocation that raced the session")
+	}
+}
+

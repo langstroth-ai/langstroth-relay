@@ -1020,10 +1020,25 @@ func (h *tunnelHub) admitSession(ctx context.Context, c *tconn, hostID string, n
 		return terr(tcNotEntitled, "this host is not active on this relay")
 	}
 	// 4.–8.
-	return h.openAndSplice(c, hostID, cred.PID, "session", "", h.maxSessions(st), func() {
+	return h.openAndSplice(c, hostID, cred.PID, "session", "", h.maxSessions(st), func() *tunnelError {
 		if setApns {
 			_ = h.store.SetTunnelPushToken(ctx, hostID, cred.PID, apns, h.nowUnix())
 		}
+		// A revocation may have landed since step 6. Checked after the
+		// session is registered and its push token stored: a revocation
+		// before this check is seen here (and its token cleared), one after
+		// it kills the registered session and deletes the stored token.
+		revoked, err := h.store.TunnelPhoneRevoked(ctx, hostID, cred.PID, h.nowUnix())
+		if err != nil || revoked {
+			if setApns {
+				_ = h.store.SetTunnelPushToken(ctx, hostID, cred.PID, nil, h.nowUnix())
+			}
+			if err != nil {
+				return terr(tcInternal, "store unavailable")
+			}
+			return terr(tcRevoked, "this phone was revoked by its host")
+		}
+		return nil
 	})
 }
 
@@ -1060,7 +1075,10 @@ func (h *tunnelHub) admitEnroll(ctx context.Context, c *tconn, hostID string, m 
 }
 
 // openAndSplice runs §6.4.1 steps 4, 5, 7 and 8 (beforeOpen is step 6).
-func (h *tunnelHub) openAndSplice(c *tconn, hostID, pid, mode, eid string, maxSessions int, beforeOpen func()) *tunnelError {
+//
+// beforeOpen runs once the session is registered (so a revocation from here
+// on closes it); a non-nil error refuses the session.
+func (h *tunnelHub) openAndSplice(c *tconn, hostID, pid, mode, eid string, maxSessions int, beforeOpen func() *tunnelError) *tunnelError {
 	h.mu.Lock()
 	ctl := h.hosts[hostID]
 	if ctl == nil {
@@ -1091,7 +1109,10 @@ func (h *tunnelHub) openAndSplice(c *tconn, hostID, pid, mode, eid string, maxSe
 	defer h.releaseSession(ls)
 
 	if beforeOpen != nil {
-		beforeOpen()
+		if te := beforeOpen(); te != nil {
+			h.cancelOpen(po, te.tc)
+			return te
+		}
 	}
 	open := map[string]any{"t": "open", "sid": sid, "mode": mode}
 	if mode == "enroll" {
