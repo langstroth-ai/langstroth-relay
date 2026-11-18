@@ -66,6 +66,27 @@ route or database table changes.
 
 ### Added
 
+- **Blob channel** for end-to-end encrypted file attachments (additive; the
+  existing routes are unchanged): `POST /v1/workspaces/{id}/blobs` (raw
+  ciphertext body; the relay mints a random 43-character id and answers
+  `201 {"id","size","sha256","expiresAt"}`), `GET …/blobs/{blob}` and
+  `DELETE …/blobs/{blob}` (`204`). No listing route; ids can't be chosen or
+  enumerated; an unknown, expired or other workspace's blob is `404`. Blobs
+  never create a room. Limits: one blob `LANGSTROTH_RELAY_BLOB_MAX_BYTES`
+  (25 MiB, `413`), per workspace `_BLOB_ROOM_MAX_BYTES` (512 MiB) and
+  `_BLOB_ROOM_MAX_COUNT` (2000), per uploader per workspace
+  `_BLOB_WRITER_MAX_BYTES` / `_COUNT`, relay-wide `_BLOB_TOTAL_MAX_BYTES`,
+  per-tenant `blob_max_bytes` / `blob_max_count` and per-workspace overrides
+  in the tenancy config (`507 blob_*`), upload rate `_BLOB_RATE` / `_BURST`
+  (1/s, burst 20, `429 blob_rate`), retention `_BLOB_RETENTION_DAYS` (30).
+  Quotas are checked atomically with the insert on both stores. Room purges,
+  idle-room retention and (with relay membership) a member's removal delete
+  the blobs with them. Postgres gets `relay_blobs` and `relay_blob_usage`
+  (migrated under the advisory lock); the memory store counts blobs toward
+  `LANGSTROTH_RELAY_MAX_STORE_BYTES` and snapshots them.
+  `LANGSTROTH_RELAY_BLOBS=off` turns the routes off. Chart: `blobs.*`, and
+  the ingress-nginx body limit follows `blobs.maxBytes`. Operator guide:
+  [docs/blobs.md](docs/blobs.md).
 - **Community limits** (all off by default): per-room byte and envelope
   quotas (`LANGSTROTH_RELAY_ROOM_MAX_BYTES`, `_ROOM_MAX_ENVELOPES`), a total
   room-byte cap on both stores (`_MAX_TOTAL_ROOM_BYTES`), rooms per client
