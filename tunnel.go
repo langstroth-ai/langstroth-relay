@@ -124,6 +124,9 @@ type tunnelHub struct {
 	// tenancy binds hosts to tenants and limits them per tenant (nil = off).
 	tenancy       *tenancyConf
 	tenantPushDay map[string]*dayCount // pushes per tenant per day
+	// hostRegMu serializes a tenant host's count-then-register, so hosts
+	// registering at once can't all pass max_hosts (one tunnel replica).
+	hostRegMu sync.Mutex
 	conns         map[*tconn]struct{}
 	shutting      bool
 
@@ -548,6 +551,9 @@ func (h *tunnelHub) admitHost(ctx context.Context, m *relayMsg, nonce []byte) (*
 				return nil, terr(tcUnauthorized, "registration refused")
 			}
 			if t.limits.MaxHosts > 0 {
+				// Held until the record is stored (the deferred unlock).
+				h.hostRegMu.Lock()
+				defer h.hostRegMu.Unlock()
 				hc, ok := h.store.(tenantHostCounter)
 				if !ok {
 					return nil, terr(tcInternal, "store unavailable")
