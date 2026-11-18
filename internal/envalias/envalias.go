@@ -1,6 +1,9 @@
-// Package envalias checks environment variables that are accepted under more
-// than one prefix (the Langstroth rename: LANGSTROTH_RELAY_* is canonical,
-// LIGUS_RELAY_* and HIVE_RELAY_* are former names of the same settings).
+// Package envalias refuses environment variables under prefixes that are no
+// longer read. The relay's settings are LANGSTROTH_RELAY_* and the auth
+// service's LANGSTROTH_AUTH_*; the names from before the Langstroth rename
+// (HIVE_RELAY_*, LIGUS_RELAY_*, LIGUS_AUTH_*) are ignored, so a secret left
+// under one of them would silently turn its setting off (push, the tunnel,
+// the access gate). The process refuses to start instead.
 package envalias
 
 import (
@@ -9,38 +12,29 @@ import (
 	"strings"
 )
 
-// Conflict returns an error when a variable under the canonical prefix
-// (prefixes[0]) and the same variable under a former prefix (prefixes[1:])
-// are both set, non-empty, to different values. environ is os.Environ()
-// (only the names are used); lookup reads a value. A process that starts
-// with two different values for one setting would silently pick one of them,
-// so the caller refuses to start instead.
-func Conflict(environ []string, lookup func(string) string, prefixes ...string) error {
-	if len(prefixes) < 2 {
-		return nil
-	}
-	canonical := prefixes[0]
-	var shorts []string
+// Removed returns an error naming every variable in environ (os.Environ()
+// form; only the names are used, never the values) that starts with one of
+// the removed prefixes, each with the name to use instead. Names in exempt
+// are skipped (another program's variables that share a prefix).
+func Removed(environ []string, canonical string, removed []string, exempt map[string]bool) error {
+	var found []string
 	seen := map[string]bool{}
 	for _, kv := range environ {
 		k, _, _ := strings.Cut(kv, "=")
-		if !strings.HasPrefix(k, canonical) || seen[k] {
+		if seen[k] || exempt[k] {
 			continue
 		}
 		seen[k] = true
-		shorts = append(shorts, strings.TrimPrefix(k, canonical))
-	}
-	sort.Strings(shorts)
-	for _, short := range shorts {
-		v := lookup(canonical + short)
-		if v == "" {
-			continue
-		}
-		for _, p := range prefixes[1:] {
-			if old := lookup(p + short); old != "" && old != v {
-				return fmt.Errorf("%s%s and %s%s are both set, to different values: set only %s%s", canonical, short, p, short, canonical, short)
+		for _, p := range removed {
+			if short, ok := strings.CutPrefix(k, p); ok {
+				found = append(found, k+" -> "+canonical+short)
+				break
 			}
 		}
 	}
-	return nil
+	if len(found) == 0 {
+		return nil
+	}
+	sort.Strings(found)
+	return fmt.Errorf("%s* names are no longer read: rename %s", strings.Join(removed, "* and "), strings.Join(found, ", "))
 }

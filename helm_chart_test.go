@@ -120,6 +120,20 @@ func renderChartErr(t *testing.T, args ...string) string {
 	return string(out)
 }
 
+// config.env keys under the names from before the Langstroth rename are no
+// longer read (and stop the relay), so the chart refuses them up front.
+func TestChartRefusesRemovedEnvNames(t *testing.T) {
+	base := []string{"--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg"}
+	for k, want := range map[string]string{"HIVE_RELAY_TUNNEL": "LANGSTROTH_RELAY_TUNNEL", "LIGUS_RELAY_MAX_SSE": "LANGSTROTH_RELAY_MAX_SSE"} {
+		if msg := renderChartErr(t, append(base, "--set", "config.env."+k+"=x")...); !strings.Contains(msg, "use "+want) {
+			t.Fatalf("config.env.%s must fail naming %s, got %q", k, want, msg)
+		}
+	}
+	if msg := renderChartErr(t, append(base, "--set", "config.env.LANGSTROTH_RELAY_MAX_SSE=10")...); msg != "" {
+		t.Fatalf("canonical name must render: %s", msg)
+	}
+}
+
 // The APNs key must come only from the tunnel-only Secret: config.existingSecret
 // and config.env reach every pod, relay-sync included.
 func TestChartAPNsKeyNotThroughSharedConfig(t *testing.T) {
@@ -127,7 +141,7 @@ func TestChartAPNsKeyNotThroughSharedConfig(t *testing.T) {
 	if msg := renderChartErr(t, append(base, "--set", "config.existingSecret=shared", "--set", "tunnel.apns.existingSecret=shared")...); !strings.Contains(msg, "tunnel.apns.existingSecret") {
 		t.Fatalf("sharing config.existingSecret with the APNs Secret must fail, got %q", msg)
 	}
-	for _, k := range []string{"LANGSTROTH_RELAY_APNS_KEY", "LIGUS_RELAY_APNS_KEY", "HIVE_RELAY_APNS_KEY_FILE", "LANGSTROTH_RELAY_APNS_TOPIC"} {
+	for _, k := range []string{"LANGSTROTH_RELAY_APNS_KEY", "LANGSTROTH_RELAY_APNS_KEY_FILE", "LANGSTROTH_RELAY_APNS_TOPIC"} {
 		if msg := renderChartErr(t, append(base, "--set", "config.env."+k+"=x")...); !strings.Contains(msg, "APNs") {
 			t.Fatalf("config.env.%s must fail, got %q", k, msg)
 		}

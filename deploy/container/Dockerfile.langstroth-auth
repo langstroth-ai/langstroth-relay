@@ -20,15 +20,13 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/bin/langstroth-auth ./cmd/langstroth-auth && \
-    ln -s langstroth-auth /out/bin/ligus-auth
+    go build -trimpath -ldflags="-s -w" -o /out/bin/langstroth-auth ./cmd/langstroth-auth
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 LABEL org.opencontainers.image.title="langstroth-auth" \
       org.opencontainers.image.description="OIDC sign-in, SCIM deprovisioning and short-lived relay tokens for Ligus" \
       org.opencontainers.image.source="https://github.com/langstroth-ai/langstroth-relay" \
       org.opencontainers.image.licenses="MIT"
-# ligus-auth is a symlink to langstroth-auth (the former name, kept until v3.0).
 COPY --from=build /out/bin/ /usr/local/bin/
 USER 65532:65532
 EXPOSE 8090 8091

@@ -32,10 +32,14 @@ STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}
 DEFAULT_DATA_DIR=$STATE_HOME/langstroth-relay
 # A data directory made before the Langstroth rename keeps being used.
 if [ ! -e "$DEFAULT_DATA_DIR" ] && [ -d "$STATE_HOME/ligus-relay" ]; then DEFAULT_DATA_DIR=$STATE_HOME/ligus-relay; fi
-pick_env DATA_DIR LANGSTROTH_RELAY_DATA_DIR LIGUS_RELAY_DATA_DIR "$DEFAULT_DATA_DIR"
-pick_env PORT LANGSTROTH_RELAY_LOCAL_PORT LIGUS_RELAY_LOCAL_PORT 8443
-pick_env ADDR LANGSTROTH_RELAY_LOCAL_ADDR LIGUS_RELAY_LOCAL_ADDR 127.0.0.1
-pick_env BIN LANGSTROTH_RELAY_BIN LIGUS_RELAY_BIN "$REPO_ROOT/bin/langstroth-relay"
+# The LIGUS_RELAY_* names from before the rename are no longer read.
+for v in LIGUS_RELAY_DATA_DIR LIGUS_RELAY_LOCAL_PORT LIGUS_RELAY_LOCAL_ADDR LIGUS_RELAY_BIN; do
+  [ -z "${!v+x}" ] || die_usage "$v is no longer read: use LANGSTROTH_${v#LIGUS_}"
+done
+DATA_DIR=${LANGSTROTH_RELAY_DATA_DIR:-$DEFAULT_DATA_DIR}
+PORT=${LANGSTROTH_RELAY_LOCAL_PORT:-8443}
+ADDR=${LANGSTROTH_RELAY_LOCAL_ADDR:-127.0.0.1}
+BIN=${LANGSTROTH_RELAY_BIN:-$REPO_ROOT/bin/langstroth-relay}
 EXPOSE=0
 while [ $# -gt 0 ]; do
   case $1 in
@@ -113,8 +117,17 @@ case $ACTION in
     mkdir -p "$DATA_DIR" "$RUN" "$DATA_DIR/secrets"
     chmod 700 "$DATA_DIR" "$DATA_DIR/secrets"
     # A data directory from before the Langstroth rename has the token as
-    # LIGUS_RELAY_METRICS_TOKEN; the relay still reads it, so keep it.
-    if [ ! -s "$DATA_DIR/secrets/LANGSTROTH_RELAY_METRICS_TOKEN" ] && [ ! -s "$DATA_DIR/secrets/LIGUS_RELAY_METRICS_TOKEN" ]; then
+    # LIGUS_RELAY_METRICS_TOKEN, a name the relay no longer reads and refuses
+    # to start with: rename it (or drop it when the new name exists).
+    if [ -e "$DATA_DIR/secrets/LIGUS_RELAY_METRICS_TOKEN" ]; then
+      if [ -s "$DATA_DIR/secrets/LANGSTROTH_RELAY_METRICS_TOKEN" ]; then
+        rm -f "$DATA_DIR/secrets/LIGUS_RELAY_METRICS_TOKEN"
+      else
+        mv "$DATA_DIR/secrets/LIGUS_RELAY_METRICS_TOKEN" "$DATA_DIR/secrets/LANGSTROTH_RELAY_METRICS_TOKEN"
+      fi
+      check metrics-token-name pass "renamed secrets/LIGUS_RELAY_METRICS_TOKEN to LANGSTROTH_RELAY_METRICS_TOKEN"
+    fi
+    if [ ! -s "$DATA_DIR/secrets/LANGSTROTH_RELAY_METRICS_TOKEN" ]; then
       openssl rand -hex 32 >"$DATA_DIR/secrets/LANGSTROTH_RELAY_METRICS_TOKEN"
       check metrics-token pass "generated secrets/LANGSTROTH_RELAY_METRICS_TOKEN (not printed)"
     else
@@ -162,7 +175,6 @@ case $ACTION in
     else
       TMPH=$(mktemp); chmod 600 "$TMPH"
       tokf="$DATA_DIR/secrets/LANGSTROTH_RELAY_METRICS_TOKEN"
-      [ -s "$tokf" ] || tokf="$DATA_DIR/secrets/LIGUS_RELAY_METRICS_TOKEN"
       { printf 'Authorization: Bearer '; cat "$tokf"; printf '\n'; } >"$TMPH"
       c2=$(code -H @"$TMPH" "$URL/metrics"); rm -f "$TMPH"
       if [ "$c2" = 200 ]; then check metrics-gated pass "/metrics $c without the token, 200 with it"

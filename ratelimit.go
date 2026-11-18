@@ -10,9 +10,9 @@ import (
 // Abuse controls for the hot paths. Both are generous by default and env-tunable
 // so they only ever stop abuse, never legitimate sync / catch-up.
 //
-//   HIVE_RELAY_PUSH_RATE   per-IP envelope-push tokens/sec (0 disables)   default 100
-//   HIVE_RELAY_PUSH_BURST  per-IP push burst capacity                     default 300
-//   HIVE_RELAY_MAX_SSE     max concurrent SSE streams (0 = unlimited)     default 2000
+//   LANGSTROTH_RELAY_PUSH_RATE   per-IP envelope-push tokens/sec (0 disables)   default 100
+//   LANGSTROTH_RELAY_PUSH_BURST  per-IP push burst capacity                     default 300
+//   LANGSTROTH_RELAY_MAX_SSE     max concurrent SSE streams (0 = unlimited)     default 2000
 
 // ipRateLimiter is a per-key token bucket. Keyed on the real client IP (see
 // clientIP, which reads a forwarding header only from a trusted proxy).

@@ -63,7 +63,7 @@ type contactConfig struct {
 
 func contactConfigFromEnv() contactConfig {
 	enabled := true
-	switch strings.ToLower(strings.TrimSpace(getenv("HIVE_RELAY_CONTACTS"))) {
+	switch strings.ToLower(strings.TrimSpace(getenv("LANGSTROTH_RELAY_CONTACTS"))) {
 	case "0", "false", "no", "off":
 		enabled = false
 	}
@@ -81,15 +81,15 @@ func contactConfigFromEnv() contactConfig {
 	}
 	return contactConfig{
 		enabled:        enabled,
-		maxRecordBytes: pos("HIVE_RELAY_CONTACT_MAX_RECORD_BYTES", defaultContactMaxRecordBytes),
-		maxDropBytes:   pos("HIVE_RELAY_CONTACT_MAX_DROP_BYTES", defaultContactMaxDropBytes),
-		ttl:            time.Duration(pos("HIVE_RELAY_CONTACT_TTL_DAYS", defaultContactTTLDays)) * 24 * time.Hour,
-		dropMaxAge:     daysEnv("HIVE_RELAY_CONTACT_DROP_RETENTION_DAYS", defaultContactDropRetentionDay),
+		maxRecordBytes: pos("LANGSTROTH_RELAY_CONTACT_MAX_RECORD_BYTES", defaultContactMaxRecordBytes),
+		maxDropBytes:   pos("LANGSTROTH_RELAY_CONTACT_MAX_DROP_BYTES", defaultContactMaxDropBytes),
+		ttl:            time.Duration(pos("LANGSTROTH_RELAY_CONTACT_TTL_DAYS", defaultContactTTLDays)) * 24 * time.Hour,
+		dropMaxAge:     daysEnv("LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS", defaultContactDropRetentionDay),
 		limits: ContactLimits{
-			MaxContacts:     nonNeg("HIVE_RELAY_MAX_CONTACTS", defaultContactMaxContacts),
-			DropMaxRows:     pos("HIVE_RELAY_CONTACT_DROP_MAX_ROWS", defaultContactDropMaxRows),
-			DropMaxBoxBytes: pos("HIVE_RELAY_CONTACT_DROP_MAX_BOX_BYTES", defaultContactDropMaxBoxBytes),
-			ReclaimHold:     time.Duration(nonNeg("HIVE_RELAY_CONTACT_RECLAIM_HOLD_DAYS", defaultContactReclaimHoldDays)) * 24 * time.Hour,
+			MaxContacts:     nonNeg("LANGSTROTH_RELAY_MAX_CONTACTS", defaultContactMaxContacts),
+			DropMaxRows:     pos("LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS", defaultContactDropMaxRows),
+			DropMaxBoxBytes: pos("LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES", defaultContactDropMaxBoxBytes),
+			ReclaimHold:     time.Duration(nonNeg("LANGSTROTH_RELAY_CONTACT_RECLAIM_HOLD_DAYS", defaultContactReclaimHoldDays)) * 24 * time.Hour,
 		},
 	}
 }
@@ -133,12 +133,12 @@ func (l contactLimiters) allowCreate(r *http.Request) bool {
 
 func contactLimitersFromEnv() contactLimiters {
 	return contactLimiters{
-		drop:    newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_DROP_RATE", defaultContactDropRate), envFloat("HIVE_RELAY_CONTACT_DROP_BURST", defaultContactDropBurst)),
-		dropCID: newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_DROP_CID_RATE", defaultContactDropCIDRate), envFloat("HIVE_RELAY_CONTACT_DROP_CID_BURST", defaultContactDropCIDBurst)),
-		write:   newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_WRITE_RATE", defaultContactWriteRate), envFloat("HIVE_RELAY_CONTACT_WRITE_BURST", defaultContactWriteBurst)),
-		create:  newIPRateLimiter(envFloat("HIVE_RELAY_CONTACT_CREATE_RATE", defaultContactCreateRate), envFloat("HIVE_RELAY_CONTACT_CREATE_BURST", defaultContactCreateBurst)),
-		create48: newIPRateLimiter(createSlash48Factor*envFloat("HIVE_RELAY_CONTACT_CREATE_RATE", defaultContactCreateRate),
-			createSlash48Factor*envFloat("HIVE_RELAY_CONTACT_CREATE_BURST", defaultContactCreateBurst)),
+		drop:    newIPRateLimiter(envFloat("LANGSTROTH_RELAY_CONTACT_DROP_RATE", defaultContactDropRate), envFloat("LANGSTROTH_RELAY_CONTACT_DROP_BURST", defaultContactDropBurst)),
+		dropCID: newIPRateLimiter(envFloat("LANGSTROTH_RELAY_CONTACT_DROP_CID_RATE", defaultContactDropCIDRate), envFloat("LANGSTROTH_RELAY_CONTACT_DROP_CID_BURST", defaultContactDropCIDBurst)),
+		write:   newIPRateLimiter(envFloat("LANGSTROTH_RELAY_CONTACT_WRITE_RATE", defaultContactWriteRate), envFloat("LANGSTROTH_RELAY_CONTACT_WRITE_BURST", defaultContactWriteBurst)),
+		create:  newIPRateLimiter(envFloat("LANGSTROTH_RELAY_CONTACT_CREATE_RATE", defaultContactCreateRate), envFloat("LANGSTROTH_RELAY_CONTACT_CREATE_BURST", defaultContactCreateBurst)),
+		create48: newIPRateLimiter(createSlash48Factor*envFloat("LANGSTROTH_RELAY_CONTACT_CREATE_RATE", defaultContactCreateRate),
+			createSlash48Factor*envFloat("LANGSTROTH_RELAY_CONTACT_CREATE_BURST", defaultContactCreateBurst)),
 	}
 }
 

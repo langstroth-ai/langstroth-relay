@@ -7,18 +7,18 @@ import (
 )
 
 // E-2: tenant confinement must also confine workspaces. With
-// LIGUS_RELAY_TENANTS listing two tenants and the workspace scope left at
+// LANGSTROTH_RELAY_TENANTS listing two tenants and the workspace scope left at
 // its default (off) or at "claims", a valid token from tenant acme reached
 // tenant home's workspace. Setting tenants makes the relay refuse to start
 // unless the scope is strict, and a tenant-confined gate is always strict.
 func TestTenantConfinementForcesStrictWorkspaceScope(t *testing.T) {
 	sk := testKey(t)
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", pubHex(sk))
-	t.Setenv("LIGUS_RELAY_TENANTS", "acme,home")
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(sk))
+	t.Setenv("LANGSTROTH_RELAY_TENANTS", "acme,home")
 	for _, scope := range []string{"", "off", "claims"} {
-		t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", scope)
+		t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", scope)
 		if entitlementConfigError() == nil {
-			t.Errorf("scope %q: LIGUS_RELAY_TENANTS without strict workspace scope must refuse to start", scope)
+			t.Errorf("scope %q: LANGSTROTH_RELAY_TENANTS without strict workspace scope must refuse to start", scope)
 		}
 		srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementFromEnv()})
 		ts := httptest.NewServer(srv.Handler())
@@ -35,7 +35,7 @@ func TestTenantConfinementForcesStrictWorkspaceScope(t *testing.T) {
 		}
 		ts.Close()
 	}
-	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", "strict")
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", "strict")
 	if err := entitlementConfigError(); err != nil {
 		t.Fatal(err)
 	}

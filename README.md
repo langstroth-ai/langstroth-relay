@@ -20,17 +20,17 @@ off by default since v0.3, removed in v0.4.
 > in v0.2.x), the binaries are
 > `langstroth-relay` and `langstroth-auth`, the images are
 > `ghcr.io/langstroth-ai/langstroth-relay` and
-> `ghcr.io/langstroth-ai/langstroth-auth` (the relay image keeps `ligus-relay`
-> and `hive-relay` aliases until v3.0), and the charts are `langstroth-relay`,
+> `ghcr.io/langstroth-ai/langstroth-auth` (no `ligus-relay`, `hive-relay` or
+> `ligus-auth` aliases), and the charts are `langstroth-relay`,
 > `langstroth-auth` and the `langstroth-postgres` library, published at
 > `oci://ghcr.io/langstroth-ai/charts/<name>`.
 >
 > Settings are named `LANGSTROTH_RELAY_*` (and `LANGSTROTH_AUTH_*` for
-> `langstroth-auth`). The `LIGUS_RELAY_*`, `LIGUS_AUTH_*` and legacy
-> `HIVE_RELAY_*` names keep working. When a `LANGSTROTH_*` name and an older
-> name for the same setting are both set they must agree, or the process
-> refuses to start. Legacy `HIVE_RELAY_*` names log a one-time deprecation
-> warning. Wire formats do not change: the `/v1` API, `hrt1` tokens,
+> `langstroth-auth`) only. The former `HIVE_RELAY_*`, `LIGUS_RELAY_*` and
+> `LIGUS_AUTH_*` names are not read, and the relay (or `langstroth-auth`)
+> refuses to start while one is set, naming the variable to set instead, so a
+> forgotten old name can't silently turn push, the tunnel or the access gate
+> off. Wire formats do not change: the `/v1` API, `hrt1` tokens,
 > `X-Hive-*` / `X-Ligus-*` headers, the `hive-tunnel.1` subprotocol, the
 > `hive_relay_*` metric names, database table names and crypto
 > domain-separation strings are fixed protocol identifiers.
@@ -72,11 +72,11 @@ langstroth-relay issue --key <priv-hex> --sub <id> --plan team --exp-days 365 \
 
 ## Configuration (env)
 
-Each `LANGSTROTH_RELAY_*` setting below is also read under its former
-`LIGUS_RELAY_*` name and its legacy `HIVE_RELAY_*` name. If the
-`LANGSTROTH_RELAY_*` name and a former name are both set to different values,
-the relay refuses to start; if only `LIGUS_RELAY_*` and `HIVE_RELAY_*` differ,
-the `LIGUS_RELAY_*` value wins with a warning. Rates are tokens per
+Settings are read only under their `LANGSTROTH_RELAY_*` names. The relay
+refuses to start while any `HIVE_RELAY_*` or `LIGUS_RELAY_*` variable is set
+(except the Ligus client's `LIGUS_RELAY_URL`, which the relay never read): the
+error names each one with its `LANGSTROTH_RELAY_*` name, never its value.
+Rates are tokens per
 second per client; a client is the TCP peer, or the address a trusted proxy
 names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 
@@ -169,9 +169,8 @@ the APNs key on the tunnel pod alone.
 **Settings from files.** Any setting `X` above (and `DATABASE_URL`) that is
 unset in the environment is read from the file named by `X_FILE` (for example
 `DATABASE_URL_FILE`, `LANGSTROTH_RELAY_ACCESS_TOKENS_FILE`), else from the file
-`$LANGSTROTH_RELAY_SECRETS_DIR/X` (canonical `LANGSTROTH_RELAY_*` name, or the
-former `LIGUS_RELAY_*` name for directories written before the rename; when
-both files exist they must hold the same value), so secrets can be mounted
+`$LANGSTROTH_RELAY_SECRETS_DIR/X` (a file under a `HIVE_RELAY_*` or
+`LIGUS_RELAY_*` name there stops the relay at startup), so secrets can be mounted
 files instead of environment variables. The environment wins over
 `X_FILE`, which wins over the directory; one trailing newline is trimmed.
 `LANGSTROTH_RELAY_APNS_KEY_FILE` keeps its own meaning (the path of the key). The
@@ -608,7 +607,7 @@ your relay can push to it with the built-in APNs sender:
    host that uses this relay, and allow notifications.
 
 The relay forwards the host's ciphertext untouched in the spec §14 payload
-(`{"aps":{"alert":{"title":"Hive","body":"New activity on your host"},"mutable-content":1},"hive":{…,"ct":…}}`)
+(`{"aps":{"alert":{"title":"Ligus","body":"New activity on your host"},"mutable-content":1},"hive":{…,"ct":…}}`)
 with `apns-push-type: alert`, priority 10 (`high`) or 5 (`normal`),
 `apns-expiration` now + 1 h and the host's opaque collapse id. When APNs says
 a device token is dead (`410 Unregistered`, `BadDeviceToken`,

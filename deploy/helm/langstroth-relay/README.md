@@ -10,11 +10,11 @@
 > chart named their resources and selector labels after it. Selectors can't
 > change in place, so upgrade such a release with `--set
 > nameOverride=ligus-relay` (keeps every name and label, and the PVCs with
-> them); a fresh install needs nothing. The chart now sets
-> `LANGSTROTH_RELAY_*` variables; the relay still reads `LIGUS_RELAY_*` and
-> `HIVE_RELAY_*`, so `config.env` and Secret keys under those names keep
-> working, but one setting under two names with different values stops the
-> relay at startup.
+> them); a fresh install needs nothing. Settings are `LANGSTROTH_RELAY_*`
+> only: the relay no longer reads `LIGUS_RELAY_*` or `HIVE_RELAY_*` and
+> refuses to start while a variable (or a Secret key in the settings
+> directory) under one of those names is set, and the chart refuses such a
+> `config.env` key. Rename them before upgrading.
 
 The Langstroth relay on Kubernetes: content-blind, end-to-end encrypted sync, plus
 the phone tunnel. The relay never holds a workspace key, a device key or
@@ -427,9 +427,9 @@ hops; a header from any other peer is ignored.
 ## Image
 
 Release images are `ghcr.io/langstroth-ai/langstroth-relay:<version>`
-(`linux/amd64`, `linux/arm64`); `/usr/local/bin/ligus-relay` and
-`/usr/local/bin/hive-relay` are symlinks to `langstroth-relay`, kept until
-v3.0 for a custom `image.command`.
+(`linux/amd64`, `linux/arm64`); the binary is
+`/usr/local/bin/langstroth-relay` (the former `ligus-relay` and `hive-relay`
+names are gone, so a custom `image.command` must use it).
 `deploy/container/Dockerfile` builds the non-root distroless image used here,
 cross-compiled for `linux/amd64` and `linux/arm64` with buildx:
 

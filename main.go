@@ -16,15 +16,15 @@ import (
 //
 // Address resolution (cloud-friendly), most specific first:
 //  1. $PORT (set by Fly / Cloud Run / Railway / Heroku) → 0.0.0.0:$PORT
-//  2. $HIVE_RELAY_ADDR (full host:port)
+//  2. $LANGSTROTH_RELAY_ADDR (full host:port)
 //  3. default 0.0.0.0:8443
 //
 // Storage:
 //   - $DATABASE_URL set        → shared Postgres store (HA; no data migration).
-//   - else $HIVE_RELAY_DATA_DIR → in-memory + JSON snapshot (single instance).
+//   - else $LANGSTROTH_RELAY_DATA_DIR → in-memory + JSON snapshot (single instance).
 //   - else                      → in-memory only (ephemeral; tests).
 //
-// $HIVE_RELAY_FRIEND_CAP (optional) caps accepted friends per account.
+// $LANGSTROTH_RELAY_FRIEND_CAP (optional) caps accepted friends per account.
 
 // Main runs the open relay binary (cmd/langstroth-relay).
 func Main() {
@@ -49,11 +49,11 @@ func Main() {
 		}
 	}
 
-	// Before anything reads a setting: one setting given two different
-	// values under its new and a former name, or an unreadable secret file
-	// (which would otherwise read as unset: an open access gate, the memory
-	// store), stops the relay.
-	fatalIf(envAliasConflictError(os.Environ(), os.Getenv))
+	// Before anything reads a setting: a variable under a name from before
+	// the Langstroth rename (HIVE_RELAY_*, LIGUS_RELAY_*; no longer read), or
+	// an unreadable secret file (either would read as unset: push or the
+	// tunnel off, an open access gate, the memory store), stops the relay.
+	fatalIf(removedEnvError(os.Environ()))
 	fatalIf(secretFilesConfigError(os.Getenv))
 	fatalIf(entitlementConfigError())
 	fatalIf(routesConfigError(getenv))
@@ -127,20 +127,20 @@ func Main() {
 
 // buildStore selects the storage backend from the environment.
 //
-// The public production relay sets HIVE_RELAY_REQUIRE_DB=1 so it REFUSES to boot
+// The public production relay sets LANGSTROTH_RELAY_REQUIRE_DB=1 so it REFUSES to boot
 // on the ephemeral in-memory fallback: a missing/typo'd DATABASE_URL there would
 // otherwise silently serve every client from volatile memory and lose state on
 // the next machine move (P2-16). Self-hosters leave it unset and keep the
 // snapshot-store fallback.
 func buildStore(ctx context.Context) (Store, error) {
 	dsn := getenv("DATABASE_URL")
-	if envBool("HIVE_RELAY_REQUIRE_DB") && dsn == "" {
+	if envBool("LANGSTROTH_RELAY_REQUIRE_DB") && dsn == "" {
 		return nil, fmt.Errorf("LANGSTROTH_RELAY_REQUIRE_DB is set but DATABASE_URL is empty: refusing to boot on the ephemeral in-memory store")
 	}
 	if dsn != "" {
 		return newPostgresStore(ctx, dsn)
 	}
-	if dir := getenv("HIVE_RELAY_DATA_DIR"); dir != "" {
+	if dir := getenv("LANGSTROTH_RELAY_DATA_DIR"); dir != "" {
 		return newMemoryStoreWithPersistence(dir), nil
 	}
 	return newMemoryStore(), nil
@@ -150,14 +150,14 @@ func resolveAddr() string {
 	if port := getenv("PORT"); port != "" {
 		return "0.0.0.0:" + port
 	}
-	if addr := getenv("HIVE_RELAY_ADDR"); addr != "" {
+	if addr := getenv("LANGSTROTH_RELAY_ADDR"); addr != "" {
 		return addr
 	}
 	return "0.0.0.0:8443"
 }
 
 func friendCapFromEnv() *int {
-	if v := getenv("HIVE_RELAY_FRIEND_CAP"); v != "" {
+	if v := getenv("LANGSTROTH_RELAY_FRIEND_CAP"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return &n
 		}
@@ -193,8 +193,8 @@ type envelopePruner interface {
 
 func pruneLoop(pruner envelopePruner, stop <-chan struct{}) {
 	maxEnv, maxAge := retentionFromEnv()
-	inboxAge := daysEnv("HIVE_RELAY_INBOX_RETENTION_DAYS", defaultInboxMaxAgeDays)
-	friendReqAge := daysEnv("HIVE_RELAY_FRIEND_REQ_RETENTION_DAYS", defaultFriendReqMaxAgeDays)
+	inboxAge := daysEnv("LANGSTROTH_RELAY_INBOX_RETENTION_DAYS", defaultInboxMaxAgeDays)
+	friendReqAge := daysEnv("LANGSTROTH_RELAY_FRIEND_REQ_RETENTION_DAYS", defaultFriendReqMaxAgeDays)
 	tick := time.NewTicker(time.Hour)
 	defer tick.Stop()
 	for {

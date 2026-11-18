@@ -21,7 +21,7 @@ import (
 // LANGSTROTH_RELAY_APNS_TOPIC / LANGSTROTH_RELAY_APNS_TOPICS at that build's bundle
 // ids). It's off unless configured; then GET /v1/tunnel/info and the host's
 // welcome report "push": true. The relay only ever forwards the host's
-// ciphertext. (Each LANGSTROTH_RELAY_* name also works as the legacy HIVE_RELAY_*.)
+// ciphertext.
 //
 //	LANGSTROTH_RELAY_APNS_KEY_FILE  path to the AuthKey_<KEYID>.p8 file (or LANGSTROTH_RELAY_APNS_KEY: the PEM inline, "\n" escapes allowed)
 //	LANGSTROTH_RELAY_APNS_KEY_ID    the key's 10-character Key ID
@@ -93,7 +93,7 @@ var bundleIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$`)
 
 func validTopic(s string) bool { return bundleIDRe.MatchString(s) && !strings.Contains(s, "..") }
 
-// APNs environment selection for HIVE_RELAY_APNS_ENV.
+// APNs environment selection for LANGSTROTH_RELAY_APNS_ENV.
 const (
 	APNsEnvAuto       = "auto"
 	APNsEnvSandbox    = "sandbox"
@@ -188,7 +188,7 @@ func (s *APNsPushSender) SendDetailed(ctx context.Context, hostID, pid string, t
 	return out, nil
 }
 
-// APNsPushSenderFromEnv builds the built-in sender from HIVE_RELAY_APNS_*.
+// APNsPushSenderFromEnv builds the built-in sender from LANGSTROTH_RELAY_APNS_*.
 // It returns (nil, nil) when none of them is set, and an error when the
 // configuration is incomplete or the key doesn't parse (push then stays off).
 func APNsPushSenderFromEnv() (*APNsPushSender, error) {
@@ -197,9 +197,9 @@ func APNsPushSenderFromEnv() (*APNsPushSender, error) {
 
 func apnsPushSenderFrom(getenv func(string) string) (*APNsPushSender, error) {
 	get := func(k string) string { return strings.TrimSpace(getenv(k)) }
-	keyFile, keyPEM := get("HIVE_RELAY_APNS_KEY_FILE"), get("HIVE_RELAY_APNS_KEY")
-	keyID, teamID, topic, env := get("HIVE_RELAY_APNS_KEY_ID"), get("HIVE_RELAY_APNS_TEAM_ID"), get("HIVE_RELAY_APNS_TOPIC"), strings.ToLower(get("HIVE_RELAY_APNS_ENV"))
-	list := get("HIVE_RELAY_APNS_TOPICS")
+	keyFile, keyPEM := get("LANGSTROTH_RELAY_APNS_KEY_FILE"), get("LANGSTROTH_RELAY_APNS_KEY")
+	keyID, teamID, topic, env := get("LANGSTROTH_RELAY_APNS_KEY_ID"), get("LANGSTROTH_RELAY_APNS_TEAM_ID"), get("LANGSTROTH_RELAY_APNS_TOPIC"), strings.ToLower(get("LANGSTROTH_RELAY_APNS_ENV"))
+	list := get("LANGSTROTH_RELAY_APNS_TOPICS")
 	if keyFile == "" && keyPEM == "" && keyID == "" && teamID == "" && topic == "" && list == "" {
 		return nil, nil
 	}

@@ -15,9 +15,9 @@ import (
 // long-lived self-host doesn't grow without limit and eventually OOM. Two knobs,
 // both prune the OLDEST envelopes of a workspace:
 //
-//   - HIVE_RELAY_MAX_ENVELOPES — hard cap on retained envelopes per workspace
+//   - LANGSTROTH_RELAY_MAX_ENVELOPES — hard cap on retained envelopes per workspace
 //     (0 = unlimited). This is the primary memory bound and is on by default.
-//   - HIVE_RELAY_RETENTION_DAYS — age cap; envelopes older than N days are pruned
+//   - LANGSTROTH_RELAY_RETENTION_DAYS — age cap; envelopes older than N days are pruned
 //     (0 = disabled, the default).
 //
 // Tradeoff: a client fetches everything after its cursor (?after=seq). Pruning
@@ -70,7 +70,7 @@ type memoryStore struct {
 
 	// maxStoreBytes caps the bytes of workspace blobs held (envelope bodies,
 	// keyring rows, candidate and presence blobs) across all workspaces
-	// (HIVE_RELAY_MAX_STORE_BYTES; 0 = unbounded, the default). storeBytes is
+	// (LANGSTROTH_RELAY_MAX_STORE_BYTES; 0 = unbounded, the default). storeBytes is
 	// the running total. A write past the cap fails with ErrStoreFull (507).
 	maxStoreBytes int64
 	storeBytes    int64
@@ -146,11 +146,11 @@ func newMemoryStore() *memoryStore {
 		tokenHash:             map[string]string{},
 		retentionMaxEnvelopes: maxEnv,
 		retentionMaxAge:       maxAge,
-		inboxMaxRows:          int(envInt64("HIVE_RELAY_INBOX_MAX_ROWS", defaultInboxMaxRows)),
-		maxKeyringPerWS:       int(envInt64("HIVE_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
-		maxKeyringBytesPerWS:  int(envInt64("HIVE_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
-		maxDeviceBlobsPerWS:   int(envInt64("HIVE_RELAY_MAX_DEVICE_BLOBS_PER_WS", defaultMaxDeviceBlobsPerWS)),
-		maxStoreBytes:         max(envInt64("HIVE_RELAY_MAX_STORE_BYTES", 0), 0),
+		inboxMaxRows:          int(envInt64("LANGSTROTH_RELAY_INBOX_MAX_ROWS", defaultInboxMaxRows)),
+		maxKeyringPerWS:       int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
+		maxKeyringBytesPerWS:  int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
+		maxDeviceBlobsPerWS:   int(envInt64("LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS", defaultMaxDeviceBlobsPerWS)),
+		maxStoreBytes:         max(envInt64("LANGSTROTH_RELAY_MAX_STORE_BYTES", 0), 0),
 		notify:                newWSNotifier(),
 		memTunnel:             newMemTunnel(),
 		memContacts:           newMemContacts(),
@@ -182,13 +182,13 @@ func (s *memoryStore) latestSeq(_ context.Context, workspace string) (uint64, er
 // falling back to the documented defaults.
 func retentionFromEnv() (maxEnvelopes int, maxAge time.Duration) {
 	maxEnvelopes = defaultRetentionMaxEnvelopes
-	if v := getenv("HIVE_RELAY_MAX_ENVELOPES"); v != "" {
+	if v := getenv("LANGSTROTH_RELAY_MAX_ENVELOPES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			maxEnvelopes = n
 		}
 	}
 	days := defaultRetentionDays
-	if v := getenv("HIVE_RELAY_RETENTION_DAYS"); v != "" {
+	if v := getenv("LANGSTROTH_RELAY_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			days = n
 		}

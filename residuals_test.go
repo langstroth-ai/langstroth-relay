@@ -12,10 +12,10 @@ import (
 
 // ── Per-client SSE cap ───────────────────────────────────────────────────────
 
-// One client could hold every SSE slot (LIGUS_RELAY_MAX_SSE, instance-wide)
+// One client could hold every SSE slot (LANGSTROTH_RELAY_MAX_SSE, instance-wide)
 // and lock every other client out of push. Each client now has its own cap.
 func TestSSEPerClientCap(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_SSE_PER_CLIENT", "2")
+	t.Setenv("LANGSTROTH_RELAY_MAX_SSE_PER_CLIENT", "2")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	h := srv.Handler()
 
@@ -109,8 +109,8 @@ func (s *streamRecorder) status() int { return s.ResponseRecorder.Code }
 // Workspace reads had no rate limit, so one client could loop the bounded
 // list routes and keep the store busy. They now share a per-client bucket.
 func TestReadPathRateLimited(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_READ_RATE", "0.001")
-	t.Setenv("LIGUS_RELAY_READ_BURST", "3")
+	t.Setenv("LANGSTROTH_RELAY_READ_RATE", "0.001")
+	t.Setenv("LANGSTROTH_RELAY_READ_BURST", "3")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	ts := newTestHTTP(t, srv)
 	paths := []string{"/v1/workspaces/ws/envelopes", "/v1/workspaces/ws/keyring", "/v1/workspaces/ws/presence"}

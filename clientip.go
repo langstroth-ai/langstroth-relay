@@ -45,10 +45,10 @@ var activeClientIP atomic.Pointer[clientIPPolicy]
 
 func clientIPPolicyFromEnv() *clientIPPolicy {
 	p := &clientIPPolicy{header: "X-Forwarded-For"}
-	if h := strings.TrimSpace(getenv("HIVE_RELAY_CLIENT_IP_HEADER")); h != "" {
+	if h := strings.TrimSpace(getenv("LANGSTROTH_RELAY_CLIENT_IP_HEADER")); h != "" {
 		p.header = http.CanonicalHeaderKey(h)
 	}
-	for _, part := range strings.Split(getenv("HIVE_RELAY_TRUSTED_PROXIES"), ",") {
+	for _, part := range strings.Split(getenv("LANGSTROTH_RELAY_TRUSTED_PROXIES"), ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

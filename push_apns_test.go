@@ -42,8 +42,8 @@ func TestAPNsSenderFromEnv(t *testing.T) {
 	path, pemText := testP8(t)
 	full := func() map[string]string {
 		return map[string]string{
-			"HIVE_RELAY_APNS_KEY_FILE": path, "HIVE_RELAY_APNS_KEY_ID": "KEYID12345",
-			"HIVE_RELAY_APNS_TEAM_ID": "TEAMID1234", "HIVE_RELAY_APNS_TOPIC": "com.example.hive",
+			"LANGSTROTH_RELAY_APNS_KEY_FILE": path, "LANGSTROTH_RELAY_APNS_KEY_ID": "KEYID12345",
+			"LANGSTROTH_RELAY_APNS_TEAM_ID": "TEAMID1234", "LANGSTROTH_RELAY_APNS_TOPIC": "com.example.hive",
 		}
 	}
 
@@ -56,37 +56,37 @@ func TestAPNsSenderFromEnv(t *testing.T) {
 	}
 
 	inline := full()
-	delete(inline, "HIVE_RELAY_APNS_KEY_FILE")
-	inline["HIVE_RELAY_APNS_KEY"] = strings.ReplaceAll(pemText, "\n", `\n`) // one-line env form
-	inline["HIVE_RELAY_APNS_ENV"] = "Production"
+	delete(inline, "LANGSTROTH_RELAY_APNS_KEY_FILE")
+	inline["LANGSTROTH_RELAY_APNS_KEY"] = strings.ReplaceAll(pemText, "\n", `\n`) // one-line env form
+	inline["LANGSTROTH_RELAY_APNS_ENV"] = "Production"
 	if s, err := apnsPushSenderFrom(envMap(inline)); err != nil || s.Env != APNsEnvProduction {
 		t.Fatalf("inline config: %+v %v", s, err)
 	}
 
 	partial := full()
-	delete(partial, "HIVE_RELAY_APNS_TEAM_ID")
-	delete(partial, "HIVE_RELAY_APNS_TOPIC")
+	delete(partial, "LANGSTROTH_RELAY_APNS_TEAM_ID")
+	delete(partial, "LANGSTROTH_RELAY_APNS_TOPIC")
 	if _, err := apnsPushSenderFrom(envMap(partial)); err == nil ||
 		!strings.Contains(err.Error(), "LANGSTROTH_RELAY_APNS_TEAM_ID") || !strings.Contains(err.Error(), "LANGSTROTH_RELAY_APNS_TOPIC") {
 		t.Fatalf("partial config: %v", err)
 	}
 
 	badEnv := full()
-	badEnv["HIVE_RELAY_APNS_ENV"] = "staging"
+	badEnv["LANGSTROTH_RELAY_APNS_ENV"] = "staging"
 	if _, err := apnsPushSenderFrom(envMap(badEnv)); err == nil {
 		t.Fatal("unknown env accepted")
 	}
 
 	badKey := full()
-	delete(badKey, "HIVE_RELAY_APNS_KEY_FILE")
-	badKey["HIVE_RELAY_APNS_KEY"] = "-----BEGIN PRIVATE KEY-----\nc2VjcmV0LW1hdGVyaWFs\n-----END PRIVATE KEY-----"
+	delete(badKey, "LANGSTROTH_RELAY_APNS_KEY_FILE")
+	badKey["LANGSTROTH_RELAY_APNS_KEY"] = "-----BEGIN PRIVATE KEY-----\nc2VjcmV0LW1hdGVyaWFs\n-----END PRIVATE KEY-----"
 	_, err = apnsPushSenderFrom(envMap(badKey))
 	if err == nil || strings.Contains(err.Error(), "c2VjcmV0") {
 		t.Fatalf("a bad key must fail without echoing it: %v", err)
 	}
 
 	missingFile := full()
-	missingFile["HIVE_RELAY_APNS_KEY_FILE"] = filepath.Join(t.TempDir(), "nope.p8")
+	missingFile["LANGSTROTH_RELAY_APNS_KEY_FILE"] = filepath.Join(t.TempDir(), "nope.p8")
 	if _, err := apnsPushSenderFrom(envMap(missingFile)); err == nil {
 		t.Fatal("missing key file accepted")
 	}
@@ -124,8 +124,8 @@ func TestAPNsSenderEnvAndPriority(t *testing.T) {
 	f, srv := newFakeAPNs(t)
 	path, _ := testP8(t)
 	s, err := apnsPushSenderFrom(envMap(map[string]string{
-		"HIVE_RELAY_APNS_KEY_FILE": path, "HIVE_RELAY_APNS_KEY_ID": "KEYID12345",
-		"HIVE_RELAY_APNS_TEAM_ID": "TEAMID1234", "HIVE_RELAY_APNS_TOPIC": "com.example.hive",
+		"LANGSTROTH_RELAY_APNS_KEY_FILE": path, "LANGSTROTH_RELAY_APNS_KEY_ID": "KEYID12345",
+		"LANGSTROTH_RELAY_APNS_TEAM_ID": "TEAMID1234", "LANGSTROTH_RELAY_APNS_TOPIC": "com.example.hive",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -167,10 +167,10 @@ func TestAPNsSenderEnvAndPriority(t *testing.T) {
 // token APNs calls dead.
 func TestTunnel_PushViaEnvAPNs(t *testing.T) {
 	path, _ := testP8(t)
-	t.Setenv("HIVE_RELAY_APNS_KEY_FILE", path)
-	t.Setenv("HIVE_RELAY_APNS_KEY_ID", "KEYID12345")
-	t.Setenv("HIVE_RELAY_APNS_TEAM_ID", "TEAMID1234")
-	t.Setenv("HIVE_RELAY_APNS_TOPIC", "com.example.hive")
+	t.Setenv("LANGSTROTH_RELAY_APNS_KEY_FILE", path)
+	t.Setenv("LANGSTROTH_RELAY_APNS_KEY_ID", "KEYID12345")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TEAM_ID", "TEAMID1234")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TOPIC", "com.example.hive")
 	f, apnsSrv := newFakeAPNs(t)
 
 	env := newTunnelEnv(t, nil, nil, nil)
@@ -215,7 +215,7 @@ func TestTunnel_PushViaEnvAPNs(t *testing.T) {
 		r.Header.Get("apns-collapse-id") != "c0llapse" || r.Header.Get("apns-priority") != "10" || r.Header.Get("apns-push-type") != "alert" {
 		t.Fatalf("APNs request %s %s %v", r.Proto, r.URL.Path, r.Header)
 	}
-	want := `{"aps":{"alert":{"body":"New activity on your host","title":"Hive"},"mutable-content":1},"hive":{"v":1,"hid":"` +
+	want := `{"aps":{"alert":{"body":"New activity on your host","title":"Ligus"},"mutable-content":1},"hive":{"v":1,"hid":"` +
 		h.id + `","pid":"` + p.pid + `","ct":"` + b64u(ct) + `"}}`
 	if string(body) != want {
 		t.Fatalf("payload\n got %s\nwant %s", body, want)
@@ -239,17 +239,17 @@ func TestTunnel_PushViaEnvAPNs(t *testing.T) {
 // An explicitly injected sender (a downstream build) wins over the env one.
 func TestInjectedPushSenderWinsOverEnv(t *testing.T) {
 	path, _ := testP8(t)
-	t.Setenv("HIVE_RELAY_APNS_KEY_FILE", path)
-	t.Setenv("HIVE_RELAY_APNS_KEY_ID", "KEYID12345")
-	t.Setenv("HIVE_RELAY_APNS_TEAM_ID", "TEAMID1234")
-	t.Setenv("HIVE_RELAY_APNS_TOPIC", "com.example.hive")
+	t.Setenv("LANGSTROTH_RELAY_APNS_KEY_FILE", path)
+	t.Setenv("LANGSTROTH_RELAY_APNS_KEY_ID", "KEYID12345")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TEAM_ID", "TEAMID1234")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TOPIC", "com.example.hive")
 	fp := &fakePush{}
 	env := newTunnelEnv(t, nil, fp, nil)
 	if env.hub.push != PushSender(fp) {
 		t.Fatalf("injected sender replaced: %T", env.hub.push)
 	}
 	// Misconfigured env: push stays off, the relay still starts.
-	t.Setenv("HIVE_RELAY_APNS_TOPIC", "")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TOPIC", "")
 	env2 := newTunnelEnv(t, nil, nil, nil)
 	if env2.hub.push != nil {
 		t.Fatalf("partial env config must leave push off: %T", env2.hub.push)

@@ -33,7 +33,7 @@ const (
 )
 
 func workspaceScopeFromEnv() string {
-	switch v := strings.ToLower(strings.TrimSpace(getenv("HIVE_RELAY_WORKSPACE_SCOPE"))); v {
+	switch v := strings.ToLower(strings.TrimSpace(getenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE"))); v {
 	case "", scopeOff:
 		return scopeOff
 	case scopeClaims, scopeStrict:

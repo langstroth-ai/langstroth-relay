@@ -40,9 +40,8 @@ func Main() {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]
 	}
-	// One setting under its LANGSTROTH_AUTH_* and LIGUS_AUTH_* names with
-	// two different values: refuse instead of guessing.
-	if err := envConflictError(); err != nil {
+	// A LIGUS_AUTH_* name (no longer read) would silently drop its setting.
+	if err := removedEnvError(os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "langstroth-auth:", err)
 		os.Exit(1)
 	}

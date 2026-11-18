@@ -250,7 +250,7 @@ func TestMintedTokenVerifiesOnRelay(t *testing.T) {
 }
 
 // End to end against a real relay in strict scope mode: the minted token
-// reaches its workspace and nothing else; with LIGUS_RELAY_TENANTS the relay
+// reaches its workspace and nothing else; with LANGSTROTH_RELAY_TENANTS the relay
 // also refuses another tenant's tokens.
 func TestWorkspacesClaimScopesStrict(t *testing.T) {
 	h, ia, ib := twoTenants(t)
@@ -260,9 +260,9 @@ func TestWorkspacesClaimScopesStrict(t *testing.T) {
 	ta := h.loginTokens("acme", d)
 	tb := h.loginTokens("globex", d)
 
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", h.srv.PublicKeyHex())
-	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", "strict")
-	t.Setenv("LIGUS_RELAY_TENANTS", "acme")
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", h.srv.PublicKeyHex())
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", "strict")
+	t.Setenv("LANGSTROTH_RELAY_TENANTS", "acme")
 	rs := relay.New(relay.Options{Store: relay.NewMemoryStore(), Entitlement: relay.EntitlementFromEnv()})
 	relaySrv := httptestServer(t, rs.Handler())
 
@@ -309,8 +309,8 @@ func TestIdPCannotGrantMembership(t *testing.T) {
 	grantJIT(t, h, "home")
 	tr := h.loginTokens("home", d)
 
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", h.srv.PublicKeyHex())
-	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", "strict")
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", h.srv.PublicKeyHex())
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", "strict")
 	rs := relay.New(relay.Options{Store: relay.NewMemoryStore(), Entitlement: relay.EntitlementFromEnv()})
 	base := httptestServer(t, rs.Handler())
 	// Transport: the token reaches W (reads and writes are forwarded).

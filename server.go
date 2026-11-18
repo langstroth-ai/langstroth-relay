@@ -33,13 +33,13 @@ const (
 	resolveWindow      = time.Minute
 )
 
-// maxRequestBodyBytes bounds every JSON request body (env HIVE_RELAY_MAX_BODY_BYTES,
+// maxRequestBodyBytes bounds every JSON request body (env LANGSTROTH_RELAY_MAX_BODY_BYTES,
 // default 4 MiB) to stop multi-GB uploads from exhausting memory.
 var maxRequestBodyBytes = bodyCapFromEnv()
 
 func bodyCapFromEnv() int64 {
 	const def = 4 << 20 // 4 MiB
-	if v := getenv("HIVE_RELAY_MAX_BODY_BYTES"); v != "" {
+	if v := getenv("LANGSTROTH_RELAY_MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			return n
 		}
@@ -59,15 +59,15 @@ type Options struct {
 	FriendCap   *int                // nil → unlimited
 	AdminAuth   AdminAuthorizer     // nil → /v1/admin/* disabled (404)
 	// Membership enables relay-managed team roster routes + the membership guard.
-	// Also enabled by env HIVE_RELAY_MEMBERSHIP=1. Off → the relay is unchanged
+	// Also enabled by env LANGSTROTH_RELAY_MEMBERSHIP=1. Off → the relay is unchanged
 	// (no roster routes, content-blind forwarding).
 	Membership bool
 	// TunnelPolicy enables the hive-tunnel/1 phone ↔ host relay (tunnel.go).
-	// nil → TunnelPolicyFromEnv semantics: HIVE_RELAY_TUNNEL=off|open|allowlist
+	// nil → TunnelPolicyFromEnv semantics: LANGSTROTH_RELAY_TUNNEL=off|open|allowlist
 	// (default off = /v1/tunnel/* answers 404).
 	TunnelPolicy TunnelPolicy
 	// PushSender delivers end-to-end encrypted pushes for tunnel hosts.
-	// nil → the built-in APNs sender when HIVE_RELAY_APNS_* is set
+	// nil → the built-in APNs sender when LANGSTROTH_RELAY_APNS_* is set
 	// (push_apns.go), else push unavailable.
 	PushSender PushSender
 	// GitHubRoutes registers the deprecated GitHub social routes (directory,
@@ -86,7 +86,7 @@ type Server struct {
 	hooks       Hooks           // nil = no-op
 	adminAuth   AdminAuthorizer // nil = admin API disabled
 	membership  bool            // relay-managed team membership: routes + guard
-	// Optional signed-identity verifier for membership (HIVE_RELAY_MEMBERSHIP_PUBKEY).
+	// Optional signed-identity verifier for membership (LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY).
 	// Decoupled from the access gate: it lets the relay read a caller's
 	// identity (a signed hrt1 token's Sub) for membership enforcement WITHOUT
 	// forcing the access policy to entSigned — so teams can run on an OPEN relay
@@ -150,7 +150,7 @@ func New(o Options) *Server {
 	if o.Entitlement == nil {
 		o.Entitlement = EntitlementFromEnv()
 	}
-	metricsToken := strings.TrimSpace(getenv("HIVE_RELAY_METRICS_TOKEN"))
+	metricsToken := strings.TrimSpace(getenv("LANGSTROTH_RELAY_METRICS_TOKEN"))
 	// Client address policy for rate limits and logs (clientip.go).
 	activeClientIP.Store(clientIPPolicyFromEnv())
 	s := &Server{
@@ -165,19 +165,19 @@ func New(o Options) *Server {
 		httpClient:       &http.Client{Timeout: 10 * time.Second},
 		pairings:         map[string]pairing{},
 		pairAttempts:     map[string]*pairAttempt{},
-		maxPairings:      int(envInt64("HIVE_RELAY_MAX_PAIRINGS", defaultMaxLivePairings)),
-		pushLimiter:      newIPRateLimiter(envFloat("HIVE_RELAY_PUSH_RATE", 100), envFloat("HIVE_RELAY_PUSH_BURST", 300)),
-		sseLimiter:       newConcurrencyLimiter(envInt64("HIVE_RELAY_MAX_SSE", 2000)),
-		sseClient:        newKeyedConcurrencyLimiter(envInt64("HIVE_RELAY_MAX_SSE_PER_CLIENT", defaultMaxSSEPerClient)),
-		readLimiter:      newIPRateLimiter(envFloat("HIVE_RELAY_READ_RATE", defaultReadRate), envFloat("HIVE_RELAY_READ_BURST", defaultReadBurst)),
-		wsWriterLimit:    newIPRateLimiter(envFloat("HIVE_RELAY_WS_WRITER_RATE", defaultWSWriterRate), envFloat("HIVE_RELAY_WS_WRITER_BURST", defaultWSWriterBurst)),
-		ghLimiter:        newIPRateLimiter(envFloat("HIVE_RELAY_GITHUB_RATE", defaultGitHubAuthRate), envFloat("HIVE_RELAY_GITHUB_BURST", defaultGitHubAuthBurst)),
-		inviteLimiter:    newIPRateLimiter(envFloat("HIVE_RELAY_INVITE_RATE", defaultInviteRate), envFloat("HIVE_RELAY_INVITE_BURST", defaultInviteBurst)),
+		maxPairings:      int(envInt64("LANGSTROTH_RELAY_MAX_PAIRINGS", defaultMaxLivePairings)),
+		pushLimiter:      newIPRateLimiter(envFloat("LANGSTROTH_RELAY_PUSH_RATE", 100), envFloat("LANGSTROTH_RELAY_PUSH_BURST", 300)),
+		sseLimiter:       newConcurrencyLimiter(envInt64("LANGSTROTH_RELAY_MAX_SSE", 2000)),
+		sseClient:        newKeyedConcurrencyLimiter(envInt64("LANGSTROTH_RELAY_MAX_SSE_PER_CLIENT", defaultMaxSSEPerClient)),
+		readLimiter:      newIPRateLimiter(envFloat("LANGSTROTH_RELAY_READ_RATE", defaultReadRate), envFloat("LANGSTROTH_RELAY_READ_BURST", defaultReadBurst)),
+		wsWriterLimit:    newIPRateLimiter(envFloat("LANGSTROTH_RELAY_WS_WRITER_RATE", defaultWSWriterRate), envFloat("LANGSTROTH_RELAY_WS_WRITER_BURST", defaultWSWriterBurst)),
+		ghLimiter:        newIPRateLimiter(envFloat("LANGSTROTH_RELAY_GITHUB_RATE", defaultGitHubAuthRate), envFloat("LANGSTROTH_RELAY_GITHUB_BURST", defaultGitHubAuthBurst)),
+		inviteLimiter:    newIPRateLimiter(envFloat("LANGSTROTH_RELAY_INVITE_RATE", defaultInviteRate), envFloat("LANGSTROTH_RELAY_INVITE_BURST", defaultInviteBurst)),
 		ghCache:          newIdentityCache(ghIdentityTTL, ghNegativeTTL),
 		metricsToken:     metricsToken,
 		wsScope:          workspaceScopeFromEnv(),
 		maxListBytes:     listCapFromEnv(),
-		maxRotationBytes: int(max(envInt64("HIVE_RELAY_MAX_ROTATION_BYTES", defaultMaxRotationBytes), 0)),
+		maxRotationBytes: int(max(envInt64("LANGSTROTH_RELAY_MAX_ROTATION_BYTES", defaultMaxRotationBytes), 0)),
 	}
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
@@ -208,7 +208,7 @@ func New(o Options) *Server {
 	if tunnelPolicy != nil {
 		push := o.PushSender
 		if push == nil {
-			// The built-in APNs sender, when HIVE_RELAY_APNS_* is configured
+			// The built-in APNs sender, when LANGSTROTH_RELAY_APNS_* is configured
 			// (push_apns.go); otherwise push stays unavailable.
 			push = pushSenderFromEnv()
 		}
@@ -225,7 +225,7 @@ func New(o Options) *Server {
 			s.readGuard = membershipGuard{store: s.store}
 		}
 		// Optional identity verifier, independent of the access policy.
-		if pk := strings.TrimSpace(getenv("HIVE_RELAY_MEMBERSHIP_PUBKEY")); pk != "" {
+		if pk := strings.TrimSpace(getenv("LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY")); pk != "" {
 			if vk, ok := parsePubkey(pk); ok {
 				s.memberVerifier = vk
 			} else {
@@ -457,7 +457,7 @@ func (s *Server) cachedPing(ctx context.Context) error {
 }
 
 // guardMetrics optionally protects /metrics with an ops credential (P3-15). When
-// HIVE_RELAY_METRICS_TOKEN is set, /metrics requires a matching bearer (constant-
+// LANGSTROTH_RELAY_METRICS_TOKEN is set, /metrics requires a matching bearer (constant-
 // time compared); unset keeps it open for back-compat with existing scrapers.
 func (s *Server) guardMetrics(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1066,8 +1066,8 @@ func (s *Server) accountInviteCreate(w http.ResponseWriter, r *http.Request) {
 	// Optional stronger control (off by default to preserve open-relay behavior):
 	// require an existing friend relationship before an invite is delivered, so
 	// invites can only reach people the sender already knows (P1-7). Enabled via
-	// HIVE_RELAY_INVITE_REQUIRE_FRIEND=1.
-	if envBool("HIVE_RELAY_INVITE_REQUIRE_FRIEND") {
+	// LANGSTROTH_RELAY_INVITE_REQUIRE_FRIEND=1.
+	if envBool("LANGSTROTH_RELAY_INVITE_REQUIRE_FRIEND") {
 		if ok, err := s.store.AreFriends(r.Context(), fromAccount, toAccount); storeErr(w, err) {
 			return
 		} else if !ok {

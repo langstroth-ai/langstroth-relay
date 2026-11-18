@@ -87,8 +87,8 @@ func newPostgresStore(ctx context.Context, dsn string) (Store, error) {
 	s := &postgresStore{
 		pool:                 pool,
 		notify:               newWSNotifier(),
-		maxKeyringPerWS:      int(envInt64("HIVE_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
-		maxKeyringBytesPerWS: int(envInt64("HIVE_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
+		maxKeyringPerWS:      int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
+		maxKeyringBytesPerWS: int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
 	}
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()

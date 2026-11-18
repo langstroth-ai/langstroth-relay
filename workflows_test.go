@@ -99,6 +99,12 @@ func TestDeployWorkflow_OnlyTestedOpenRelayFromReleaseTags(t *testing.T) {
 	if n := strings.Count(src, "flyctl deploy") + strings.Count(src, "fly deploy"); n != 1 {
 		t.Errorf("expected exactly one deploy command, found %d", n)
 	}
+	if !strings.Contains(src, "--env LANGSTROTH_RELAY_REQUIRE_DB=1") || strings.Contains(src, "HIVE_RELAY_REQUIRE_DB") {
+		t.Error("the prod deploy must set LANGSTROTH_RELAY_REQUIRE_DB=1 (HIVE_RELAY_* is no longer read and stops the relay)")
+	}
+	if !strings.Contains(src, "flyctl secrets list --app hive-relay-enterprise --json") || !strings.Contains(src, "^(HIVE|LIGUS)_RELAY_") {
+		t.Error("the deploy must refuse while the app holds a HIVE_RELAY_*/LIGUS_RELAY_* secret")
+	}
 	if !strings.Contains(src, "--app hive-relay-enterprise --config deploy/fly.toml") {
 		t.Error("deploy must target hive-relay-enterprise with deploy/fly.toml")
 	}

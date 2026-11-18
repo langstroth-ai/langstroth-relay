@@ -128,15 +128,15 @@ func TestMemoryStoreContract(t *testing.T) {
 	storeSuite(t, s)
 }
 
-// Postgres contract tests run only when LIGUS_AUTH_TEST_DATABASE_URL points
+// Postgres contract tests run only when LANGSTROTH_AUTH_TEST_DATABASE_URL points
 // at a throwaway database, e.g.
 //
 //	docker run --rm -e POSTGRES_PASSWORD=auth -p 55433:5432 postgres:16-alpine
-//	LIGUS_AUTH_TEST_DATABASE_URL=postgres://postgres:auth@127.0.0.1:55433/postgres go test ./langstrothauth
+//	LANGSTROTH_AUTH_TEST_DATABASE_URL=postgres://postgres:auth@127.0.0.1:55433/postgres go test ./langstrothauth
 func TestPostgresStoreContract(t *testing.T) {
-	dsn := os.Getenv("LIGUS_AUTH_TEST_DATABASE_URL")
+	dsn := os.Getenv("LANGSTROTH_AUTH_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("set LIGUS_AUTH_TEST_DATABASE_URL to run the Postgres store tests")
+		t.Skip("set LANGSTROTH_AUTH_TEST_DATABASE_URL to run the Postgres store tests")
 	}
 	s, err := NewPostgresStore(t.Context(), dsn)
 	if err != nil {

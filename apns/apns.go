@@ -1,14 +1,16 @@
 // Package apns sends token-authenticated (.p8) HTTP/2 pushes to the Apple
 // Push Notification service.
 //
-// Hive pushes are content-blind (hive-tunnel/1 §14): the payload carries only
+// Ligus pushes are content-blind (hive-tunnel/1 §14): the payload carries only
 // the opaque ciphertext the user's host produced (ChaCha20-Poly1305 under a
 // key the host and phone derived at enrollment) plus a generic fallback alert,
 // with mutable-content: 1 so the app's Notification Service Extension decrypts
 // and rewrites the alert on the device. The sender never sees plaintext. The
-// body is exactly the spec's:
+// body is the spec's, with the generic title "Ligus" (it was "Hive"; the app
+// overwrites the alert and never matches on it). The "hive" member is a wire
+// identifier the app's extension reads, and keeps its name:
 //
-//	{"aps":{"alert":{"title":"Hive","body":"New activity on your host"},"mutable-content":1},
+//	{"aps":{"alert":{"title":"Ligus","body":"New activity on your host"},"mutable-content":1},
 //	 "hive":{"v":1,"hid":"<host_id>","pid":"<pid>","ct":"<b64u(nonce ‖ ciphertext)>"}}
 //
 // APNs only accepts a push signed with a key from the Apple developer team
@@ -161,7 +163,7 @@ func (c *Client) BuildPayload(m Message) ([]byte, error) {
 	}
 	title, body := c.AlertTitle, c.AlertBody
 	if title == "" {
-		title = "Hive"
+		title = "Ligus"
 	}
 	if body == "" {
 		body = "New activity on your host"

@@ -9,7 +9,7 @@ import (
 
 func scopeServer(t *testing.T, mode string) (*httptest.Server, ed25519.PrivateKey) {
 	t.Helper()
-	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", mode)
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", mode)
 	sk := testKey(t)
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entSigned, pubkey: sk.Public().(ed25519.PublicKey)}})
 	ts := httptest.NewServer(srv.Handler())
@@ -20,7 +20,7 @@ func scopeServer(t *testing.T, mode string) (*httptest.Server, ed25519.PrivateKe
 // F-05 (deferred item: per-workspace read authorization). The token gate is
 // coarse: a token minted for one workspace reads and writes every other
 // workspace, including its keyring, presence and SSE stream. With
-// LIGUS_RELAY_WORKSPACE_SCOPE=claims a token carrying a "workspaces" claim is
+// LANGSTROTH_RELAY_WORKSPACE_SCOPE=claims a token carrying a "workspaces" claim is
 // confined to those ids.
 func TestWorkspaceScopeClaims(t *testing.T) {
 	ts, sk := scopeServer(t, "claims")
@@ -87,7 +87,7 @@ func TestTokenClaimsWithoutWorkspacesUnchanged(t *testing.T) {
 }
 
 func TestWorkspaceScopeTypoFailsClosed(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", "claim")
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", "claim")
 	if got := workspaceScopeFromEnv(); got != scopeStrict {
 		t.Fatalf("an unrecognized scope must fail closed to strict, got %q", got)
 	}

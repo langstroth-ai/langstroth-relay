@@ -14,7 +14,7 @@ import (
 // job. Ephemeral state (pairing codes, candidate/presence blobs) is rebuilt and
 // intentionally not persisted here — only the social graph + message history are.
 //
-// Enable by pointing HIVE_RELAY_DATA_DIR at a writable directory; unset ⇒
+// Enable by pointing LANGSTROTH_RELAY_DATA_DIR at a writable directory; unset ⇒
 // in-memory only.
 
 const snapshotFile = "relay-state.json"

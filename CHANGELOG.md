@@ -4,9 +4,11 @@
 
 Additive for every existing `/v1` route and for `hrt1`: their requests and
 responses are byte-identical to v0.2.0 (checked by golden responses recorded
-against v0.2.0), and no crypto domain-separation string changed. The one
-behavior change is that the deprecated GitHub social routes are off by
-default.
+against v0.2.0), and no crypto domain-separation string changed. The
+behavior changes are that the deprecated GitHub social routes are off by
+default, and that settings are read only under `LANGSTROTH_RELAY_*` names:
+the relay refuses to start while a `HIVE_RELAY_*` or `LIGUS_RELAY_*`
+variable is set, so rename them first ("Fly secrets" below for Fly).
 
 ### Renamed to Langstroth
 
@@ -18,9 +20,11 @@ route or database table changes.
   `github.com/ligus-ai/relay`); `cmd/langstroth-relay`, `cmd/langstroth-auth`;
   package `langstrothauth` (was `ligusauth`).
 - Images `ghcr.io/langstroth-ai/langstroth-relay` and
-  `ghcr.io/langstroth-ai/langstroth-auth`. The relay images keep
-  `/usr/local/bin/ligus-relay` and `hive-relay`, and the auth image
-  `ligus-auth`, as symlinks until v3.0.
+  `ghcr.io/langstroth-ai/langstroth-auth`. The binaries are only
+  `langstroth-relay` and `langstroth-auth`: `cmd/hive-relay` and the
+  `ligus-relay`, `hive-relay` and `ligus-auth` aliases are gone. The root
+  image's unprivileged user is `langstroth` (was `hive`) with the same UID/GID
+  1000, so an existing snapshot volume keeps its owner.
 - Charts `langstroth-relay`, `langstroth-auth` and the `langstroth-postgres`
   library, published from each release tag at
   `oci://ghcr.io/langstroth-ai/charts/<name>`. The auth chart's appVersion
@@ -29,21 +33,31 @@ route or database table changes.
   nameOverride=ligus-relay` (or `ligus-auth`) to keep its resource names and
   selector labels; the charts now mount under `/etc/langstroth-relay` and
   `/etc/langstroth-auth`.
-- Settings are `LANGSTROTH_RELAY_*` and `LANGSTROTH_AUTH_*`. `LIGUS_RELAY_*`,
-  `LIGUS_AUTH_*` and `HIVE_RELAY_*` keep working. A `LANGSTROTH_*` name and a
-  former name for the same setting set to different values stop the relay or
-  `langstroth-auth` at startup; so do `LANGSTROTH_RELAY_<X>` and
-  `LIGUS_RELAY_<X>` files with different contents in the secrets directory,
-  which may use either name.
+- Settings are `LANGSTROTH_RELAY_*` and `LANGSTROTH_AUTH_*` only. The
+  `HIVE_RELAY_*`, `LIGUS_RELAY_*` and `LIGUS_AUTH_*` names are no longer
+  read, and the relay (or `langstroth-auth`) **refuses to start** while a
+  variable under one of them is set, or a file under one of them is in
+  `LANGSTROTH_RELAY_SECRETS_DIR`; the error names each variable with its new
+  name (never its value), so a forgotten secret can't silently turn push, the
+  tunnel or the access gate off. The Ligus client's `LIGUS_RELAY_URL` is
+  exempt (the relay never read it). The chart refuses `config.env` keys under
+  the old names. *Upgrade:* rename every setting before deploying v0.3.0; on
+  Fly see "Fly secrets" below.
 - `langstroth-auth` reads `/etc/langstroth-auth/config.json`, or
   `/etc/ligus-auth/config.json` when only that exists (the image no longer
   passes `--config`), and the systemd credential
   `langstroth-auth-signing-key`, or `ligus-auth-signing-key`.
 - The agent scripts read `LANGSTROTH_NAMESPACE`, `LANGSTROTH_RELEASE`,
-  `LANGSTROTH_SCENARIO`, ... and still accept the `LIGUS_*` names (two
-  different values are a usage error); `local.sh` keeps using a
-  `~/.local/state/ligus-relay` data directory, pid file and metrics token from
-  before the rename.
+  `LANGSTROTH_SCENARIO`, ... and still accept the `LIGUS_NAMESPACE`-style
+  names (two different values are a usage error); `LIGUS_RELAY_*` and
+  `LIGUS_AUTH_BIN` are a usage error. `local.sh` keeps using a
+  `~/.local/state/ligus-relay` data directory and pid file from before the
+  rename and renames its `secrets/LIGUS_RELAY_METRICS_TOKEN`;
+  `bootstrap-secrets.sh` moves an existing Secret's
+  `LIGUS_RELAY_METRICS_TOKEN` key to `LANGSTROTH_RELAY_METRICS_TOKEN`.
+- The generic APNs alert (shown when the app's extension can't decrypt a
+  push) is titled "Ligus" (was "Hive"). The payload's `hive` member keeps its
+  name: it is a wire identifier the app reads.
 - `langstroth-relay bootstrap-agent` prints `brew install langstroth-ai/hive/ligus`.
 - The Fly deploy runs only for a release tag `v*`, after `ci` passes on it,
   not on every push to main. Fly concurrency counts open connections
@@ -72,8 +86,8 @@ route or database table changes.
   or `device_revoke_token_sha256`: that token opens this route for that
   tenant only (no other admin route, no other tenant), so a serve box never
   holds the operator token. No env var form.
-- **Push to more than one app build.** `LIGUS_RELAY_APNS_TOPICS` (comma
-  list) allow-lists more bundle ids next to `LIGUS_RELAY_APNS_TOPIC` (which
+- **Push to more than one app build.** `LANGSTROTH_RELAY_APNS_TOPICS` (comma
+  list) allow-lists more bundle ids next to `LANGSTROTH_RELAY_APNS_TOPIC` (which
   keeps working alone). The phone may report its bundle id with its token
   (`apns.topic`, optional); the relay pushes with it when allowed and refuses
   otherwise, keeping the token. A phone that reports none gets the default
@@ -95,10 +109,10 @@ route or database table changes.
   30-day drop retention, and rate limits per sender and
   box, per box, per record and per client. Stored in the memory store, its
   snapshot and Postgres (`relay_contacts`, `relay_contact_drop`). Requests that
-  carry a forge token are refused. Settings: `LIGUS_RELAY_CONTACTS`,
-  `LIGUS_RELAY_CONTACT_*`, `LIGUS_RELAY_MAX_CONTACTS`; see README "Contacts".
+  carry a forge token are refused. Settings: `LANGSTROTH_RELAY_CONTACTS`,
+  `LANGSTROTH_RELAY_CONTACT_*`, `LANGSTROTH_RELAY_MAX_CONTACTS`; see README "Contacts".
   - An expired cid stays reserved for its old write key for 180 days
-    (`LIGUS_RELAY_CONTACT_RECLAIM_HOLD_DAYS`), so nobody who learned the cid
+    (`LANGSTROTH_RELAY_CONTACT_RECLAIM_HOLD_DAYS`), so nobody who learned the cid
     can claim it while its owner is offline.
   - Drop-box seqs never restart for a cid: a box created again starts after
     its creation second times 2^20, so every device's cursor and ack stay
@@ -129,15 +143,15 @@ route or database table changes.
 - **GitHub social routes** (`/v1/directory/*`, `/v1/account/*`,
   `/v1/friends/*`). They need the relay to see users' GitHub tokens, and
   Ligus 2.0 replaces them with contacts, invite links and QR codes. They are
-  now registered only with `LIGUS_RELAY_GITHUB_ROUTES=on` (also
-  `HIVE_RELAY_GITHUB_ROUTES`, or `LIGUS_RELAY_GITHUB_SOCIAL=1`); otherwise they
+  now registered only with `LANGSTROTH_RELAY_GITHUB_ROUTES=on` (or
+  `LANGSTROTH_RELAY_GITHUB_SOCIAL=1`); otherwise they
   answer `404`. When on, responses carry `Deprecation` and `Link:
   rel="deprecation"` headers. **They are removed in v0.4**, together with the
   `relay_directory*`, `relay_account*`, `relay_login_index`, `relay_inbox` and
   `relay_friend*` tables and the GitHub verifier.
   *Upgrade:* a relay serving older clients that use
   invite-by-handle, friends or the account inbox must set
-  `LIGUS_RELAY_GITHUB_ROUTES=on` until those clients are gone.
+  `LANGSTROTH_RELAY_GITHUB_ROUTES=on` until those clients are gone.
 
 - **Helm: `postgres.enabled`, `externalDatabase.*` (ligus-relay) and
   `store.databaseUrl` (ligus-auth)** are deprecated aliases for
@@ -164,12 +178,67 @@ route or database table changes.
   gates relay access only; workspace membership stays in the signed roster.
 - **Token claims `tid`, `uid`, `did`** (all optional and omitted when empty):
   tokens minted without them are byte-identical to before.
-- **`LIGUS_RELAY_TENANTS`** (off by default): confine signed tokens to the
+- **`LANGSTROTH_RELAY_TENANTS`** (off by default): confine signed tokens to the
   listed `tid` values.
-- **`LIGUS_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
+- **`LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
   key during a key rotation.
-- `ligus-relay issue --tenant <id>` sets `tid`.
+- `langstroth-relay issue --tenant <id>` sets `tid`.
 - Exported `IssueToken`, `VerifyToken`, `ParsePubkey` and `ParseSigningKey`.
+
+### Fly secrets (do this before deploying v0.3.0)
+
+v0.3.0 refuses to start while any `HIVE_RELAY_*` or `LIGUS_RELAY_*` secret is
+set, and the deploy workflow refuses to deploy while the app holds one. Rename
+them first, staged, so the running v0.2 relay is not restarted and the
+renamed secrets go live with the v0.3.0 deploy itself. No step prints a value.
+
+1. See what will change (names only; changes nothing):
+
+   ```sh
+   fly secrets list --app <app>                    # names and digests
+   deploy/fly-rename-secrets.sh <app>              # the plan
+   ```
+
+   Each `HIVE_RELAY_<X>` / `LIGUS_RELAY_<X>` becomes `LANGSTROTH_RELAY_<X>`.
+   When both old names are set, the `LIGUS_RELAY_` value (the one the v0.2
+   relay uses) is kept. `HIVE_RELAY_ADMIN_LOGINS` is dropped: the open relay
+   never read it (only the old Rust relay and the enterprise build did).
+   `DATABASE_URL` is unchanged.
+
+2. Stage the renames:
+
+   ```sh
+   fly ssh issue --agent                           # once, if fly ssh isn't set up
+   deploy/fly-rename-secrets.sh <app> --apply
+   ```
+
+   The script reads each value from the running machine with
+   `fly ssh console -C 'printenv NAME'` into a mode-0600 temp file, stages it
+   with `fly secrets import --stage` from that file, checks that the new
+   name's digest in `fly secrets list` equals the old one's, and only then
+   stages `fly secrets unset` of the old names. If a digest differs it stops
+   with the old names in place.
+
+   By hand instead (when you hold the values, e.g. the `.p8` file), stage
+   each one from a file, never echoing it:
+
+   ```sh
+   fly secrets import --app <app> --stage < renamed.env   # NAME=value lines; a PEM as NAME="""…"""
+   fly secrets list --app <app>                           # digests: new == old
+   fly secrets unset --app <app> --stage HIVE_RELAY_… LIGUS_RELAY_…
+   ```
+
+3. Check `fly secrets list --app <app>` shows no `HIVE_RELAY_*` or
+   `LIGUS_RELAY_*` name, then deploy v0.3.0 (push the tag; the workflow sets
+   `LANGSTROTH_RELAY_REQUIRE_DB=1`, was `HIVE_RELAY_REQUIRE_DB=1`; by hand:
+   `fly deploy --app <app> --config deploy/fly.toml --env
+   LANGSTROTH_RELAY_REQUIRE_DB=1`).
+
+4. After the deploy: `/v1/health` answers 200, `fly logs` shows the tunnel
+   and `tunnel push via APNs` lines, and `fly config show --app <app>` lists
+   no `HIVE_RELAY_*` env. A refused start logs
+   `HIVE_RELAY_* and LIGUS_RELAY_* names are no longer read: rename ...`
+   naming each leftover.
 
 ## v0.2.0
 

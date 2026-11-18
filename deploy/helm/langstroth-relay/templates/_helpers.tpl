@@ -138,7 +138,10 @@ empty. The shape is what the langstroth-postgres library expects.
 {{- fail "tunnel.apns.existingSecret must not be config.existingSecret: that Secret is loaded into every pod, relay-sync included. Put the APNs key in a Secret of its own." -}}
 {{- end -}}
 {{- range $k, $_ := .Values.config.env -}}
-{{- if regexMatch "^(LANGSTROTH|LIGUS|HIVE)_RELAY_APNS_" $k -}}
+{{- if regexMatch "^(LIGUS|HIVE)_RELAY_" $k -}}
+{{- fail (printf "config.env.%s: HIVE_RELAY_* and LIGUS_RELAY_* names are no longer read (the relay refuses to start with one set); use LANGSTROTH_RELAY_%s" $k (regexReplaceAll "^(LIGUS|HIVE)_RELAY_" $k "")) -}}
+{{- end -}}
+{{- if regexMatch "^LANGSTROTH_RELAY_APNS_" $k -}}
 {{- fail (printf "config.env.%s: APNs settings reach every pod through config.env; use tunnel.apns.* (the key from tunnel.apns.existingSecret)" $k) -}}
 {{- end -}}
 {{- end -}}

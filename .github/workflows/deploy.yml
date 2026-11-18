@@ -75,9 +75,20 @@ jobs:
             echo "FLY_API_TOKEN not set - skipping deploy (add the secret to enable auto-deploy)."
             exit 0
           fi
-          # HIVE_RELAY_REQUIRE_DB=1 makes the prod app refuse to boot on the
+          # Since v0.3.0 the relay refuses to start while any HIVE_RELAY_* or
+          # LIGUS_RELAY_* variable is set (they are no longer read). Refuse to
+          # deploy while the app still holds a secret under one of those
+          # names: rename them first (CHANGELOG, "Fly secrets"). Names only,
+          # never values.
+          old=$(flyctl secrets list --app hive-relay-enterprise --json | jq -r '.[] | (.Name // .name)' | grep -E '^(HIVE|LIGUS)_RELAY_' || true)
+          if [ -n "$old" ]; then
+            echo "::error::hive-relay-enterprise still has secrets under removed names; migrate them before deploying:"
+            echo "$old"
+            exit 1
+          fi
+          # LANGSTROTH_RELAY_REQUIRE_DB=1 makes the prod app refuse to boot on the
           # ephemeral in-memory store if DATABASE_URL is ever missing (P2-16); set
           # here (not in the shared deploy/fly.toml) so self-host copies of the
           # config keep the snapshot-store fallback.
           flyctl deploy --remote-only --app hive-relay-enterprise --config deploy/fly.toml \
-            --env HIVE_RELAY_REQUIRE_DB=1
+            --env LANGSTROTH_RELAY_REQUIRE_DB=1

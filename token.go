@@ -155,13 +155,13 @@ const (
 // entitlementConfigError reports an access-gate setting that can't be used,
 // so the binary refuses to start instead of serving with a broken gate.
 func entitlementConfigError() error {
-	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
+	if pk := getenv("LANGSTROTH_RELAY_TOKEN_PUBKEY"); pk != "" {
 		if _, ok := parsePubkey(pk); !ok {
 			return errors.New("LANGSTROTH_RELAY_TOKEN_PUBKEY is set but is not an Ed25519 public key (64 hex chars or base64)")
 		}
 	}
-	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY_NEXT"); pk != "" {
-		if getenv("HIVE_RELAY_TOKEN_PUBKEY") == "" {
+	if pk := getenv("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT"); pk != "" {
+		if getenv("LANGSTROTH_RELAY_TOKEN_PUBKEY") == "" {
 			return errors.New("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT is set without LANGSTROTH_RELAY_TOKEN_PUBKEY")
 		}
 		if _, ok := parsePubkey(pk); !ok {
@@ -169,7 +169,7 @@ func entitlementConfigError() error {
 		}
 	}
 	if ts := tenantsFromEnv(); ts != nil {
-		if getenv("HIVE_RELAY_TOKEN_PUBKEY") == "" {
+		if getenv("LANGSTROTH_RELAY_TOKEN_PUBKEY") == "" {
 			return errors.New("LANGSTROTH_RELAY_TENANTS needs signed tokens: set LANGSTROTH_RELAY_TOKEN_PUBKEY")
 		}
 		if len(ts) == 0 {
@@ -189,7 +189,7 @@ func entitlementConfigError() error {
 // returns nil when the setting is unset (tenant confinement off, the default)
 // and an empty non-nil slice when it is set but lists nothing.
 func tenantsFromEnv() []string {
-	raw, set := lookupRelayEnv("HIVE_RELAY_TENANTS")
+	raw, set := lookupRelayEnv("LANGSTROTH_RELAY_TENANTS")
 	if !set {
 		return nil
 	}
@@ -207,14 +207,6 @@ func tenantsFromEnv() []string {
 func lookupRelayEnv(name string) (string, bool) {
 	if v := getenv(name); v != "" {
 		return v, true
-	}
-	if short, ok := settingSuffix(name); ok {
-		for _, p := range envPrefixes {
-			if _, set := os.LookupEnv(p + short); set {
-				return "", true
-			}
-		}
-		return "", false
 	}
 	_, ok := os.LookupEnv(name)
 	return "", ok
@@ -239,14 +231,14 @@ type entitlementPolicy struct {
 }
 
 // entitlementFromEnv resolves the policy, most specific first:
-//  1. HIVE_RELAY_TOKEN_PUBKEY (hex/base64 Ed25519) → verify signed tokens;
-//  2. HIVE_RELAY_ACCESS_TOKENS (comma-separated)   → static allowlist;
+//  1. LANGSTROTH_RELAY_TOKEN_PUBKEY (hex/base64 Ed25519) → verify signed tokens;
+//  2. LANGSTROTH_RELAY_ACCESS_TOKENS (comma-separated)   → static allowlist;
 //  3. otherwise                                    → open (self-host default).
 func entitlementFromEnv() entitlementPolicy {
-	if pk := getenv("HIVE_RELAY_TOKEN_PUBKEY"); pk != "" {
+	if pk := getenv("LANGSTROTH_RELAY_TOKEN_PUBKEY"); pk != "" {
 		if vk, ok := parsePubkey(pk); ok {
 			p := entitlementPolicy{kind: entSigned, pubkey: vk, tenants: tenantsFromEnv()}
-			if next := getenv("HIVE_RELAY_TOKEN_PUBKEY_NEXT"); next != "" {
+			if next := getenv("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT"); next != "" {
 				nk, ok := parsePubkey(next)
 				if !ok {
 					os.Stderr.WriteString("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT is set but unparseable; denying every token\n")
@@ -261,7 +253,7 @@ func entitlementFromEnv() entitlementPolicy {
 		os.Stderr.WriteString("LANGSTROTH_RELAY_TOKEN_PUBKEY is set but unparseable; denying every token\n")
 		return entitlementPolicy{kind: entDeny}
 	}
-	if v := strings.TrimSpace(getenv("HIVE_RELAY_ACCESS_TOKENS")); v != "" {
+	if v := strings.TrimSpace(getenv("LANGSTROTH_RELAY_ACCESS_TOKENS")); v != "" {
 		var hashes []string
 		for _, t := range strings.Split(v, ",") {
 			if t = strings.TrimSpace(t); t != "" {
