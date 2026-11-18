@@ -283,6 +283,8 @@ type tenantSpec struct {
 	idpGroups    bool
 	scimToken    string
 	redirects    []string
+	// deviceRevokeToken: the tenant's device-revocation token (its SHA-256 goes in the config).
+	deviceRevokeToken string
 }
 
 func newHarness(t *testing.T, clock *fakeClock, specs ...tenantSpec) *harness {
@@ -301,6 +303,9 @@ func newHarness(t *testing.T, clock *fakeClock, specs ...tenantSpec) *harness {
 		t.Setenv(tc.OIDC.ClientSecretEnv, sp.idp.secret)
 		if sp.scimToken != "" {
 			tc.SCIMTokenSHA256 = sha256Hex(sp.scimToken)
+		}
+		if sp.deviceRevokeToken != "" {
+			tc.DeviceRevokeTokenSHA256 = sha256Hex(sp.deviceRevokeToken)
 		}
 		cfg.Tenants = append(cfg.Tenants, tc)
 		h.idps[sp.id] = sp.idp

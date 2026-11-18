@@ -428,6 +428,14 @@ func (s *pgStore) RevokeUser(ctx context.Context, tenant, userID string) (int, e
 	return int(tag.RowsAffected()), nil
 }
 
+func (s *pgStore) RevokeDevice(ctx context.Context, tenant, deviceID string) (int, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE ligus_auth_refresh SET revoked=true WHERE tenant=$1 AND device_id=$2 AND NOT revoked`, tenant, deviceID)
+	if err != nil {
+		return 0, pgErr(err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *pgStore) PruneRefresh(ctx context.Context, now int64) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM ligus_auth_refresh WHERE expires_at < $1`, now)
 	return pgErr(err)

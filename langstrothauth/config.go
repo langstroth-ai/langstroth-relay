@@ -129,6 +129,12 @@ type TenantConfig struct {
 	SCIMTokenFile   string `json:"scim_token_file"`
 	SCIMTokenEnv    string `json:"scim_token_env"`
 	SCIMTokenSHA256 string `json:"scim_token_sha256"`
+	// Device-revocation token: lets a serve box end this tenant's device
+	// sessions (POST /admin/v1/tenants/{t}/devices/{d}/revoke) and nothing
+	// else, so the box never holds the operator token. A file (0600) or its
+	// SHA-256 (hex); never an env var.
+	DeviceRevokeTokenFile   string `json:"device_revoke_token_file"`
+	DeviceRevokeTokenSHA256 string `json:"device_revoke_token_sha256"`
 	// Workspaces this tenant owns. Grants may only name these. ["*"] (any
 	// workspace) is allowed only when this is the only tenant.
 	Workspaces []string `json:"workspaces"`
@@ -145,8 +151,9 @@ type TenantConfig struct {
 	MaxMembers    *uint32  `json:"max_members"`
 	RetentionDays *uint32  `json:"retention_days"`
 
-	scimTokenHash string
-	clientSecret  string
+	scimTokenHash         string
+	deviceRevokeTokenHash string
+	clientSecret          string
 }
 
 // OIDCConfig is the upstream identity provider for a tenant.
@@ -404,6 +411,25 @@ func (t *TenantConfig) validate() error {
 			return errors.New("the SCIM token must be at least 32 characters")
 		}
 		t.scimTokenHash = sha256Hex(tok)
+	}
+	switch {
+	case t.DeviceRevokeTokenFile != "" && t.DeviceRevokeTokenSHA256 != "":
+		return errors.New("set only one of device_revoke_token_file, device_revoke_token_sha256")
+	case t.DeviceRevokeTokenSHA256 != "":
+		h := strings.ToLower(strings.TrimSpace(t.DeviceRevokeTokenSHA256))
+		if b, err := hex.DecodeString(h); err != nil || len(b) != 32 {
+			return errors.New("device_revoke_token_sha256 must be 64 hex chars")
+		}
+		t.deviceRevokeTokenHash = h
+	case t.DeviceRevokeTokenFile != "":
+		tok, err := readSecret(t.DeviceRevokeTokenFile, "")
+		if err != nil {
+			return fmt.Errorf("device revoke token: %w", err)
+		}
+		if len(tok) < 32 {
+			return errors.New("the device revoke token must be at least 32 characters")
+		}
+		t.deviceRevokeTokenHash = sha256Hex(tok)
 	}
 	if t.Provisioning == "scim" && t.scimTokenHash == "" {
 		return errors.New("provisioning scim needs a SCIM token")

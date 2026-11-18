@@ -442,6 +442,22 @@ func (s *fileStore) RevokeUser(_ context.Context, tenant, userID string) (int, e
 	return n, s.persist()
 }
 
+func (s *fileStore) RevokeDevice(_ context.Context, tenant, deviceID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, rt := range s.st.Refresh {
+		if rt.Tenant == tenant && rt.DeviceID == deviceID && !rt.Revoked {
+			rt.Revoked = true
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return n, s.persist()
+}
+
 func (s *fileStore) PruneRefresh(_ context.Context, now int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

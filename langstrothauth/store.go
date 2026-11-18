@@ -100,6 +100,9 @@ type Store interface {
 	RevokeFamily(ctx context.Context, tenant, familyID string) error
 	// RevokeUser revokes every refresh token of the user and returns how many.
 	RevokeUser(ctx context.Context, tenant, userID string) (int, error)
+	// RevokeDevice revokes every refresh token bound to the device (its
+	// sign-in session) and returns how many.
+	RevokeDevice(ctx context.Context, tenant, deviceID string) (int, error)
 	// PruneRefresh deletes refresh tokens that expired before now.
 	PruneRefresh(ctx context.Context, now int64) error
 

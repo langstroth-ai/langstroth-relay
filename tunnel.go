@@ -130,6 +130,9 @@ type tunnelHub struct {
 	pushLim    *ipRateLimiter // per host
 	authFail   *failLimiter   // per IP
 
+	// revokeSeen: accepted POST /v1/tunnel/revoke nonces (replay refusal).
+	revokeSeen *replayCache
+
 	stop     chan struct{}
 	stopOnce sync.Once
 }
@@ -224,6 +227,8 @@ func newTunnelHub(store Store, policy TunnelPolicy, push PushSender) *tunnelHub 
 		pushDay:  map[string]*dayCount{},
 		conns:    map[*tconn]struct{}{},
 		stop:     make(chan struct{}),
+
+		revokeSeen: newReplayCache(100_000),
 	}
 	h.upgrader = websocket.Upgrader{
 		Subprotocols: []string{tunnelSubprotocol},
@@ -257,6 +262,7 @@ func (h *tunnelHub) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/tunnel/host", h.handleHost)
 	mux.HandleFunc("GET /v1/tunnel/accept", h.handleAccept)
 	mux.HandleFunc("GET /v1/tunnel/connect", h.handleConnect)
+	mux.HandleFunc("POST /v1/tunnel/revoke", h.handleRevokeHTTP)
 }
 
 // tunnelBilling is the "billing" field of GET /v1/tunnel/info. Clients still
@@ -712,20 +718,10 @@ func (h *tunnelHub) controlRequest(ctl *hostCtl, m *relayMsg) bool {
 			h.ack(c, m.ID, "protocol")
 			return false
 		}
-		if cap := now.Unix() + credMaxLifetimeSecs + tunnelSkewSecs; exp > cap {
-			exp = cap
+		if _, _, _, err := h.revokePhone(ctx, ctl.hostID, m.PID, exp); err != nil {
+			h.ack(c, m.ID, "internal")
+			return false
 		}
-		if exp > now.Unix() {
-			if err := h.store.RevokeTunnelPhone(ctx, ctl.hostID, m.PID, exp); err != nil {
-				h.ack(c, m.ID, "internal")
-				return false
-			}
-		} else {
-			// Every credential it held has expired: nothing to keep, but drop
-			// the push token all the same.
-			_ = h.store.SetTunnelPushToken(ctx, ctl.hostID, m.PID, nil, now.Unix())
-		}
-		h.killSessions(ctl.hostID, m.PID, tcRevoked, "phone revoked by its host")
 		h.ack(c, m.ID, "")
 	case "push":
 		go h.handlePush(ctl, *m)
@@ -872,8 +868,9 @@ func (h *tunnelHub) deliverReject(hostID, sid string) {
 	}
 }
 
-// killSessions ends live and pending sessions of a host ("" pid = all).
-func (h *tunnelHub) killSessions(hostID, pid string, tc tunnelCode, msg string) {
+// killSessions ends live and pending sessions of a host ("" pid = all) and
+// returns how many it ended.
+func (h *tunnelHub) killSessions(hostID, pid string, tc tunnelCode, msg string) int {
 	h.mu.Lock()
 	var victims []*liveSession
 	if hs := h.sessions[hostID]; hs != nil {
@@ -887,6 +884,7 @@ func (h *tunnelHub) killSessions(hostID, pid string, tc tunnelCode, msg string) 
 	for _, ls := range victims {
 		ls.kill(tc, msg)
 	}
+	return len(victims)
 }
 
 // ── Host accept connection (§6.3) ────────────────────────────────────────────
@@ -1022,10 +1020,25 @@ func (h *tunnelHub) admitSession(ctx context.Context, c *tconn, hostID string, n
 		return terr(tcNotEntitled, "this host is not active on this relay")
 	}
 	// 4.–8.
-	return h.openAndSplice(c, hostID, cred.PID, "session", "", h.maxSessions(st), func() {
+	return h.openAndSplice(c, hostID, cred.PID, "session", "", h.maxSessions(st), func() *tunnelError {
 		if setApns {
 			_ = h.store.SetTunnelPushToken(ctx, hostID, cred.PID, apns, h.nowUnix())
 		}
+		// A revocation may have landed since step 6. Checked after the
+		// session is registered and its push token stored: a revocation
+		// before this check is seen here (and its token cleared), one after
+		// it kills the registered session and deletes the stored token.
+		revoked, err := h.store.TunnelPhoneRevoked(ctx, hostID, cred.PID, h.nowUnix())
+		if err != nil || revoked {
+			if setApns {
+				_ = h.store.SetTunnelPushToken(ctx, hostID, cred.PID, nil, h.nowUnix())
+			}
+			if err != nil {
+				return terr(tcInternal, "store unavailable")
+			}
+			return terr(tcRevoked, "this phone was revoked by its host")
+		}
+		return nil
 	})
 }
 
@@ -1062,7 +1075,10 @@ func (h *tunnelHub) admitEnroll(ctx context.Context, c *tconn, hostID string, m 
 }
 
 // openAndSplice runs §6.4.1 steps 4, 5, 7 and 8 (beforeOpen is step 6).
-func (h *tunnelHub) openAndSplice(c *tconn, hostID, pid, mode, eid string, maxSessions int, beforeOpen func()) *tunnelError {
+//
+// beforeOpen runs once the session is registered (so a revocation from here
+// on closes it); a non-nil error refuses the session.
+func (h *tunnelHub) openAndSplice(c *tconn, hostID, pid, mode, eid string, maxSessions int, beforeOpen func() *tunnelError) *tunnelError {
 	h.mu.Lock()
 	ctl := h.hosts[hostID]
 	if ctl == nil {
@@ -1093,7 +1109,10 @@ func (h *tunnelHub) openAndSplice(c *tconn, hostID, pid, mode, eid string, maxSe
 	defer h.releaseSession(ls)
 
 	if beforeOpen != nil {
-		beforeOpen()
+		if te := beforeOpen(); te != nil {
+			h.cancelOpen(po, te.tc)
+			return te
+		}
 	}
 	open := map[string]any{"t": "open", "sid": sid, "mode": mode}
 	if mode == "enroll" {
@@ -1274,6 +1293,7 @@ func (h *tunnelHub) gcLoop() {
 
 func (h *tunnelHub) gc() {
 	now := h.now()
+	h.revokeSeen.prune(now.Unix())
 	if n, err := h.store.PruneTunnel(context.Background(), now.Unix(), h.lim.PendingGC); err != nil {
 		slog.Warn("tunnel prune failed", "error", err)
 	} else if n > 0 {
