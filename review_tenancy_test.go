@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -246,4 +248,34 @@ func TestRelayRoomCapStore(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+type countingRooms struct {
+	*memoryStore
+	calls atomic.Int64
+}
+
+func (c *countingRooms) RoomTotals(ctx context.Context) (int64, int64, error) {
+	c.calls.Add(1)
+	return c.memoryStore.RoomTotals(ctx)
+}
+
+// F10: every /metrics scrape ran the room totals (on Postgres a count and sum
+// over every row of relay_rooms), and /metrics is open without a metrics
+// token and exempt from the per-client rate, so anyone could make the relay
+// scan the table in a loop.
+func TestMetricsRoomTotalsCached(t *testing.T) {
+	t.Setenv("LANGSTROTH_RELAY_METRICS_TOKEN", "")
+	st := &countingRooms{memoryStore: newMemoryStore()}
+	srv := New(Options{Store: st, Entitlement: entitlementPolicy{kind: entOpen}})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	for i := 0; i < 20; i++ {
+		if !strings.Contains(metricsBody(t, ts.URL), "hive_relay_rooms 0") {
+			t.Fatal("no room gauge")
+		}
+	}
+	if n := st.calls.Load(); n > 1 {
+		t.Fatalf("20 scrapes ran the room totals %d times", n)
+	}
 }

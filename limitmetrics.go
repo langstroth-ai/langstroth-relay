@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Limit and tenant metrics (docs/tenancy.md, "Metrics"). Process-wide like
@@ -104,6 +105,31 @@ func countTenantRequest(tenant string) {
 	}
 }
 
+// roomGaugeTTL bounds how often /metrics reads the room totals (on Postgres a
+// scan of relay_rooms): /metrics can be open and isn't rate limited.
+const roomGaugeTTL = 10 * time.Second
+
+type roomGaugeCache struct {
+	mu           sync.Mutex
+	rooms, bytes int64
+	at           time.Time
+}
+
+func (s *Server) roomTotals(ctx context.Context, rs roomStore) (int64, int64, error) {
+	c := &s.roomGauge
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < roomGaugeTTL {
+		return c.rooms, c.bytes, nil
+	}
+	rooms, bytes, err := rs.RoomTotals(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	c.rooms, c.bytes, c.at = rooms, bytes, time.Now()
+	return rooms, bytes, nil
+}
+
 // writeLimitMetrics appends the limit, room and tenant series to /metrics.
 func (s *Server) writeLimitMetrics(ctx context.Context, w io.Writer) {
 	c := limitStats.Load()
@@ -114,7 +140,7 @@ func (s *Server) writeLimitMetrics(ctx context.Context, w io.Writer) {
 	}
 	rs, ok := s.store.(roomStore)
 	if ok {
-		if rooms, bytes, err := rs.RoomTotals(ctx); err == nil {
+		if rooms, bytes, err := s.roomTotals(ctx, rs); err == nil {
 			fmt.Fprintf(w, "# HELP hive_relay_rooms Rooms holding data.\n# TYPE hive_relay_rooms gauge\nhive_relay_rooms %d\n", rooms)
 			fmt.Fprintf(w, "# HELP hive_relay_room_bytes Stored room bytes (envelope bodies and key rotations).\n# TYPE hive_relay_room_bytes gauge\nhive_relay_room_bytes %d\n", bytes)
 		}

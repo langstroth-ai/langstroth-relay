@@ -134,6 +134,8 @@ type Server struct {
 
 	pairCount map[string]int // live pairing codes per tenant (tenancy only)
 
+	roomGauge roomGaugeCache // /metrics room totals, re-read at most every roomGaugeTTL
+
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
 	healthErr     error
 	healthChecked time.Time
