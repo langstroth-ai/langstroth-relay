@@ -60,6 +60,17 @@ type wsSnap struct {
 	Members map[string]*MemberRow `json:"members,omitempty"`
 	// Relay-issued invites (id → invite + code hash); absent from older snapshots.
 	Invites map[string]inviteSnap `json:"invites,omitempty"`
+	// Room accounting (quota.go); absent from older snapshots, where a
+	// workspace holding data is a live room last written at its newest
+	// envelope (or at load time).
+	Room *roomSnap `json:"room,omitempty"`
+}
+
+type roomSnap struct {
+	Live      bool   `json:"live"`
+	Tenant    string `json:"tenant,omitempty"`
+	Creator   string `json:"creator,omitempty"`
+	LastWrite int64  `json:"lastWrite,omitempty"`
 }
 
 // inviteSnap persists a memInvite (its unexported fields) in the JSON snapshot.
@@ -172,10 +183,21 @@ func (s *memoryStore) restore(snap snapshot) {
 		for id, iv := range w.Invites {
 			ws.invites[id] = &memInvite{row: iv.Row, codeHash: iv.CodeHash}
 		}
-		s.pruneEnvelopesLocked(ws, time.Now().Unix())
+		if w.Room != nil {
+			ws.live, ws.tenant, ws.creator, ws.lastWrite = w.Room.Live, w.Room.Tenant, w.Room.Creator, w.Room.LastWrite
+		} else {
+			ws.live = len(w.Envelopes) > 0 || len(w.Keyring) > 0 || len(cand) > 0 || len(pres) > 0
+			for _, at := range envAt {
+				ws.lastWrite = max(ws.lastWrite, at)
+			}
+		}
+		if ws.live && ws.lastWrite == 0 {
+			ws.lastWrite = time.Now().Unix()
+		}
 		s.workspaces[id] = ws
 	}
 	s.recountStoreBytesLocked()
+	s.recountRoomsLocked()
 	s.storeBytes += contactBytes
 
 	s.directory = map[string]*DirAccount{}
@@ -264,6 +286,7 @@ func (s *memoryStore) toSnapshot() snapshot {
 			Envelopes: w.envelopes, EnvAt: w.envAt, EnvKey: w.envKey, NextSeq: w.nextSeq,
 			Candidates: w.candidates, Presence: w.presence, Keyring: w.keyring,
 			Members: w.members,
+			Room:    &roomSnap{Live: w.live, Tenant: w.tenant, Creator: w.creator, LastWrite: w.lastWrite},
 		}
 		if len(w.invites) > 0 {
 			ws.Invites = map[string]inviteSnap{}
@@ -333,6 +356,7 @@ func (s *memoryStore) recountStoreBytesLocked() {
 	var n int64
 	for id, w := range s.workspaces {
 		n += int64(wsOverheadBytes + len(id))
+		w.charged = true
 		for _, e := range w.envelopes {
 			n += int64(len(e.Body))
 		}

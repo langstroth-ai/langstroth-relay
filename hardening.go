@@ -107,6 +107,11 @@ func plausibleGitHubToken(tok string) bool {
 // the request body.
 func writerTag(ctx context.Context, ip string) string {
 	if c := claimsFrom(ctx); c != nil && c.Sub != "" {
+		if t := tenantID(ctx); t != "" {
+			// Subjects are only unique inside a tenant (each tenant's
+			// issuer picks its own), so the tag carries the tenant.
+			return "sub:t:" + t + "\x00" + c.Sub
+		}
 		return "sub:" + c.Sub
 	}
 	return "ip:" + ip

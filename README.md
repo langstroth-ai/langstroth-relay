@@ -107,8 +107,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `LANGSTROTH_RELAY_MAX_ENVELOPES` | `50000` | per-workspace retained-envelope cap (`0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly |
-| `LANGSTROTH_RELAY_RETENTION_DAYS` | `0` (off) | prune envelopes older than N days; both stores |
+| `LANGSTROTH_RELAY_MAX_ENVELOPES` | removed | **Removed.** Evicting a room's oldest envelopes dropped its seed and broke every device that joined later. The relay refuses to start while it is set to anything but `0`; use `LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES` (refuses with `507`) |
+| `LANGSTROTH_RELAY_RETENTION_DAYS` | removed | **Removed**, for the same reason; refused unless `0`. Use `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` (whole idle rooms) |
 | `LANGSTROTH_RELAY_MAX_STORE_BYTES` | `0` (unbounded) | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs, per-workspace overhead). Writes past it answer `507`. Set it below your memory limit on any relay reachable by untrusted clients |
 | `LANGSTROTH_RELAY_MAX_BODY_BYTES` | `4194304` (4 MiB) | max JSON request-body size |
 | `LANGSTROTH_RELAY_MAX_LIST_BYTES` | `16777216` (16 MiB) | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (`0` = unbounded). At least one row is always returned |
@@ -128,6 +128,22 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
 | `LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
 | `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
+
+**Community limits** (all off by default; see [Community limits](#community-limits))
+
+| Var | Default | Meaning |
+|---|---|---|
+| `LANGSTROTH_RELAY_ROOM_MAX_BYTES` | `0` (off) | stored bytes per room (envelope bodies + key rotations); `507` past it |
+| `LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES` | `0` (off) | stored envelopes per room; `507` past it |
+| `LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES` | `0` (off) | room bytes across the relay, both stores (Postgres re-reads the sum every 10 s); `507` |
+| `LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT` | `0` (off) | rooms a client may create (token subject, else address; IPv6 /64); `429` past it. A room is created by its first write of any kind. A client that rotates addresses gets a fresh count per address, so pair it with `LANGSTROTH_RELAY_MAX_ROOMS` |
+| `LANGSTROTH_RELAY_MAX_ROOMS` | `0` (off) | rooms across the relay, both stores (Postgres re-reads the count every 10 s); `507` `total_rooms` past it. The bound that holds when clients rotate addresses, and the only one on rooms that hold no envelopes |
+| `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` | `0` (off) | delete a room's envelopes, key rotations and device blobs once nothing has been appended to it for N days; its sequence and roster stay |
+| `LANGSTROTH_RELAY_IP_RATE` / `_BURST` | off / 2x rate | every request per client (except `/`, `/v1/health`, `/metrics`); `429` with `Retry-After` |
+| `LANGSTROTH_RELAY_ROOM_RATE` / `_BURST` | off / 2x rate | every request to one room, all clients together; `429` with `Retry-After` |
+| `LANGSTROTH_RELAY_TUNNEL_PUSH_RATE` / `_BURST` / `_PER_DAY` | `1` / `5` / `2000` | pushes per tunnel host (`0` = no limit) |
+| `LANGSTROTH_RELAY_TENANCY` | unset | tenancy config JSON, normally from `LANGSTROTH_RELAY_TENANCY_FILE`; see [Tenancy](#tenancy-several-organisations-on-one-relay) |
+| `LANGSTROTH_RELAY_METRICS_MAX_TENANTS` | `50` | tenants reported under their own metrics label; the rest are `tenant="_other"` |
 
 **Rate and concurrency limits** (a rate of `0` disables that limit)
 
@@ -246,24 +262,105 @@ relay.example.com {
 
 #### Envelope retention
 
-The in-memory / snapshot store bounds how many envelopes it keeps per workspace
-so a long-running self-host doesn't grow without limit and eventually OOM. By
-default each workspace retains its newest `LANGSTROTH_RELAY_MAX_ENVELOPES` (50 000)
-envelopes; set `LANGSTROTH_RELAY_RETENTION_DAYS` to also drop envelopes older than N
-days. Set either to `0` to disable that bound (`0` for both = unbounded, the old
-behavior).
+The relay never removes envelopes from a room it still holds. A Ligus client
+rebuilds a workspace by folding its whole envelope log from the founder's
+signed seed (seq 1) and does not backfill from peers, so trimming the front of
+a room's log permanently breaks every device that joins afterwards. The
+per-envelope bounds `LANGSTROTH_RELAY_MAX_ENVELOPES` (once on by default at
+50 000) and `LANGSTROTH_RELAY_RETENTION_DAYS` are removed; the relay refuses to
+start while either is set to anything but `0`.
 
-**Tradeoff (vs. offline catch-up):** clients sync by fetching everything after a
-cursor (`?after=seq`). The relay is a cache of *recent* E2EE traffic, not the
-source of truth — pruning below a cursor means a device offline longer than the
-retention window can't replay the gap from the relay and must re-sync from a peer
-that still holds history. Size the bounds above your expected offline window.
+Bound storage instead with the room quotas (`507` refusals, never eviction),
+`LANGSTROTH_RELAY_MAX_STORE_BYTES` on the memory store, and whole-room expiry
+(`LANGSTROTH_RELAY_ROOM_RETENTION_DAYS`); see [Community limits](#community-limits).
 
-The Postgres backend applies the same two settings, hourly rather than on write
-(so a workspace can briefly exceed the cap). Its history is on disk rather than
-in RAM, so it can afford a much larger cap; for unbounded history set
-`LANGSTROTH_RELAY_MAX_ENVELOPES=0` (and leave `LANGSTROTH_RELAY_RETENTION_DAYS` at `0`)
-and watch the database's disk.
+### Community limits
+
+For a relay anyone may use (a public relay on one machine). Every limit is
+off by default; `deploy/fly.toml` has a commented community profile with
+values for one small VM, and the Helm chart sets them under `limits.*`.
+
+- **Quotas refuse, they don't evict.** A Ligus client rebuilds a workspace by
+  folding its whole envelope log from the founder's seed, and the relay
+  can't tell a seed or a roster change from a chat message (all are
+  ciphertext). So a full room answers `507` to new writes and stays
+  readable; nothing is pushed out. A re-push of an envelope already stored
+  still gets its seq.
+- **Retention is per room.** `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` expires a
+  whole room that nobody has appended to for N days. A room in use keeps
+  every envelope however old. An expired room keeps its sequence counter
+  (returning devices' cursors stay valid) and, with membership, its roster.
+- Quotas are checked atomically with the write (the memory store's lock;
+  the Postgres append transaction, with per-room usage in `relay_rooms`).
+- Every refusal is counted in `hive_relay_limit_rejections_total{limit}`;
+  `hive_relay_rooms` and `hive_relay_room_bytes` report usage.
+
+#### Refusals: 429 and 507
+
+Every `429` and `507` the relay sends (any route, any limit) carries a
+`Retry-After` header in whole seconds (at least 1) and a JSON body with a
+stable code:
+
+```json
+{"error": "room_bytes", "message": "room storage quota reached", "retryAfter": 3600}
+```
+
+`error` is the contract; `message` is for people and may change. Clients
+should switch on `error`, and treat an unknown code by its status.
+
+| Status | `error` | Meaning | What a client should do |
+|---|---|---|---|
+| 429 | `ip_rate`, `room_rate`, `tenant_rate`, `write_rate`, `read_rate`, `room_writer_rate`, `contact_create_rate`, `contact_write_rate`, `contact_drop_rate`, `rate_limited` | a request rate | wait `Retry-After` (the time until a token is free), then retry the same request; keep the outbox |
+| 429 | `sse_streams` | too many open event streams from this client | close a stream; retry after `Retry-After` |
+| 429 | `pair_lockout` | too many failed pairing-code guesses | stop guessing until `Retry-After` |
+| 429 | `client_rooms` | this client created its quota of rooms | don't retry automatically: tell the user; it clears when one of its rooms expires or is deleted |
+| 429 | `too_many_pending` | GitHub routes: too many pending friend requests | as `client_rooms` |
+| 507 | `room_bytes`, `room_envelopes` | this room is full | stop writing to this room and tell the user; the room stays readable; `Retry-After` is an hour |
+| 507 | `keyring` | the room's key-rotation log is full | as `room_bytes` |
+| 507 | `tenant_bytes`, `tenant_rooms` | the tenant's quota (tenancy) | tell the user to contact their admin; `Retry-After` is an hour |
+| 507 | `store_bytes`, `total_bytes`, `contacts_full` | the relay itself is full | back off and retry after `Retry-After` (ten minutes) |
+
+A refused write stored nothing, so retrying it later is always safe; an
+envelope re-push keeps its idempotency key and gets its original seq.
+
+### Tenancy: several organisations on one relay
+
+Off by default. With `LANGSTROTH_RELAY_TENANCY` (JSON, normally read from a
+file through `LANGSTROTH_RELAY_TENANCY_FILE`) one process serves several
+tenants that don't trust each other. Design and rules: [docs/tenancy.md](docs/tenancy.md).
+
+```json
+{"defaults": {"max_bytes": 10737418240, "rate": 200, "burst": 400},
+ "tenants": [
+   {"id": "acme", "issuer_pubkeys": ["<acme's langstroth-auth public key>"], "shared_issuer": false,
+    "admin_token_sha256": "<sha256 hex of acme's admin token>", "limits": {"max_rooms": 500}},
+   {"id": "home"}]}
+```
+
+- **The tenant comes only from a verified token**: a signed `hrt1` token
+  whose `tid` names a configured tenant, signed by that tenant's
+  `issuer_pubkeys` or (when `shared_issuer` is on, the default) by
+  `LANGSTROTH_RELAY_TOKEN_PUBKEY`. A token from tenant A's issuer that names
+  tenant B gets `401`; headers and query parameters never name a tenant.
+  The open policy and `LANGSTROTH_RELAY_ACCESS_TOKENS` can't be used.
+- **Isolation:** rooms and contacts are stored under `<tenant>/<id>`, so two
+  tenants using the same workspace id get unrelated rooms; pairing codes are
+  drawn and resolved per tenant; a tunnel host is bound to the tenant of its
+  registration token, for good.
+- **Per-tenant limits:** `max_bytes` and `max_rooms` (`507`),
+  `room_max_bytes`, `room_max_envelopes`, `rate`/`burst` (`429`),
+  `max_pairings`, `max_hosts`, `push_per_day`.
+- **Tenant admin** (only with tenancy): `GET /v1/tenant` (usage and limits),
+  `GET /v1/tenant/rooms?after=&limit=` (the tenant's rooms), `DELETE
+  /v1/tenant/rooms/{id}` (purge one), admitted by a tenant token with the
+  `tenant_admin` cap or the tenant's static admin token.
+- **Metrics** per tenant (`hive_relay_tenant_requests_total`,
+  `hive_relay_tenant_limit_rejections_total`, `hive_relay_tenant_bytes`,
+  `hive_relay_tenant_rooms`), labelled by configured tenant id only and
+  capped by `LANGSTROTH_RELAY_METRICS_MAX_TENANTS`.
+- Still one process (single replica): this is logical isolation, not HA.
+  The operator still sees every tenant's metadata. Turning tenancy on for a
+  relay that already holds rooms hides them (they aren't under a tenant).
 
 ### Envelope paging
 

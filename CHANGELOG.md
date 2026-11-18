@@ -66,6 +66,40 @@ route or database table changes.
 
 ### Added
 
+- **Community limits** (all off by default): per-room byte and envelope
+  quotas (`LANGSTROTH_RELAY_ROOM_MAX_BYTES`, `_ROOM_MAX_ENVELOPES`), a total
+  room-byte cap on both stores (`_MAX_TOTAL_ROOM_BYTES`), rooms per client
+  (`_MAX_ROOMS_PER_CLIENT`), rooms across the relay (`_MAX_ROOMS`, the bound
+  that holds when clients rotate addresses), per-client and per-room request rates
+  (`_IP_RATE`/`_BURST`, `_ROOM_RATE`/`_BURST`) and configurable tunnel push
+  limits (`_TUNNEL_PUSH_RATE`/`_BURST`/`_PER_DAY`, defaults unchanged).
+  Storage quotas answer `507` and never evict; rates answer `429`. Every
+  `429` and `507` (all routes) carries `Retry-After` and a JSON body
+  `{"error","message","retryAfter"}` with a stable code (README, "Refusals:
+  429 and 507"); before, most were free text with no `Retry-After`. New
+  metrics `hive_relay_limit_rejections_total{limit}`,
+  `hive_relay_rooms`, `hive_relay_room_bytes`. `deploy/fly.toml` documents a
+  community profile (commented out). Helm: `limits.*`.
+- **Idle-room retention**, `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` (off by
+  default): deletes a whole room nobody has appended to for N days, keeping
+  its sequence counter and roster. A room in use keeps its whole log: Ligus
+  clients rebuild a workspace from its first envelope.
+- **Tenancy** (`LANGSTROTH_RELAY_TENANCY`, normally `_TENANCY_FILE`; off by
+  default): several organisations on one relay process. The tenant comes
+  only from a verified token (`tid` plus that tenant's issuer key or the
+  shared key); rooms and contacts are stored per tenant, pairing codes are
+  per tenant, tunnel hosts are bound to their registration tenant;
+  per-tenant quotas, rates, pairing, host and push limits; `/v1/tenant`
+  admin routes (new, only with tenancy); tenant metrics with a label cap
+  (`LANGSTROTH_RELAY_METRICS_MAX_TENANTS`); tenancy requires
+  `LANGSTROTH_RELAY_METRICS_TOKEN`. See `docs/tenancy.md`. Helm:
+  `tenancy.existingSecret` (mounted as a file). Without tenancy every `/v1`
+  route is byte-identical.
+- Postgres: `relay_rooms` and `relay_tenant_usage` (with a one-time backfill
+  from existing envelopes and key rotations, recorded in
+  `relay_migrations`) and `relay_tunnel_hosts.tenant`, added in place by the
+  advisory-locked migration.
+
 - **Phone revocation over HTTPS.** `POST /v1/tunnel/revoke` (new, additive):
   a host revokes one of its phones with a request signed by its registered
   host key, without needing its control connection, and learns what was done
@@ -161,6 +195,15 @@ route or database table changes.
 
 ### Removed
 
+- **Per-envelope eviction**: `LANGSTROTH_RELAY_MAX_ENVELOPES` (a rolling
+  window per room, on by default at 50 000) and
+  `LANGSTROTH_RELAY_RETENTION_DAYS`. Both dropped a room's oldest envelopes,
+  including the founder's seed, which permanently broke every device that
+  joined the room afterwards (clients fold from seq 1 and never backfill).
+  The memory store no longer trims on write and Postgres no longer prunes
+  hourly; a relay that relied on the default stops evicting when it runs
+  this release. The relay refuses to start while either is set to anything
+  but `0`. Use the room quotas and `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS`.
 - **The downstream build hooks** `MainWith`, `Extension`, `Addon` and
   `Assemble`, and the `Options.TunnelBilling` override. The relay binary is
   `Main()`; a custom build still composes `New(Options{...})` with the seams

@@ -56,6 +56,8 @@ func Main() {
 	fatalIf(removedEnvError(os.Environ()))
 	fatalIf(secretFilesConfigError(os.Getenv))
 	fatalIf(entitlementConfigError())
+	fatalIf(tenancyConfigError())
+	fatalIf(evictionConfigError())
 	fatalIf(routesConfigError(getenv))
 	fatalIf(apnsWithoutTunnelError(getenv))
 
@@ -78,8 +80,15 @@ func Main() {
 
 	// Bound envelope growth on backends that don't prune inline (Postgres). The
 	// in-memory store already enforces the same caps at write time.
-	if pruner, ok := store.(envelopePruner); ok {
+	if pruner, ok := store.(housekeepingPruner); ok {
 		go pruneLoop(pruner, stopFlush)
+	}
+	// Idle rooms (LANGSTROTH_RELAY_ROOM_RETENTION_DAYS): a whole room at a
+	// time, never envelopes out of a room in use (docs/tenancy.md).
+	lim := communityLimitsFromEnv()
+	lim.log()
+	if rs, ok := store.(roomStore); ok && lim.roomRetention > 0 {
+		go roomRetentionLoop(rs, lim.roomRetention, stopFlush)
 	}
 	// Expired contact records and old drops, on every backend (the memory
 	// store also hides expired records on access).
@@ -180,19 +189,16 @@ func flushLoop(store Store, stop <-chan struct{}) {
 	}
 }
 
-// envelopePruner is implemented by backends whose durable logs need periodic
-// pruning (Postgres). The in-memory store prunes inline at write time instead.
-// Beyond envelopes, the loop also sweeps the inbox and terminal friend requests
-// (P2-13). The keyring is not pruned: it is bounded by refusing rotations past
-// its caps at write time, so real rotations are never evicted.
-type envelopePruner interface {
-	PruneEnvelopes(ctx context.Context, maxEnvelopes int, maxAge time.Duration) (int64, error)
+// housekeepingPruner is implemented by backends whose side tables need
+// periodic pruning (Postgres): the inbox and terminal friend requests
+// (P2-13). Workspace envelopes are never pruned out of a room (eviction.go);
+// the keyring is bounded by refusing rotations past its caps.
+type housekeepingPruner interface {
 	PruneInbox(ctx context.Context, maxRows int, maxAge time.Duration) (int64, error)
 	PruneFriendRequests(ctx context.Context, maxAge time.Duration) (int64, error)
 }
 
-func pruneLoop(pruner envelopePruner, stop <-chan struct{}) {
-	maxEnv, maxAge := retentionFromEnv()
+func pruneLoop(pruner housekeepingPruner, stop <-chan struct{}) {
 	inboxAge := daysEnv("LANGSTROTH_RELAY_INBOX_RETENTION_DAYS", defaultInboxMaxAgeDays)
 	friendReqAge := daysEnv("LANGSTROTH_RELAY_FRIEND_REQ_RETENTION_DAYS", defaultFriendReqMaxAgeDays)
 	tick := time.NewTicker(time.Hour)
@@ -202,9 +208,6 @@ func pruneLoop(pruner envelopePruner, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-tick.C:
-			runPrune("envelopes", func() (int64, error) {
-				return pruner.PruneEnvelopes(context.Background(), maxEnv, maxAge)
-			})
 			runPrune("inbox", func() (int64, error) {
 				return pruner.PruneInbox(context.Background(), defaultInboxMaxRows, inboxAge)
 			})

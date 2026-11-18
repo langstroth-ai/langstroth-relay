@@ -82,7 +82,7 @@ func TestKeyringHTTPCapAndSize(t *testing.T) {
 
 // The prune loop no longer evicts keyring rows oldest-first.
 func TestPruneLoopHasNoKeyringEviction(t *testing.T) {
-	var p envelopePruner = (*postgresStore)(nil)
+	var p housekeepingPruner = (*postgresStore)(nil)
 	if _, ok := p.(interface {
 		PruneKeyring(context.Context, int) (int64, error)
 	}); ok {

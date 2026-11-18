@@ -129,6 +129,13 @@ type Server struct {
 	contactCfg contactConfig
 	contactLim contactLimiters
 
+	lim     communityLimits // room quotas, request rates, retention (limits.go)
+	tenancy *tenancyConf    // nil = tenancy off (tenancy.go)
+
+	pairCount map[string]int // live pairing codes per tenant (tenancy only)
+
+	roomGauge roomGaugeCache // /metrics room totals, re-read at most every roomGaugeTTL
+
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
 	healthErr     error
 	healthChecked time.Time
@@ -137,7 +144,11 @@ type Server struct {
 type pairing struct {
 	payload   string
 	expiresAt time.Time
+	tenant    string // tenancy: the tenant the code lives in
 }
+
+// newPairCode draws a pairing code (a variable so tests can force collisions).
+var newPairCode = randomPairCode
 
 // pairAttempt tracks a client's failed pairing-code guesses inside one window.
 type pairAttempt struct {
@@ -182,6 +193,24 @@ func New(o Options) *Server {
 	if metricsToken != "" {
 		s.metricsTokHash = sha256hex(metricsToken)
 	}
+	s.lim = communityLimitsFromEnv()
+	s.pairCount = map[string]int{}
+	tc, terr := tenancyFromEnv()
+	switch {
+	case terr != nil:
+		// Main refuses to start on this (tenancyConfigError); a library
+		// caller gets a relay that admits nobody rather than an open one.
+		slog.Error("tenancy config refused; denying every token", "error", terr)
+		s.entitlement = entitlementPolicy{kind: entDeny}
+	case tc != nil:
+		s.tenancy = tc
+		s.entitlement = tenancyVerifier{tc: tc}
+	}
+	var tenantIDs []string
+	if s.tenancy != nil {
+		tenantIDs = s.tenancy.ids
+	}
+	resetLimitStats(int(envInt64("LANGSTROTH_RELAY_METRICS_MAX_TENANTS", defaultMetricsMaxTenants)), tenantIDs)
 	s.githubRoutes = o.GitHubRoutes || githubRoutesFromEnv()
 	s.contactCfg = contactConfigFromEnv()
 	s.contactLim = contactLimitersFromEnv()
@@ -213,6 +242,7 @@ func New(o Options) *Server {
 			push = pushSenderFromEnv()
 		}
 		s.tunnel = newTunnelHub(s.store, tunnelPolicy, push)
+		s.tunnel.tenancy = s.tenancy
 	}
 	// When membership is on, default the guards to the built-in roster guard
 	// (unless a downstream build supplied its own). The guard is content-blind
@@ -256,7 +286,10 @@ func (s *Server) Handler() http.Handler {
 	// Public landing page at the exact root, and the health check.
 	mux.HandleFunc("GET /{$}", s.statusPage)
 	mux.HandleFunc("GET /v1/health", s.health)
-	mux.HandleFunc("GET /metrics", s.guardMetrics(m.handler))
+	mux.HandleFunc("GET /metrics", s.guardMetrics(func(w http.ResponseWriter, r *http.Request) {
+		m.handler(w, r)
+		s.writeLimitMetrics(r.Context(), w)
+	}))
 
 	mux.HandleFunc("POST /v1/workspaces/{id}/envelopes", s.scoped(s.postEnvelope))
 	mux.HandleFunc("GET /v1/workspaces/{id}/envelopes", s.scoped(s.listEnvelopes))
@@ -300,6 +333,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/admin/users/{id}/disabled", s.adminSetDisabled)
 	mux.HandleFunc("DELETE /v1/admin/tokens/{id}", s.adminRevokeToken)
 
+	// Tenant admin scope (tenancy only; 404 otherwise).
+	if s.tenancy != nil {
+		s.registerTenantAdmin(mux)
+	}
+
 	// Relay tunnel (hive-tunnel/1). Off → unregistered, so /v1/tunnel/* is 404.
 	if s.tunnel != nil {
 		s.tunnel.register(mux)
@@ -333,8 +371,16 @@ func (s *Server) ShutdownTunnels() {
 // the verified claims in the request context for downstream enforcement.
 func (s *Server) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Per-client request rate (LANGSTROTH_RELAY_IP_RATE), before any
+		// authentication work, on every route but status, health and metrics.
+		if s.lim.ip != nil && limitedPath(r.URL.Path) {
+			if ok, wait := s.lim.ip.allowWait(clientKey(r)); !ok {
+				tooMany(w, limIPRate, "", wait, "rate limit exceeded")
+				return
+			}
+		}
 		if r.URL.Path == "/" || r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/v1/admin/") ||
-			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") {
+			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") || (s.tenancy != nil && (r.URL.Path == "/v1/tenant" || strings.HasPrefix(r.URL.Path, "/v1/tenant/"))) {
 			// The tunnel authenticates hosts and phones itself (signed
 			// challenges + host-signed credentials); a host's registration
 			// token is checked against this same access policy (tunnel_policy.go).
@@ -359,6 +405,27 @@ func (s *Server) gate(next http.Handler) http.Handler {
 		}
 		if claims != nil {
 			r = r.WithContext(context.WithValue(r.Context(), claimsCtxKey{}, claims))
+		}
+		// Tenancy: the tenant is the verified token's (tenancyVerifier
+		// admitted only a configured tid under one of its keys). Nothing in
+		// the request but the token can name it.
+		if s.tenancy != nil {
+			t := (*tenantConf)(nil)
+			if claims != nil {
+				t = s.tenancy.tenants[claims.Tid]
+			}
+			if t == nil {
+				http.Error(w, "relay requires a valid access token", http.StatusUnauthorized)
+				return
+			}
+			if t.rate != nil {
+				if ok, wait := t.rate.allowWait(t.id); !ok {
+					tooMany(w, limTenantRate, t.id, wait, "tenant rate limit exceeded")
+					return
+				}
+			}
+			countTenantRequest(t.id)
+			r = r.WithContext(withTenant(r.Context(), t))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -394,8 +461,7 @@ func (s *Server) enforceWrite(w http.ResponseWriter, r *http.Request, workspace 
 func (s *Server) enforceRead(w http.ResponseWriter, r *http.Request, workspace string) bool {
 	// Per-client read rate (keyed like the write limiter), so one client can't
 	// loop the list routes and keep the store busy for everyone else.
-	if !s.readLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.readLimiter, clientKey(r), refReadRate, "rate limit exceeded") {
 		return false
 	}
 	if _, ok := s.entitlement.Allow(bearerToken(r), nowUnix()); !ok {
@@ -478,11 +544,7 @@ func (s *Server) guardMetrics(next http.HandlerFunc) http.HandlerFunc {
 // no unauth write path is left unbounded (P2-12). Returns false (after writing
 // 429) when the caller is over the limit.
 func (s *Server) limitWrite(w http.ResponseWriter, r *http.Request) bool {
-	if !s.pushLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-		return false
-	}
-	return true
+	return !rateRefused(w, s.pushLimiter, clientKey(r), refWriteRate, "rate limit exceeded")
 }
 
 func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
@@ -494,8 +556,7 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 	// history (P1-6). Content-blind — keyed on the token subject or client
 	// IP, never the body.
 	id := r.PathValue("id")
-	if !s.wsWriterLimit.allow(id + "|" + writerTag(r.Context(), clientKey(r))) {
-		http.Error(w, "workspace write quota exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.wsWriterLimit, id+"|"+writerTag(r.Context(), clientKey(r)), refRoomWriterRate, "workspace write quota exceeded") {
 		return
 	}
 	var body json.RawMessage
@@ -600,7 +661,7 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	// client address), so one client can't hold every slot.
 	releaseClient, ok := s.sseClient.acquire(writerTag(r.Context(), clientKey(r)))
 	if !ok {
-		http.Error(w, "too many concurrent streams from this client", http.StatusTooManyRequests)
+		refuse(w, http.StatusTooManyRequests, refSSEStreams, "too many concurrent streams from this client", retrySSE)
 		return
 	}
 	defer releaseClient()
@@ -818,17 +879,28 @@ func (s *Server) createPairing(w http.ResponseWriter, r *http.Request) {
 	// live codes count against the cap.
 	if s.maxPairings > 0 && len(s.pairings) >= s.maxPairings {
 		s.pairMu.Unlock()
+		countLimit(limPairings, tenantID(r.Context()))
+		http.Error(w, "too many live pairings", http.StatusServiceUnavailable)
+		return
+	}
+	// Tenancy: codes live in the caller's tenant (drawn and looked up there
+	// only), and each tenant has its own cap on live codes.
+	tenant := tenantID(r.Context())
+	if t := tenantFrom(r.Context()); t != nil && t.limits.MaxPairings > 0 && s.pairCount[tenant] >= t.limits.MaxPairings {
+		s.pairMu.Unlock()
+		countLimit(limPairings, tenant)
 		http.Error(w, "too many live pairings", http.StatusServiceUnavailable)
 		return
 	}
 	var code string
 	for {
-		code = randomPairCode()
-		if _, exists := s.pairings[code]; !exists {
+		code = newPairCode()
+		if _, exists := s.pairings[tenantKey(r.Context(), code)]; !exists {
 			break
 		}
 	}
-	s.pairings[code] = pairing{payload: req.Payload, expiresAt: time.Now().Add(time.Duration(ttl) * time.Second)}
+	s.pairings[tenantKey(r.Context(), code)] = pairing{payload: req.Payload, expiresAt: time.Now().Add(time.Duration(ttl) * time.Second), tenant: tenant}
+	s.pairCount[tenant]++
 	s.pairMu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "expires_in": ttl})
@@ -841,19 +913,21 @@ func (s *Server) resolvePairing(w http.ResponseWriter, r *http.Request) {
 
 	s.pairMu.Lock()
 	if s.resolveBlockedLocked(client, now) {
+		wait := s.pairAttempts[client].resetAt.Sub(now)
 		s.pairMu.Unlock()
-		http.Error(w, "too many attempts", http.StatusTooManyRequests)
+		refuse(w, http.StatusTooManyRequests, refPairLockout, "too many attempts", wait)
 		return
 	}
 	s.sweepPairingsLocked(now)
-	p, ok := s.pairings[code]
+	key := tenantKey(r.Context(), code)
+	p, ok := s.pairings[key]
 	if ok && !p.expiresAt.After(now) {
 		ok = false // expired, not yet swept
 	}
 	if ok {
 		// Single-use: the first successful resolve consumes the code, so a
 		// code seen over a shoulder or in a log can't be replayed.
-		delete(s.pairings, code)
+		s.deletePairingLocked(key)
 	} else {
 		s.noteResolveFailureLocked(client, now)
 	}
@@ -884,8 +958,21 @@ func (s *Server) prunePairings() {
 	now := time.Now()
 	for code, p := range s.pairings {
 		if !p.expiresAt.After(now) {
-			delete(s.pairings, code)
+			s.deletePairingLocked(code)
 		}
+	}
+}
+
+// deletePairingLocked drops one code and its tenant's count. Caller holds
+// pairMu.
+func (s *Server) deletePairingLocked(key string) {
+	p, ok := s.pairings[key]
+	if !ok {
+		return
+	}
+	delete(s.pairings, key)
+	if s.pairCount[p.tenant]--; s.pairCount[p.tenant] <= 0 {
+		delete(s.pairCount, p.tenant)
 	}
 }
 
@@ -1051,8 +1138,7 @@ func (s *Server) accountInviteCreate(w http.ResponseWriter, r *http.Request) {
 	// Per-(sender,recipient) invite rate limit so one account can't flood another's
 	// inbox with workspace invites (P1-7). Generous burst (default 10) then a slow
 	// sustained rate; keyed on the verified sender + target handle.
-	if !s.inviteLimiter.allow(fromAccount + "->" + lower(toLogin)) {
-		http.Error(w, "too many invites to this user", http.StatusTooManyRequests)
+	if rateRefused(w, s.inviteLimiter, fromAccount+"->"+lower(toLogin), refRateLimited, "too many invites to this user") {
 		return
 	}
 	toAccount, found, err := s.store.AccountKeyForLogin(r.Context(), toLogin)
@@ -1282,8 +1368,7 @@ func (s *Server) requireGitHub(w http.ResponseWriter, r *http.Request) (*githubU
 	// friends) so a flood can't be amplified into one outbound api.github.com call
 	// per request, and to throttle bulk directory / membership enumeration (P1-8,
 	// P2-14). Generous (default 30/s, burst 120); env-tunable.
-	if !s.ghLimiter.allow(clientKey(r)) {
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	if rateRefused(w, s.ghLimiter, clientKey(r), refRateLimited, "rate limit exceeded") {
 		return nil, false
 	}
 	user, err := s.verifyCached(r.Context(), token)
@@ -1424,14 +1509,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_, _ = w.Write(buf)
 }
 
-// storeErr writes 500 and returns true if a backend error occurred.
+// storeErr writes the response for a store error (507/429 for a quota,
+// else 500) and returns true if there was one.
 func storeErr(w http.ResponseWriter, err error) bool {
-	if errors.Is(err, ErrKeyringFull) {
-		http.Error(w, "workspace keyring is full", http.StatusInsufficientStorage)
-		return true
-	}
-	if errors.Is(err, ErrStoreFull) {
-		http.Error(w, "relay storage is full", http.StatusInsufficientStorage)
+	if status, code, msg, ok := quotaStatus(err); ok {
+		refuse(w, status, code, msg, quotaRetry(code))
 		return true
 	}
 	if err != nil {
@@ -1461,6 +1543,10 @@ func friendErr(w http.ResponseWriter, err error) bool {
 		status = http.StatusForbidden
 	case errors.Is(err, ErrTooManyPending):
 		status = http.StatusTooManyRequests
+	}
+	if status == http.StatusTooManyRequests {
+		refuse(w, status, refTooManyPending, err.Error(), time.Minute)
+		return true
 	}
 	if status == http.StatusInternalServerError {
 		// Not one of the friend graph's own refusals: a store error, which may
