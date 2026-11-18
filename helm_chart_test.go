@@ -437,3 +437,52 @@ func TestChartLimitsAndTenancy(t *testing.T) {
 		t.Fatalf("tenancy without a metrics token must fail, got %q", msg)
 	}
 }
+
+// The blob channel: on by default with the binary's defaults (no variables
+// rendered), values map to LANGSTROTH_RELAY_BLOB_*, enabled=false turns the
+// routes off, and the ingress body limit follows the blob size so a proxy
+// doesn't refuse attachments the relay accepts.
+func TestChartBlobs(t *testing.T) {
+	pub := []string{"--set", "externalDatabase.url=postgres://u:p@db/r", "--set", "ingress.enabled=true",
+		"--set", "ingress.tls.secretName=relay-tls", "--set", "clientIP.trustedProxies[0]=10.0.0.5/32",
+		"--set", "metrics.token.existingSecret=mt"}
+	ingressOf := func(out string) string {
+		for _, d := range docs(out) {
+			if strings.Contains(d, "kind: Ingress\n") {
+				return d
+			}
+		}
+		return ""
+	}
+	out := renderChart(t, pub...)
+	if cm := docOfKind(out, "ConfigMap", ""); strings.Contains(cm, "LANGSTROTH_RELAY_BLOB") {
+		t.Fatalf("default install must keep the binary's blob defaults:\n%s", cm)
+	}
+	if ing := ingressOf(out); !strings.Contains(ing, `proxy-body-size: "26214400"`) {
+		t.Fatalf("ingress body limit must match the default blob size:\n%s", ing)
+	}
+	out = renderChart(t, append(pub, "--set", "blobs.maxBytes=1048576", "--set", "blobs.roomMaxCount=50",
+		"--set", "blobs.writerMaxBytes=10485760", "--set", "blobs.retentionDays=7", "--set", "blobs.rate=0.5",
+		"--set", "blobs.totalMaxBytes=0")...)
+	cm := docOfKind(out, "ConfigMap", "")
+	for _, want := range []string{`LANGSTROTH_RELAY_BLOB_MAX_BYTES: "1048576"`, `LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT: "50"`,
+		`LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES: "10485760"`, `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS: "7"`,
+		`LANGSTROTH_RELAY_BLOB_RATE: "0.5"`, `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES: "0"`} {
+		if !strings.Contains(cm, want) {
+			t.Errorf("missing %s in:\n%s", want, cm)
+		}
+	}
+	if strings.Contains(cm, "LANGSTROTH_RELAY_BLOBS:") {
+		t.Fatal("blobs on must not render LANGSTROTH_RELAY_BLOBS")
+	}
+	if ing := ingressOf(out); !strings.Contains(ing, `proxy-body-size: "1048576"`) {
+		t.Fatalf("ingress body limit must follow blobs.maxBytes:\n%s", ing)
+	}
+	out = renderChart(t, append(pub, "--set", "blobs.enabled=false")...)
+	if cm := docOfKind(out, "ConfigMap", ""); !strings.Contains(cm, `LANGSTROTH_RELAY_BLOBS: "off"`) {
+		t.Fatalf("blobs.enabled=false must turn the routes off:\n%s", cm)
+	}
+	if ing := ingressOf(out); strings.Contains(ing, "proxy-body-size") {
+		t.Fatalf("no body-size override with blobs off:\n%s", ing)
+	}
+}

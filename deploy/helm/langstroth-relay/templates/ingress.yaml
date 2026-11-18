@@ -12,6 +12,10 @@ metadata:
   {{- if .Values.ingress.streamingDefaults }}
   {{- $ann = dict "nginx.ingress.kubernetes.io/proxy-read-timeout" "3600" "nginx.ingress.kubernetes.io/proxy-send-timeout" "3600" "nginx.ingress.kubernetes.io/proxy-buffering" "off" "alb.ingress.kubernetes.io/load-balancer-attributes" "idle_timeout.timeout_seconds=3600" -}}
   {{- end }}
+  {{- if and .Values.blobs.enabled .Values.ingress.streamingDefaults }}
+  {{- $max := .Values.blobs.maxBytes | default 26214400 | int64 }}
+  {{- $_ := set $ann "nginx.ingress.kubernetes.io/proxy-body-size" (toString $max) }}
+  {{- end }}
   {{- $ann = merge (deepCopy (default (dict) .Values.ingress.annotations)) $ann }}
   {{- with $ann }}
   annotations:
