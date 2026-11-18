@@ -96,9 +96,24 @@ fi
 # --- Relay settings directory (config.existingSecret) -------------------------
 if [ "$CHARTNAME" = langstroth-relay ]; then
   n="$FULL-env"
-  # A Secret made before the Langstroth rename holds LIGUS_RELAY_METRICS_TOKEN;
-  # the relay still reads that name, so it is left as it is.
-  if exists "$n"; then result "$n" exists LANGSTROTH_RELAY_METRICS_TOKEN "left unchanged"
+  if exists "$n"; then
+    # A Secret made before the Langstroth rename holds
+    # LIGUS_RELAY_METRICS_TOKEN, a name the relay no longer reads and refuses
+    # to start with: move the value to the new key (through a patch file,
+    # never argv or output).
+    old=$(k -n "$NS" get secret "$n" -o jsonpath='{.data.LIGUS_RELAY_METRICS_TOKEN}' 2>/dev/null || true)
+    if [ -n "$old" ]; then
+      cur=$(k -n "$NS" get secret "$n" -o jsonpath='{.data.LANGSTROTH_RELAY_METRICS_TOKEN}' 2>/dev/null || true)
+      ( umask 077
+        if [ -n "$cur" ]; then printf '{"data":{"LIGUS_RELAY_METRICS_TOKEN":null}}' >"$TMP/patch.json"
+        else printf '{"data":{"LANGSTROTH_RELAY_METRICS_TOKEN":"%s","LIGUS_RELAY_METRICS_TOKEN":null}}' "$old" >"$TMP/patch.json"; fi )
+      old='' cur=''
+      k -n "$NS" patch secret "$n" --type merge --patch-file "$TMP/patch.json" >/dev/null
+      rm -f "$TMP/patch.json"
+      result "$n" updated LANGSTROTH_RELAY_METRICS_TOKEN "renamed from LIGUS_RELAY_METRICS_TOKEN"
+    else
+      result "$n" exists LANGSTROTH_RELAY_METRICS_TOKEN "left unchanged"
+    fi
   else
     rand_hex 32 >"$TMP/metrics"
     create_secret "$n" "LANGSTROTH_RELAY_METRICS_TOKEN=$TMP/metrics"
@@ -113,7 +128,8 @@ if [ "$CHARTNAME" = langstroth-auth ]; then
     PUBKEY=$(k -n "$NS" get secret "$n" -o jsonpath='{.metadata.annotations.ligus\.ai/public-key}' 2>/dev/null || true)
     result "$n" exists signing-key "left unchanged"
   else
-    pick_env AUTH_BIN LANGSTROTH_AUTH_BIN LIGUS_AUTH_BIN
+    [ -z "${LIGUS_AUTH_BIN+x}" ] || die_usage "LIGUS_AUTH_BIN is no longer read: use LANGSTROTH_AUTH_BIN"
+    AUTH_BIN=${LANGSTROTH_AUTH_BIN:-}
     if [ -n "$AUTH_BIN" ]; then
       out=$("$AUTH_BIN" keygen --out "$TMP/signing-key")
     elif command -v go >/dev/null 2>&1; then

@@ -125,9 +125,7 @@ if [ "$CHARTNAME" = langstroth-relay ]; then
       check metrics-gated fail "/metrics answers without a token" "set LANGSTROTH_RELAY_METRICS_TOKEN in the $FULL-env Secret (bootstrap-secrets.sh does)"
     else
       # The token goes to curl through a header file, never argv.
-      # LIGUS_RELAY_METRICS_TOKEN: a Secret made before the Langstroth rename.
-      if { k -n "$NS" get secret "$FULL-env" -o jsonpath='{.data.LANGSTROTH_RELAY_METRICS_TOKEN}' 2>/dev/null | base64 -d >"$TMP/tok" 2>/dev/null && [ -s "$TMP/tok" ]; } ||
-        { k -n "$NS" get secret "$FULL-env" -o jsonpath='{.data.LIGUS_RELAY_METRICS_TOKEN}' 2>/dev/null | base64 -d >"$TMP/tok" 2>/dev/null && [ -s "$TMP/tok" ]; }; then
+      if k -n "$NS" get secret "$FULL-env" -o jsonpath='{.data.LANGSTROTH_RELAY_METRICS_TOKEN}' 2>/dev/null | base64 -d >"$TMP/tok" 2>/dev/null && [ -s "$TMP/tok" ]; then
         { printf 'Authorization: Bearer '; cat "$TMP/tok"; printf '\n'; } >"$TMP/hdr"; rm -f "$TMP/tok"
         c2=$(code -H @"$TMP/hdr" "http://127.0.0.1:$LPORT/metrics")
         if [ "$c2" = 200 ]; then check metrics-gated pass "/metrics $c without the token, 200 with it"

@@ -15,9 +15,9 @@ import (
 // Pods starting together all create the schema; under the advisory lock none
 // of them fails on a catalog race.
 func TestPGConcurrentMigrations(t *testing.T) {
-	dsn := os.Getenv("LIGUS_AUTH_TEST_DATABASE_URL")
+	dsn := os.Getenv("LANGSTROTH_AUTH_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("set LIGUS_AUTH_TEST_DATABASE_URL to run Postgres tests")
+		t.Skip("set LANGSTROTH_AUTH_TEST_DATABASE_URL to run Postgres tests")
 	}
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, dsn)
@@ -60,12 +60,12 @@ func TestPGConcurrentMigrations(t *testing.T) {
 
 // Through a transaction-pooling PgBouncer the migration must not leave its
 // advisory lock held on a server connection (a session lock's unlock lands
-// on another one). LIGUS_AUTH_TEST_PGBOUNCER_URL: the same database through
+// on another one). LANGSTROTH_AUTH_TEST_PGBOUNCER_URL: the same database through
 // PgBouncer, pool_mode=transaction.
 func TestPGMigrationLeavesNoLockBehindAPooler(t *testing.T) {
-	dsn, pooled := os.Getenv("LIGUS_AUTH_TEST_DATABASE_URL"), os.Getenv("LIGUS_AUTH_TEST_PGBOUNCER_URL")
+	dsn, pooled := os.Getenv("LANGSTROTH_AUTH_TEST_DATABASE_URL"), os.Getenv("LANGSTROTH_AUTH_TEST_PGBOUNCER_URL")
 	if dsn == "" || pooled == "" {
-		t.Skip("set LIGUS_AUTH_TEST_DATABASE_URL and LIGUS_AUTH_TEST_PGBOUNCER_URL to run")
+		t.Skip("set LANGSTROTH_AUTH_TEST_DATABASE_URL and LANGSTROTH_AUTH_TEST_PGBOUNCER_URL to run")
 	}
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, dsn)

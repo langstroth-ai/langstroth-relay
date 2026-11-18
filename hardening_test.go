@@ -104,8 +104,8 @@ func TestVerifyCachedCollapsesAndScreens(t *testing.T) {
 // ── P1-6: per-(workspace,writer) append quota ─────────────────────────────────
 
 func TestWorkspaceWriterQuota(t *testing.T) {
-	t.Setenv("HIVE_RELAY_WS_WRITER_RATE", "0.0001")
-	t.Setenv("HIVE_RELAY_WS_WRITER_BURST", "2")
+	t.Setenv("LANGSTROTH_RELAY_WS_WRITER_RATE", "0.0001")
+	t.Setenv("LANGSTROTH_RELAY_WS_WRITER_BURST", "2")
 	ts := testServer(entitlementPolicy{kind: entOpen}, nil)
 	defer ts.Close()
 
@@ -124,7 +124,7 @@ func TestWorkspaceWriterQuota(t *testing.T) {
 // ── P2-12: live-pairing cap + write limiter on pairing ────────────────────────
 
 func TestLivePairingCap(t *testing.T) {
-	t.Setenv("HIVE_RELAY_MAX_PAIRINGS", "2")
+	t.Setenv("LANGSTROTH_RELAY_MAX_PAIRINGS", "2")
 	ts := testServer(entitlementPolicy{kind: entOpen}, nil)
 	defer ts.Close()
 
@@ -143,8 +143,8 @@ func TestLivePairingCap(t *testing.T) {
 // ── P1-7: per-(sender,recipient) invite rate limit ────────────────────────────
 
 func TestInviteRateLimit(t *testing.T) {
-	t.Setenv("HIVE_RELAY_INVITE_RATE", "0.0001")
-	t.Setenv("HIVE_RELAY_INVITE_BURST", "1")
+	t.Setenv("LANGSTROTH_RELAY_INVITE_RATE", "0.0001")
+	t.Setenv("LANGSTROTH_RELAY_INVITE_BURST", "1")
 	ts := testServer(entitlementPolicy{kind: entOpen}, nil)
 	defer ts.Close()
 
@@ -249,7 +249,7 @@ func TestReadGuardNilKeepsReadsOpen(t *testing.T) {
 // ── P3-15: /metrics ops credential + health ping cache ────────────────────────
 
 func TestMetricsOpsCredential(t *testing.T) {
-	t.Setenv("HIVE_RELAY_METRICS_TOKEN", "ops-secret")
+	t.Setenv("LANGSTROTH_RELAY_METRICS_TOKEN", "ops-secret")
 	ts := testServer(entitlementPolicy{kind: entOpen}, nil)
 	defer ts.Close()
 
@@ -296,11 +296,11 @@ func TestHealthPingCached(t *testing.T) {
 // ── P2-16: fail-fast when prod requires a DB but none is configured ────────────
 
 func TestBuildStoreRequireDB(t *testing.T) {
-	t.Setenv("HIVE_RELAY_REQUIRE_DB", "1")
+	t.Setenv("LANGSTROTH_RELAY_REQUIRE_DB", "1")
 	t.Setenv("DATABASE_URL", "")
-	t.Setenv("HIVE_RELAY_DATA_DIR", "")
+	t.Setenv("LANGSTROTH_RELAY_DATA_DIR", "")
 	if _, err := buildStore(context.Background()); err == nil {
-		t.Fatal("buildStore should refuse to boot without DATABASE_URL when HIVE_RELAY_REQUIRE_DB is set")
+		t.Fatal("buildStore should refuse to boot without DATABASE_URL when LANGSTROTH_RELAY_REQUIRE_DB is set")
 	}
 }
 

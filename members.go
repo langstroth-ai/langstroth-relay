@@ -12,7 +12,7 @@ package relay
 // treats it exactly like the open relay (content-blind forwarding). Once
 // claimed, the guard requires the caller's token subject to be a member with a
 // sufficient role. The whole feature (routes + guard) only turns on when the
-// operator sets HIVE_RELAY_MEMBERSHIP=1 (or Options.Membership), so the default
+// operator sets LANGSTROTH_RELAY_MEMBERSHIP=1 (or Options.Membership), so the default
 // self-host relay is byte-for-byte unchanged.
 
 import (
@@ -58,7 +58,7 @@ const (
 
 // membershipFromEnv reports whether the membership feature is enabled.
 func membershipFromEnv() bool {
-	v := strings.TrimSpace(getenv("HIVE_RELAY_MEMBERSHIP"))
+	v := strings.TrimSpace(getenv("LANGSTROTH_RELAY_MEMBERSHIP"))
 	return v == "1" || strings.EqualFold(v, "true")
 }
 

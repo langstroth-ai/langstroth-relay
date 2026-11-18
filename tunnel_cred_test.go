@@ -292,7 +292,7 @@ func TestTunnelPolicy_EnvModes(t *testing.T) {
 }
 
 func TestTunnel_OffByDefault(t *testing.T) {
-	t.Setenv("HIVE_RELAY_TUNNEL", "")
+	t.Setenv("LANGSTROTH_RELAY_TUNNEL", "")
 	srv := New(Options{Store: newMemoryStore()})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -308,7 +308,7 @@ func TestTunnel_OffByDefault(t *testing.T) {
 	}
 
 	// Token-gated relay: the tunnel bypasses the bearer gate but stays off (404).
-	t.Setenv("HIVE_RELAY_ACCESS_TOKENS", "secret")
+	t.Setenv("LANGSTROTH_RELAY_ACCESS_TOKENS", "secret")
 	srv = New(Options{Store: newMemoryStore()})
 	ts2 := httptest.NewServer(srv.Handler())
 	defer ts2.Close()
@@ -320,8 +320,8 @@ func TestTunnel_OffByDefault(t *testing.T) {
 }
 
 func TestTunnel_EnvOpenInfo(t *testing.T) {
-	t.Setenv("HIVE_RELAY_TUNNEL", "open")
-	t.Setenv("HIVE_RELAY_ACCESS_TOKENS", "secret") // gate on: tunnel still reachable without a bearer
+	t.Setenv("LANGSTROTH_RELAY_TUNNEL", "open")
+	t.Setenv("LANGSTROTH_RELAY_ACCESS_TOKENS", "secret") // gate on: tunnel still reachable without a bearer
 	srv := New(Options{Store: newMemoryStore()})
 	defer srv.ShutdownTunnels()
 	ts := httptest.NewServer(srv.Handler())

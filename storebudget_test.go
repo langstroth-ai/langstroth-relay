@@ -24,9 +24,9 @@ func blob(n int) string { return `"` + strings.Repeat("a", n) + `"` }
 // 4 MiB body cap) multiply by an unbounded number of workspace ids, so an
 // anonymous client on an open relay could grow the heap until the process was
 // OOM-killed, and the snapshot then reloaded the same data on restart. With
-// LIGUS_RELAY_MAX_STORE_BYTES set, writes past the budget get 507 instead.
+// LANGSTROTH_RELAY_MAX_STORE_BYTES set, writes past the budget get 507 instead.
 func TestMemoryStoreByteBudget(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_STORE_BYTES", "300000")
+	t.Setenv("LANGSTROTH_RELAY_MAX_STORE_BYTES", "300000")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	h := srv.Handler()
 	routes := []string{"envelopes", "keyring"}
@@ -44,7 +44,7 @@ func TestMemoryStoreByteBudget(t *testing.T) {
 		}
 	}
 	if !full {
-		t.Fatal("writes past LIGUS_RELAY_MAX_STORE_BYTES were accepted")
+		t.Fatal("writes past LANGSTROTH_RELAY_MAX_STORE_BYTES were accepted")
 	}
 	// Device blobs count too, and replacing one with a smaller one frees room.
 	dev := func(id string, n int) string { return fmt.Sprintf(`{"device_id":%q,"data":%s}`, id, blob(n)) }
@@ -54,9 +54,9 @@ func TestMemoryStoreByteBudget(t *testing.T) {
 }
 
 func TestMemoryStoreBytesAccounting(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_STORE_BYTES", "1000000")
-	t.Setenv("LIGUS_RELAY_MAX_ENVELOPES", "2")
-	t.Setenv("LIGUS_RELAY_MAX_DEVICE_BLOBS_PER_WS", "1")
+	t.Setenv("LANGSTROTH_RELAY_MAX_STORE_BYTES", "1000000")
+	t.Setenv("LANGSTROTH_RELAY_MAX_ENVELOPES", "2")
+	t.Setenv("LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS", "1")
 	s := newMemoryStore()
 	ctx := t.Context()
 	for i := 0; i < 5; i++ {
@@ -75,7 +75,7 @@ func TestMemoryStoreBytesAccounting(t *testing.T) {
 
 // Off by default: no budget.
 func TestMemoryStoreBudgetOffByDefault(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_STORE_BYTES", "")
+	t.Setenv("LANGSTROTH_RELAY_MAX_STORE_BYTES", "")
 	if s := newMemoryStore(); s.maxStoreBytes != 0 {
 		t.Fatalf("default budget = %d, want 0 (off)", s.maxStoreBytes)
 	}
@@ -83,9 +83,9 @@ func TestMemoryStoreBudgetOffByDefault(t *testing.T) {
 
 // F-06b: each new workspace costs heap (its maps and slices) that the byte
 // budget didn't count, so tiny writes to fresh workspace ids still grew the
-// heap without bound under LIGUS_RELAY_MAX_STORE_BYTES.
+// heap without bound under LANGSTROTH_RELAY_MAX_STORE_BYTES.
 func TestMemoryStoreBudgetCountsWorkspaces(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_STORE_BYTES", "20000")
+	t.Setenv("LANGSTROTH_RELAY_MAX_STORE_BYTES", "20000")
 	s := newMemoryStore()
 	ctx := t.Context()
 	full := false

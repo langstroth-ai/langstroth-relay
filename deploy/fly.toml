@@ -60,6 +60,6 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   size = "shared-cpu-1x"
   # 512MB headroom: the snapshot / in-memory store holds recent E2EE traffic + the
   # social graph in RAM. The public prod app runs on Postgres (DATABASE_URL secret)
-  # and sets HIVE_RELAY_REQUIRE_DB=1 (LANGSTROTH_RELAY_REQUIRE_DB also accepted) so it never silently falls back to the
+  # and sets LANGSTROTH_RELAY_REQUIRE_DB=1 so it never silently falls back to the
   # ephemeral in-memory store (see buildStore / deploy.yml).
   memory = "512mb"

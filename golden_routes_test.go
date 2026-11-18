@@ -20,7 +20,7 @@ import (
 // (timestamps, random request ids) are normalized before comparing.
 //
 // The GitHub social routes are deprecated and off by default since v0.3, so
-// this test turns them on (LIGUS_RELAY_GITHUB_ROUTES=on, ignored by v0.2.0) to
+// this test turns them on (LANGSTROTH_RELAY_GITHUB_ROUTES=on, ignored by v0.2.0) to
 // check that, when enabled for older clients, they still answer exactly as before.
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/golden_v1_routes.json")
 
@@ -155,7 +155,7 @@ func runGoldenRequests(t *testing.T) []goldenResp {
 }
 
 func TestExistingRoutesMatchGolden(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_GITHUB_ROUTES", "on")
+	t.Setenv("LANGSTROTH_RELAY_GITHUB_ROUTES", "on")
 	got := runGoldenRequests(t)
 	if *updateGolden {
 		b, _ := json.MarshalIndent(got, "", "  ")

@@ -174,8 +174,8 @@ func TestContactIDAndBodyValidation(t *testing.T) {
 }
 
 func TestContactSizeCaps(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACT_MAX_RECORD_BYTES", "1024")
-	t.Setenv("LIGUS_RELAY_CONTACT_MAX_DROP_BYTES", "512")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_MAX_RECORD_BYTES", "1024")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_MAX_DROP_BYTES", "512")
 	ts := contactTestServer(t, Options{})
 	cid, key := newCID(), newWriteKey()
 	u := ts.URL + "/v1/contacts/" + cid
@@ -270,10 +270,10 @@ func TestContactDropReadNeedsKey(t *testing.T) {
 }
 
 func TestContactDropBoxBounds(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_MAX_ROWS", "5")
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES", "100")
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_RATE", "0")
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_CID_RATE", "0")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS", "5")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES", "100")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_RATE", "0")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_CID_RATE", "0")
 	ts := contactTestServer(t, Options{})
 	cid, key := newCID(), newWriteKey()
 	u := ts.URL + "/v1/contacts/" + cid
@@ -334,9 +334,9 @@ func TestContactDropRateLimit(t *testing.T) {
 	}
 
 	// Per-box cap across senders.
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_RATE", "0")
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_CID_RATE", "0.001")
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_CID_BURST", "3")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_RATE", "0")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_CID_RATE", "0.001")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_CID_BURST", "3")
 	ts2 := contactTestServer(t, Options{})
 	u2 := ts2.URL + "/v1/contacts/" + cid
 	creq(t, "PUT", u2, putBody(`{}`, key))
@@ -351,10 +351,10 @@ func TestContactDropRateLimit(t *testing.T) {
 }
 
 func TestContactWriteAndCreateRateLimits(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_RATE", "0.001")
-	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_BURST", "2")
-	t.Setenv("LIGUS_RELAY_CONTACT_WRITE_RATE", "0.001")
-	t.Setenv("LIGUS_RELAY_CONTACT_WRITE_BURST", "2")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_CREATE_RATE", "0.001")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_CREATE_BURST", "2")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_WRITE_RATE", "0.001")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_WRITE_BURST", "2")
 	ts := contactTestServer(t, Options{})
 	key := newWriteKey()
 	cids := []string{newCID(), newCID(), newCID()}
@@ -483,10 +483,10 @@ func TestContactExpiry(t *testing.T) {
 	}
 }
 
-// The relay sets TTL from LIGUS_RELAY_CONTACT_TTL_DAYS and refreshes it on
+// The relay sets TTL from LANGSTROTH_RELAY_CONTACT_TTL_DAYS and refreshes it on
 // every update.
 func TestContactTTLFromEnv(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACT_TTL_DAYS", "2")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_TTL_DAYS", "2")
 	ts := contactTestServer(t, Options{})
 	_, _, body := creq(t, "PUT", ts.URL+"/v1/contacts/"+newCID(), putBody(`{}`, newWriteKey()))
 	var r struct{ UpdatedAt, ExpiresAt int64 }
@@ -496,8 +496,8 @@ func TestContactTTLFromEnv(t *testing.T) {
 }
 
 func TestContactCapacityAndStoreBudget(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_CONTACTS", "2")
-	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_RATE", "0")
+	t.Setenv("LANGSTROTH_RELAY_MAX_CONTACTS", "2")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_CREATE_RATE", "0")
 	ts := contactTestServer(t, Options{})
 	for i, want := range []int{200, 200, 507} {
 		if st, _, _ := creq(t, "PUT", ts.URL+"/v1/contacts/"+newCID(), putBody(`{}`, newWriteKey())); st != want {
@@ -584,12 +584,12 @@ func TestContactPrune(t *testing.T) {
 }
 
 func TestContactsOffAndStoreWithoutContacts(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACTS", "off")
+	t.Setenv("LANGSTROTH_RELAY_CONTACTS", "off")
 	ts := contactTestServer(t, Options{})
 	if st, _, _ := creq(t, "GET", ts.URL+"/v1/contacts/"+newCID(), ""); st != 404 {
 		t.Fatalf("contacts off: %d, want 404", st)
 	}
-	t.Setenv("LIGUS_RELAY_CONTACTS", "")
+	t.Setenv("LANGSTROTH_RELAY_CONTACTS", "")
 	// A downstream Store that doesn't implement ContactStore → 404, as on v0.2.
 	ts2 := contactTestServer(t, Options{Store: storeOnly{newMemoryStore()}})
 	if st, _, _ := creq(t, "GET", ts2.URL+"/v1/contacts/"+newCID(), ""); st != 404 {
@@ -637,10 +637,8 @@ var githubRouteSamples = []struct{ method, path string }{
 }
 
 func TestGitHubRoutesOffByDefault(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_GITHUB_ROUTES", "")
-	t.Setenv("HIVE_RELAY_GITHUB_ROUTES", "")
-	t.Setenv("LIGUS_RELAY_GITHUB_SOCIAL", "")
-	t.Setenv("HIVE_RELAY_GITHUB_SOCIAL", "")
+	t.Setenv("LANGSTROTH_RELAY_GITHUB_ROUTES", "")
+	t.Setenv("LANGSTROTH_RELAY_GITHUB_SOCIAL", "")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	called := 0
 	srv.verify = func(context.Context, string) (*githubUser, error) {
@@ -665,9 +663,9 @@ func TestGitHubRoutesOffByDefault(t *testing.T) {
 
 func TestGitHubRoutesEnabledByEnv(t *testing.T) {
 	for _, env := range []struct{ name, val string }{
-		{"LIGUS_RELAY_GITHUB_ROUTES", "on"},
-		{"HIVE_RELAY_GITHUB_ROUTES", "1"},
-		{"LIGUS_RELAY_GITHUB_SOCIAL", "1"},
+		{"LANGSTROTH_RELAY_GITHUB_ROUTES", "on"},
+		{"LANGSTROTH_RELAY_GITHUB_ROUTES", "1"},
+		{"LANGSTROTH_RELAY_GITHUB_SOCIAL", "1"},
 	} {
 		t.Run(env.name, func(t *testing.T) {
 			t.Setenv(env.name, env.val)
@@ -725,11 +723,11 @@ func TestContactRejectsInvalidUTF8(t *testing.T) {
 // An IPv6 client is keyed by its /64, but one /48 (a free tunnel-broker
 // allocation) holds 65536 of them. With only the /64 key, one /48 could create
 // 65536 x burst records at once: enough to fill the memory store's
-// LIGUS_RELAY_MAX_CONTACTS for every user, or a Postgres disk. Creates are
+// LANGSTROTH_RELAY_MAX_CONTACTS for every user, or a Postgres disk. Creates are
 // also limited per /48.
 func TestContactCreateLimitedPerIPv6Slash48(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_RATE", "0.001")
-	t.Setenv("LIGUS_RELAY_CONTACT_CREATE_BURST", "2")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_CREATE_RATE", "0.001")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_CREATE_BURST", "2")
 	h := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}}).Handler()
 	put := func(remote string) int {
 		req := httptest.NewRequest("PUT", "/v1/contacts/"+newCID(), strings.NewReader(putBody(`{}`, newWriteKey())))
@@ -758,7 +756,7 @@ func TestContactCreateLimitedPerIPv6Slash48(t *testing.T) {
 }
 
 // Reclaim-hold tombstones (an expired record's key hash) don't count toward
-// LIGUS_RELAY_MAX_CONTACTS: they hold no record or drops, and counting them
+// LANGSTROTH_RELAY_MAX_CONTACTS: they hold no record or drops, and counting them
 // would cut the store's capacity to live records by every record that expired
 // in the last hold period.
 func TestContactTombstonesOutsideMaxContacts(t *testing.T) {
@@ -797,7 +795,7 @@ func TestContactTombstonesOutsideMaxContacts(t *testing.T) {
 // from the heaviest sender first, so the flood evicts the flood and an unread
 // invite from another sender survives it.
 func TestContactDropFloodKeepsUnreadInvites(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_CONTACT_DROP_MAX_BOX_BYTES", "16384")
+	t.Setenv("LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES", "16384")
 	h := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}}).Handler()
 	do := func(method, path, remote, body string, hdr ...string) (int, string) {
 		var rdr io.Reader

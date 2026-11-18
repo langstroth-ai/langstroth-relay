@@ -22,10 +22,10 @@ func getBody(t *testing.T, h http.Handler, path string) (int, []byte) {
 // response. With up to 2 000 keyring rows and 1 000 device blobs per workspace,
 // each up to the 4 MiB body cap, one GET made the relay load and encode up to
 // 8 GiB (Postgres reads every row), so a writer could OOM the relay with a few
-// cheap reads. Responses are now bounded by LIGUS_RELAY_MAX_LIST_BYTES (keyring
+// cheap reads. Responses are now bounded by LANGSTROTH_RELAY_MAX_LIST_BYTES (keyring
 // keeps the newest rows).
 func checkListCap(t *testing.T, store Store) {
-	t.Setenv("LIGUS_RELAY_MAX_LIST_BYTES", "50000")
+	t.Setenv("LANGSTROTH_RELAY_MAX_LIST_BYTES", "50000")
 	srv := New(Options{Store: store, Entitlement: entitlementPolicy{kind: entOpen}})
 	h := srv.Handler()
 	for i := 0; i < 10; i++ {
@@ -70,7 +70,7 @@ func TestPG_ListResponsesBounded(t *testing.T) { checkListCap(t, pgStore(t)) }
 
 // Small rows are never dropped under the default cap.
 func TestListCapDefault(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_LIST_BYTES", "")
+	t.Setenv("LANGSTROTH_RELAY_MAX_LIST_BYTES", "")
 	if got := listCapFromEnv(); got != defaultMaxListBytes {
 		t.Fatalf("default list cap %d", got)
 	}

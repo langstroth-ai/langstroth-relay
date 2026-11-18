@@ -22,7 +22,7 @@ const routesTunnel = "tunnel"
 
 // routesConfigError validates LANGSTROTH_RELAY_ROUTES against the tunnel mode.
 func routesConfigError(get func(string) string) error {
-	switch r := strings.ToLower(strings.TrimSpace(get("HIVE_RELAY_ROUTES"))); r {
+	switch r := strings.ToLower(strings.TrimSpace(get("LANGSTROTH_RELAY_ROUTES"))); r {
 	case "", "all":
 		return nil
 	case routesTunnel:
@@ -36,7 +36,7 @@ func routesConfigError(get func(string) string) error {
 }
 
 func tunnelOff(get func(string) string) bool {
-	m := strings.ToLower(strings.TrimSpace(get("HIVE_RELAY_TUNNEL")))
+	m := strings.ToLower(strings.TrimSpace(get("LANGSTROTH_RELAY_TUNNEL")))
 	return m == "" || m == TunnelOff
 }
 
@@ -45,9 +45,9 @@ func apnsWithoutTunnelError(get func(string) string) error {
 	if !tunnelOff(get) {
 		return nil
 	}
-	for _, k := range []string{"HIVE_RELAY_APNS_KEY", "HIVE_RELAY_APNS_KEY_FILE", "HIVE_RELAY_APNS_KEY_ID", "HIVE_RELAY_APNS_TEAM_ID"} {
+	for _, k := range []string{"LANGSTROTH_RELAY_APNS_KEY", "LANGSTROTH_RELAY_APNS_KEY_FILE", "LANGSTROTH_RELAY_APNS_KEY_ID", "LANGSTROTH_RELAY_APNS_TEAM_ID"} {
 		if strings.TrimSpace(get(k)) != "" {
-			return fmt.Errorf("%s is set but the tunnel is off on this process: APNs keys belong only on the tunnel pod (push goes out through the tunnel); remove it here", strings.Replace(k, legacyEnvPrefix, envPrefix, 1))
+			return fmt.Errorf("%s is set but the tunnel is off on this process: APNs keys belong only on the tunnel pod (push goes out through the tunnel); remove it here", k)
 		}
 	}
 	return nil
@@ -55,7 +55,7 @@ func apnsWithoutTunnelError(get func(string) string) error {
 
 // restrictRoutes wraps h per LANGSTROTH_RELAY_ROUTES.
 func restrictRoutes(h http.Handler, get func(string) string) http.Handler {
-	if strings.ToLower(strings.TrimSpace(get("HIVE_RELAY_ROUTES"))) != routesTunnel {
+	if strings.ToLower(strings.TrimSpace(get("LANGSTROTH_RELAY_ROUTES"))) != routesTunnel {
 		return h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

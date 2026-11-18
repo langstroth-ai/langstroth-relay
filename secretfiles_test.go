@@ -10,14 +10,14 @@ import (
 // A secret file the relay can't read must stop it at startup. Before, the
 // read error only logged a warning (a _FILE) or was ignored (the secrets
 // directory) and the setting came back empty: an unreadable
-// LIGUS_RELAY_TOKEN_PUBKEY made an open relay, an unreadable DATABASE_URL
+// LANGSTROTH_RELAY_TOKEN_PUBKEY made an open relay, an unreadable DATABASE_URL
 // file the in-memory store.
 func TestSecretFilesConfigError_unreadableFailsClosed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads mode-0000 files")
 	}
 	dir := t.TempDir()
-	pk := filepath.Join(dir, "LIGUS_RELAY_TOKEN_PUBKEY")
+	pk := filepath.Join(dir, "LANGSTROTH_RELAY_TOKEN_PUBKEY")
 	if err := os.WriteFile(pk, []byte(strings.Repeat("ab", 32)), 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestSecretFilesConfigError_unreadableFailsClosed(t *testing.T) {
 	if err := checkEnvFiles(t, map[string]string{"DATABASE_URL_FILE": db}); err == nil {
 		t.Error("an unreadable DATABASE_URL_FILE must be refused")
 	}
-	if err := checkEnvFiles(t, map[string]string{"LIGUS_RELAY_ACCESS_TOKENS_FILE": filepath.Join(dir, "missing")}); err == nil {
+	if err := checkEnvFiles(t, map[string]string{"LANGSTROTH_RELAY_ACCESS_TOKENS_FILE": filepath.Join(dir, "missing")}); err == nil {
 		t.Error("a missing _FILE must be refused")
 	}
 	if err := checkEnvFiles(t, map[string]string{secretsDirEnv: filepath.Join(dir, "nope")}); err == nil {
@@ -45,7 +45,7 @@ func checkEnvFiles(t *testing.T, m map[string]string) error {
 	t.Helper()
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(k, envPrefix) || strings.HasPrefix(k, legacyEnvPrefix) || k == "DATABASE_URL_FILE" {
+		if strings.HasPrefix(k, envPrefix) || k == "DATABASE_URL_FILE" {
 			t.Setenv(k, "")
 		}
 	}
@@ -61,14 +61,14 @@ func TestSecretFilesConfigError_emptyFileIsRefused(t *testing.T) {
 	if err := os.WriteFile(f, []byte("\n"), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkEnvFiles(t, map[string]string{"LIGUS_RELAY_METRICS_TOKEN_FILE": f}); err == nil {
+	if err := checkEnvFiles(t, map[string]string{"LANGSTROTH_RELAY_METRICS_TOKEN_FILE": f}); err == nil {
 		t.Error("an empty _FILE would silently turn its setting off; refuse it")
 	}
 }
 
 func TestSecretFilesConfigError_readableIsFine(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "LIGUS_RELAY_METRICS_TOKEN"), []byte("m\n"), 0o400); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "LANGSTROTH_RELAY_METRICS_TOKEN"), []byte("m\n"), 0o400); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, "..data"), 0o700); err != nil {
@@ -93,12 +93,12 @@ func TestResolveSetting_unreadableDirFileIsNotUnset(t *testing.T) {
 		t.Skip("root reads mode-0000 files")
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "LIGUS_RELAY_TOKEN_PUBKEY"), []byte("k"), 0o000); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "LANGSTROTH_RELAY_TOKEN_PUBKEY"), []byte("k"), 0o000); err != nil {
 		t.Fatal(err)
 	}
 	var warned []string
 	warn := func(key, msg string, args ...any) { warned = append(warned, key) }
-	if v := resolveSetting("HIVE_RELAY_TOKEN_PUBKEY", env(map[string]string{secretsDirEnv: dir}), readSecretFile, warn); v != "" {
+	if v := resolveSetting("LANGSTROTH_RELAY_TOKEN_PUBKEY", env(map[string]string{secretsDirEnv: dir}), readSecretFile, warn); v != "" {
 		t.Fatalf("got %q", v)
 	}
 	if len(warned) == 0 {

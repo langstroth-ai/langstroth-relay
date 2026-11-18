@@ -26,7 +26,7 @@ func resolveMiss(t *testing.T, h http.Handler, remote, header, value string) int
 // minute) never applied. Off Fly the header must be ignored.
 func TestClientIPIgnoresSpoofedFlyHeader(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "")
-	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "")
+	t.Setenv("LANGSTROTH_RELAY_TRUSTED_PROXIES", "")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	h := srv.Handler()
 	blocked := false
@@ -46,7 +46,7 @@ func TestClientIPIgnoresSpoofedFlyHeader(t *testing.T) {
 // so it stays the client address there.
 func TestClientIPFlyHeaderTrustedOnFly(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "relay-test")
-	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "")
+	t.Setenv("LANGSTROTH_RELAY_TRUSTED_PROXIES", "")
 	p := clientIPPolicyFromEnv()
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "172.16.0.2:1234"
@@ -58,8 +58,8 @@ func TestClientIPFlyHeaderTrustedOnFly(t *testing.T) {
 
 func TestClientIPTrustedProxies(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "")
-	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.1")
-	t.Setenv("LIGUS_RELAY_CLIENT_IP_HEADER", "")
+	t.Setenv("LANGSTROTH_RELAY_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.1")
+	t.Setenv("LANGSTROTH_RELAY_CLIENT_IP_HEADER", "")
 	p := clientIPPolicyFromEnv()
 	cases := []struct {
 		name, remote string
@@ -88,8 +88,8 @@ func TestClientIPTrustedProxies(t *testing.T) {
 
 func TestClientIPCustomHeader(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "")
-	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "10.0.0.0/8")
-	t.Setenv("LIGUS_RELAY_CLIENT_IP_HEADER", "X-Real-IP")
+	t.Setenv("LANGSTROTH_RELAY_TRUSTED_PROXIES", "10.0.0.0/8")
+	t.Setenv("LANGSTROTH_RELAY_CLIENT_IP_HEADER", "X-Real-IP")
 	p := clientIPPolicyFromEnv()
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "10.0.0.1:1"
@@ -108,8 +108,8 @@ func TestClientIPCustomHeader(t *testing.T) {
 // client's failed guesses don't lock out everyone else.
 func TestTrustedProxySeparatesClients(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "")
-	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "10.0.0.0/8")
-	t.Setenv("LIGUS_RELAY_CLIENT_IP_HEADER", "")
+	t.Setenv("LANGSTROTH_RELAY_TRUSTED_PROXIES", "10.0.0.0/8")
+	t.Setenv("LANGSTROTH_RELAY_CLIENT_IP_HEADER", "")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	h := srv.Handler()
 	for i := 0; i < maxResolveFailures; i++ {
@@ -128,7 +128,7 @@ func TestTrustedProxySeparatesClients(t *testing.T) {
 // bucket each time.
 func TestIPv6RotationWithinA64SharesABucket(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "")
-	t.Setenv("LIGUS_RELAY_TRUSTED_PROXIES", "")
+	t.Setenv("LANGSTROTH_RELAY_TRUSTED_PROXIES", "")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	h := srv.Handler()
 	blocked := false

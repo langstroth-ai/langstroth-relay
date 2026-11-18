@@ -282,7 +282,7 @@ func TestSigningKeyHandling(t *testing.T) {
 	cred := t.TempDir()
 	os.WriteFile(filepath.Join(cred, credentialName), seed, 0o600)
 	t.Setenv("CREDENTIALS_DIRECTORY", cred)
-	t.Setenv("LIGUS_AUTH_SIGNING_KEY_FILE", "")
+	t.Setenv("LANGSTROTH_AUTH_SIGNING_KEY_FILE", "")
 	if _, src, err := LoadSigningKey(""); err != nil || src != "file" {
 		t.Fatalf("systemd credential: %v %s", err, src)
 	}

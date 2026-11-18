@@ -17,7 +17,7 @@ import (
 
 // Durable relay users + access tokens.
 //
-// This replaces the env-var token allowlist (HIVE_RELAY_USER_TOKENS) with a
+// This replaces the old relay's env-var token allowlist (HIVE_RELAY_USER_TOKENS) with a
 // store-backed model an operator manages over an admin API: create a user,
 // issue them a token (shown once), list, revoke — no redeploy, and it survives
 // restarts. Tokens are stored only as SHA-256 hashes; the raw token is returned

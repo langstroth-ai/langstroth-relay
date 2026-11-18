@@ -18,7 +18,7 @@ import (
 // Operator subcommands. The serving relay only ever *verifies* tokens (with the
 // public key); these mint them and live on the issuer backend. Keep the
 // private key off the relay host entirely — only the public key ships to it as
-// HIVE_RELAY_TOKEN_PUBKEY.
+// LANGSTROTH_RELAY_TOKEN_PUBKEY.
 
 func printUsage() {
 	fmt.Fprint(os.Stderr, `langstroth-relay — self-hostable rendezvous + forwarding relay
@@ -42,7 +42,7 @@ private key with your issuer backend only.
 }
 
 // cmdKeygen prints a fresh Ed25519 issuer keypair (32-byte seed as hex, matching
-// the format `issue --key` and HIVE_RELAY_TOKEN_PUBKEY expect).
+// the format `issue --key` and LANGSTROTH_RELAY_TOKEN_PUBKEY expect).
 func cmdKeygen() error {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

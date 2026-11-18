@@ -104,7 +104,7 @@ func TestSendBuildsHTTP2RequestWithOpaquePayload(t *testing.T) {
 		t.Fatalf("jwt %v %v", hdr, claims)
 	}
 	// Exactly the spec §14 body, byte for byte: nothing else leaks into it.
-	want := `{"aps":{"alert":{"body":"New activity on your host","title":"Hive"},"mutable-content":1},"hive":{"v":1,"hid":"2LGZFj2lCKlo49_pwPzGjw","pid":"lg7S2X1oS18S3AUMgTzRgQ","ct":"AAH-_3g"}}`
+	want := `{"aps":{"alert":{"body":"New activity on your host","title":"Ligus"},"mutable-content":1},"hive":{"v":1,"hid":"2LGZFj2lCKlo49_pwPzGjw","pid":"lg7S2X1oS18S3AUMgTzRgQ","ct":"AAH-_3g"}}`
 	if string(gotBody) != want {
 		t.Fatalf("payload\n got %s\nwant %s", gotBody, want)
 	}

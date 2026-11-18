@@ -22,7 +22,7 @@ import (
 const defaultMaxListBytes = 16 << 20
 
 func listCapFromEnv() int {
-	n := envInt64("HIVE_RELAY_MAX_LIST_BYTES", defaultMaxListBytes)
+	n := envInt64("LANGSTROTH_RELAY_MAX_LIST_BYTES", defaultMaxListBytes)
 	if n < 0 {
 		return defaultMaxListBytes
 	}

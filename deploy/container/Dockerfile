@@ -30,16 +30,13 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/bin/langstroth-relay ./cmd/langstroth-relay && \
-    ln -s langstroth-relay /out/bin/ligus-relay && ln -s langstroth-relay /out/bin/hive-relay
+    go build -trimpath -ldflags="-s -w" -o /out/bin/langstroth-relay ./cmd/langstroth-relay
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 LABEL org.opencontainers.image.title="Langstroth Relay" \
       org.opencontainers.image.description="Content-blind, end-to-end-encrypted sync relay for Ligus (non-root, distroless)" \
       org.opencontainers.image.source="https://github.com/langstroth-ai/langstroth-relay" \
       org.opencontainers.image.licenses="MIT"
-# ligus-relay and hive-relay are symlinks to langstroth-relay: former binary
-# names, kept until v3.0 for charts and scripts that exec them directly.
 COPY --from=build /out/bin/ /usr/local/bin/
 USER 65532:65532
 EXPOSE 8443

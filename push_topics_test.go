@@ -42,7 +42,7 @@ func TestAPNsTopicsFromEnv(t *testing.T) {
 	path, _ := testP8(t)
 	base := func(extra map[string]string) map[string]string {
 		m := map[string]string{
-			"HIVE_RELAY_APNS_KEY_FILE": path, "HIVE_RELAY_APNS_KEY_ID": "KEYID12345", "HIVE_RELAY_APNS_TEAM_ID": "TEAMID1234",
+			"LANGSTROTH_RELAY_APNS_KEY_FILE": path, "LANGSTROTH_RELAY_APNS_KEY_ID": "KEYID12345", "LANGSTROTH_RELAY_APNS_TEAM_ID": "TEAMID1234",
 		}
 		for k, v := range extra {
 			m[k] = v
@@ -51,34 +51,34 @@ func TestAPNsTopicsFromEnv(t *testing.T) {
 	}
 
 	// The old single-topic config keeps working: one allowed topic.
-	s, err := apnsPushSenderFrom(envMap(base(map[string]string{"HIVE_RELAY_APNS_TOPIC": "com.example.ligus"})))
+	s, err := apnsPushSenderFrom(envMap(base(map[string]string{"LANGSTROTH_RELAY_APNS_TOPIC": "com.example.ligus"})))
 	if err != nil || s.Client.Topic != "com.example.ligus" || strings.Join(s.Topics, ",") != "com.example.ligus" {
 		t.Fatalf("single topic: %+v %v", s, err)
 	}
 
 	// A list alone: the first is the default for phones that don't say.
-	s, err = apnsPushSenderFrom(envMap(base(map[string]string{"HIVE_RELAY_APNS_TOPICS": " com.example.ligus , com.example.ligus.lab ,"})))
+	s, err = apnsPushSenderFrom(envMap(base(map[string]string{"LANGSTROTH_RELAY_APNS_TOPICS": " com.example.ligus , com.example.ligus.lab ,"})))
 	if err != nil || s.Client.Topic != "com.example.ligus" || strings.Join(s.Topics, ",") != "com.example.ligus,com.example.ligus.lab" {
 		t.Fatalf("topic list: %+v %v", s, err)
 	}
 
 	// Both: TOPIC is the default, the union is allowed (no duplicates).
 	s, err = apnsPushSenderFrom(envMap(base(map[string]string{
-		"HIVE_RELAY_APNS_TOPIC": "com.example.ligus", "HIVE_RELAY_APNS_TOPICS": "com.example.ligus.lab,com.example.ligus",
+		"LANGSTROTH_RELAY_APNS_TOPIC": "com.example.ligus", "LANGSTROTH_RELAY_APNS_TOPICS": "com.example.ligus.lab,com.example.ligus",
 	})))
 	if err != nil || s.Client.Topic != "com.example.ligus" || strings.Join(s.Topics, ",") != "com.example.ligus,com.example.ligus.lab" {
 		t.Fatalf("topic + list: %+v %v", s, err)
 	}
 
-	// The canonical LIGUS_RELAY_APNS_TOPICS name, through the env resolver.
-	canonical := base(map[string]string{"LIGUS_RELAY_APNS_TOPICS": "com.example.ligus.lab"})
-	resolved := func(k string) string { return resolveEnv(k, envMap(canonical), func(string, string, ...any) {}) }
+	// The LANGSTROTH_RELAY_APNS_TOPICS list alone.
+	canonical := base(map[string]string{"LANGSTROTH_RELAY_APNS_TOPICS": "com.example.ligus.lab"})
+	resolved := envMap(canonical)
 	if s, err = apnsPushSenderFrom(resolved); err != nil || s.Client.Topic != "com.example.ligus.lab" {
-		t.Fatalf("LIGUS_RELAY_APNS_TOPICS: %+v %v", s, err)
+		t.Fatalf("LANGSTROTH_RELAY_APNS_TOPICS: %+v %v", s, err)
 	}
 
 	// A malformed bundle id is a configuration error (push stays off).
-	if _, err := apnsPushSenderFrom(envMap(base(map[string]string{"HIVE_RELAY_APNS_TOPICS": "com.example.ligus,not a topic"}))); err == nil {
+	if _, err := apnsPushSenderFrom(envMap(base(map[string]string{"LANGSTROTH_RELAY_APNS_TOPICS": "com.example.ligus,not a topic"}))); err == nil {
 		t.Fatal("malformed topic accepted")
 	}
 	// No topic at all is still incomplete.
@@ -95,11 +95,11 @@ func TestAPNsTopicsFromEnv(t *testing.T) {
 func TestTunnel_PushTopicAllowList(t *testing.T) {
 	logs := captureLogs(t)
 	path, _ := testP8(t)
-	t.Setenv("HIVE_RELAY_APNS_KEY_FILE", path)
-	t.Setenv("HIVE_RELAY_APNS_KEY_ID", "KEYID12345")
-	t.Setenv("HIVE_RELAY_APNS_TEAM_ID", "TEAMID1234")
-	t.Setenv("HIVE_RELAY_APNS_TOPIC", "com.example.ligus")
-	t.Setenv("LIGUS_RELAY_APNS_TOPICS", "com.example.ligus.lab")
+	t.Setenv("LANGSTROTH_RELAY_APNS_KEY_FILE", path)
+	t.Setenv("LANGSTROTH_RELAY_APNS_KEY_ID", "KEYID12345")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TEAM_ID", "TEAMID1234")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TOPIC", "com.example.ligus")
+	t.Setenv("LANGSTROTH_RELAY_APNS_TOPICS", "com.example.ligus.lab")
 	f, apnsSrv := newFakeAPNs(t)
 	env := newTunnelEnv(t, nil, nil, nil)
 	sender := env.hub.push.(*APNsPushSender)

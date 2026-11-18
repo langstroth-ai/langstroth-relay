@@ -41,10 +41,10 @@ func TestLigusAuthClaimsJSONOrder(t *testing.T) {
 
 func TestTenantConfinementOffByDefault(t *testing.T) {
 	sk := testKey(t)
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", pubHex(sk))
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(sk))
 	p := entitlementFromEnv()
 	if p.tenants != nil {
-		t.Fatal("tenant confinement must be off unless LIGUS_RELAY_TENANTS is set")
+		t.Fatal("tenant confinement must be off unless LANGSTROTH_RELAY_TENANTS is set")
 	}
 	if _, ok := p.Allow(issueToken(sk, TokenClaims{Sub: "x", Tid: "other"}), 0); !ok {
 		t.Fatal("off: any tid admitted")
@@ -56,9 +56,9 @@ func TestTenantConfinementOffByDefault(t *testing.T) {
 
 func TestTenantConfinement(t *testing.T) {
 	sk := testKey(t)
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", pubHex(sk))
-	t.Setenv("LIGUS_RELAY_TENANTS", "acme, home")
-	t.Setenv("LIGUS_RELAY_WORKSPACE_SCOPE", "strict")
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(sk))
+	t.Setenv("LANGSTROTH_RELAY_TENANTS", "acme, home")
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", "strict")
 	if err := entitlementConfigError(); err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +85,12 @@ func TestTenantConfinement(t *testing.T) {
 }
 
 func TestTenantConfigErrors(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_TENANTS", "acme")
+	t.Setenv("LANGSTROTH_RELAY_TENANTS", "acme")
 	if entitlementConfigError() == nil {
-		t.Fatal("LIGUS_RELAY_TENANTS without a pubkey must refuse to start")
+		t.Fatal("LANGSTROTH_RELAY_TENANTS without a pubkey must refuse to start")
 	}
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", pubHex(testKey(t)))
-	t.Setenv("LIGUS_RELAY_TENANTS", " , ")
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(testKey(t)))
+	t.Setenv("LANGSTROTH_RELAY_TENANTS", " , ")
 	if entitlementConfigError() == nil {
 		t.Fatal("an empty tenant list must refuse to start")
 	}
@@ -103,12 +103,12 @@ func TestPubkeyNextAcceptedDuringRotation(t *testing.T) {
 		seed[i] = 11
 	}
 	next := ed25519.NewKeyFromSeed(seed)
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY", pubHex(cur))
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY", pubHex(cur))
 	p := entitlementFromEnv()
 	if _, ok := p.Allow(issueToken(next, TokenClaims{Sub: "x"}), 0); ok {
 		t.Fatal("next key must not verify until configured")
 	}
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY_NEXT", pubHex(next))
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT", pubHex(next))
 	if err := entitlementConfigError(); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestPubkeyNextAcceptedDuringRotation(t *testing.T) {
 			t.Fatal("both keys verify during rotation")
 		}
 	}
-	t.Setenv("LIGUS_RELAY_TOKEN_PUBKEY_NEXT", "garbage")
+	t.Setenv("LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT", "garbage")
 	if entitlementConfigError() == nil {
 		t.Fatal("bad next key must refuse to start")
 	}

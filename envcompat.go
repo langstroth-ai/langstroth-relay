@@ -13,68 +13,46 @@ import (
 	"github.com/langstroth-ai/langstroth-relay/internal/envalias"
 )
 
-// Environment-variable compatibility for the Hive -> Ligus -> Langstroth
-// renames.
-//
-// The relay's settings are canonically named LANGSTROTH_RELAY_*; the former
-// LIGUS_RELAY_* names and the legacy HIVE_RELAY_* names are still accepted.
-// Call sites keep naming the legacy key (e.g. getenv("HIVE_RELAY_ADDR")) and
-// getenv resolves it:
-//
-//  1. LANGSTROTH_RELAY_<X> if set (non-empty) wins. Main refuses to start
-//     when it and a former name for the same setting are both set to
-//     different values (envAliasConflictError);
-//  2. otherwise LIGUS_RELAY_<X>; if HIVE_RELAY_<X> is also set to a different
-//     value, LIGUS wins and a one-time conflict warning is logged;
-//  3. otherwise HIVE_RELAY_<X>, with a one-time deprecation warning per
-//     variable.
-//
-// Names outside these prefixes (PORT, DATABASE_URL, ...) are read as-is. The
-// former names stay until deployed secrets have been migrated; removing them
-// early would leave a relay fail-closed.
+// Relay settings are named LANGSTROTH_RELAY_*. The names from before the
+// Langstroth rename (HIVE_RELAY_*, LIGUS_RELAY_*) are not read, and main
+// refuses to start while any of them is set (removedEnvError), so a secret
+// left under an old name can't silently turn push, the tunnel or the access
+// gate off. Names outside the prefix (PORT, DATABASE_URL, ...) are read as-is.
 
-const (
-	envPrefix       = "LANGSTROTH_RELAY_"
-	formerEnvPrefix = "LIGUS_RELAY_"
-	legacyEnvPrefix = "HIVE_RELAY_"
-)
+const envPrefix = "LANGSTROTH_RELAY_"
 
-// envPrefixes lists the prefixes of one setting, canonical first.
-var envPrefixes = []string{envPrefix, formerEnvPrefix, legacyEnvPrefix}
+// removedEnvPrefixes are the prefixes before the Langstroth rename.
+var removedEnvPrefixes = []string{"HIVE_RELAY_", "LIGUS_RELAY_"}
 
-// settingSuffix returns the part of name after any of envPrefixes.
+// removedEnvExempt are variables of the Ligus client under a removed prefix
+// that the relay never read, so an exported client setting in the same shell
+// doesn't stop a local relay.
+var removedEnvExempt = map[string]bool{"LIGUS_RELAY_URL": true}
+
+// settingSuffix returns the part of name after envPrefix.
 func settingSuffix(name string) (string, bool) {
-	for _, p := range envPrefixes {
-		if strings.HasPrefix(name, p) {
-			return strings.TrimPrefix(name, p), true
-		}
-	}
-	return "", false
+	return strings.CutPrefix(name, envPrefix)
 }
 
-// envAliasConflictError refuses to start when a LANGSTROTH_RELAY_* setting and
-// its LIGUS_RELAY_* or HIVE_RELAY_* name are both set to different values.
-func envAliasConflictError(environ []string, lookup func(string) string) error {
-	return envalias.Conflict(environ, lookup, envPrefixes...)
+// removedEnvError refuses to start while a HIVE_RELAY_* or LIGUS_RELAY_*
+// variable is set, naming its LANGSTROTH_RELAY_* replacement (never its
+// value).
+func removedEnvError(environ []string) error {
+	return envalias.Removed(environ, envPrefix, removedEnvPrefixes, removedEnvExempt)
 }
 
-var envWarned sync.Map // legacy name -> struct{}
+var envWarned sync.Map // warning key -> struct{}
 
-// getenv returns the value for a relay setting, preferring LANGSTROTH_RELAY_*
-// over the former LIGUS_RELAY_* and legacy HIVE_RELAY_* names. See the file
-// comment.
+// getenv returns the value for a relay setting (LANGSTROTH_RELAY_<X>, or an
+// unprefixed name such as DATABASE_URL).
 //
 // When the variable itself is unset, a setting can come from a file (for
 // Kubernetes Secrets mounted as files, so secrets stay out of the process
 // environment):
 //
-//  1. the file named by <NAME>_FILE (LANGSTROTH_RELAY_<X>_FILE, or a former
-//     LIGUS_RELAY_<X>_FILE / HIVE_RELAY_<X>_FILE; DATABASE_URL_FILE for
-//     unprefixed names);
-//  2. the file $LANGSTROTH_RELAY_SECRETS_DIR/<NAME>, with NAME in its
-//     canonical spelling (LANGSTROTH_RELAY_<X>, DATABASE_URL, ...), else in
-//     its former spelling (LIGUS_RELAY_<X>) for directories written before
-//     the rename (checkSecretFiles refuses two files that disagree).
+//  1. the file named by <NAME>_FILE (LANGSTROTH_RELAY_<X>_FILE;
+//     DATABASE_URL_FILE for unprefixed names);
+//  2. the file $LANGSTROTH_RELAY_SECRETS_DIR/<NAME>.
 //
 // The environment wins over a _FILE, which wins over the directory. One
 // trailing run of whitespace is trimmed. Names that already end in _FILE are
@@ -99,46 +77,35 @@ func readSecretFile(path string) (string, error) {
 	return strings.TrimRight(string(b), " \t\r\n"), nil
 }
 
-// resolveSetting is resolveEnv plus the file fallbacks described on getenv.
+// resolveSetting is lookup plus the file fallbacks described on getenv.
 func resolveSetting(name string, lookup func(string) string, read func(string) (string, error), warn func(key, msg string, args ...any)) string {
-	if v := resolveEnv(name, lookup, warn); v != "" || strings.HasSuffix(name, "_FILE") {
+	if v := lookup(name); v != "" || strings.HasSuffix(name, "_FILE") {
 		return v
 	}
-	canonical, short := name, ""
-	if s, ok := settingSuffix(name); ok {
-		short = s
-		canonical = envPrefix + short
-	}
+	short, _ := settingSuffix(name)
 	if !noFileFallback[short] {
-		if path := strings.TrimSpace(resolveEnv(name+"_FILE", lookup, warn)); path != "" {
+		if path := strings.TrimSpace(lookup(name + "_FILE")); path != "" {
 			v, err := read(path)
 			if err != nil {
 				// Never echo the contents; the path is fine to log.
-				warn(name+"_FILE", "cannot read setting file", "var", canonical+"_FILE", "err", err)
+				warn(name+"_FILE", "cannot read setting file", "var", name+"_FILE", "err", err)
 				return ""
 			}
 			return v
 		}
 	}
-	dir := strings.TrimSpace(resolveEnv(secretsDirEnv, lookup, warn))
-	if dir == "" || short == "SECRETS_DIR" || strings.ContainsAny(canonical, "/\\") {
+	dir := strings.TrimSpace(lookup(secretsDirEnv))
+	if dir == "" || short == "SECRETS_DIR" || strings.ContainsAny(name, "/\\") {
 		return ""
 	}
-	names := []string{canonical}
-	if short != "" {
-		names = append(names, formerEnvPrefix+short)
+	v, err := read(filepath.Join(dir, name))
+	if err == nil {
+		return v
 	}
-	for _, n := range names {
-		v, err := read(filepath.Join(dir, n))
-		if err == nil {
-			return v
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			// Unreadable is not unset: secretFilesConfigError stops the
-			// process at startup; this is for a file that changed later.
-			warn(n+"@dir", "cannot read setting file", "var", n, "dir", secretsDirEnv, "err", err)
-			return ""
-		}
+	if !errors.Is(err, fs.ErrNotExist) {
+		// Unreadable is not unset: secretFilesConfigError stops the
+		// process at startup; this is for a file that changed later.
+		warn(name+"@dir", "cannot read setting file", "var", name, "dir", secretsDirEnv, "err", err)
 	}
 	return ""
 }
@@ -150,8 +117,8 @@ func resolveSetting(name string, lookup func(string) string, read func(string) (
 // for the access gate (LANGSTROTH_RELAY_TOKEN_PUBKEY,
 // LANGSTROTH_RELAY_ACCESS_TOKENS) unset means open, for DATABASE_URL the
 // in-memory store: a wrong file mode or a typo'd path must stop the relay
-// instead. It also refuses a directory holding both LANGSTROTH_RELAY_<X> and
-// LIGUS_RELAY_<X> with different contents.
+// instead. It also refuses a file in the directory named with a removed
+// prefix (HIVE_RELAY_*, LIGUS_RELAY_*), which would otherwise be ignored.
 func secretFilesConfigError(lookup func(string) string) error {
 	var names []string
 	for _, kv := range os.Environ() {
@@ -188,7 +155,7 @@ func checkSecretFiles(lookup func(string) string, names []string) error {
 			}
 		}
 	}
-	dir := strings.TrimSpace(resolveEnv(secretsDirEnv, lookup, func(string, string, ...any) {}))
+	dir := strings.TrimSpace(lookup(secretsDirEnv))
 	if dir == "" {
 		return nil
 	}
@@ -196,6 +163,7 @@ func checkSecretFiles(lookup func(string) string, names []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", secretsDirEnv, err)
 	}
+	var files []string
 	for _, e := range entries {
 		// A mounted Secret's ..data / ..<timestamp> entries.
 		if strings.HasPrefix(e.Name(), ".") {
@@ -205,47 +173,15 @@ func checkSecretFiles(lookup func(string) string, names []string) error {
 		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
 			continue
 		}
+		files = append(files, e.Name())
 		if err := check(secretsDirEnv+"/"+e.Name(), p); err != nil {
 			return err
 		}
-		if short, ok := strings.CutPrefix(e.Name(), envPrefix); ok {
-			former := filepath.Join(dir, formerEnvPrefix+short)
-			if b, err := os.ReadFile(former); err == nil {
-				cur, _ := readSecretFile(p)
-				if strings.TrimRight(string(b), " \t\r\n") != cur {
-					return fmt.Errorf("%s: %s and %s hold different values: keep only %s", secretsDirEnv, e.Name(), formerEnvPrefix+short, e.Name())
-				}
-			}
-		}
+	}
+	if err := removedEnvError(files); err != nil {
+		return fmt.Errorf("%s: %w", secretsDirEnv, err)
 	}
 	return nil
-}
-
-func resolveEnv(name string, lookup func(string) string, warn func(key, msg string, args ...any)) string {
-	short, ok := settingSuffix(name)
-	if !ok {
-		return lookup(name)
-	}
-	canonical, former, legacy := envPrefix+short, formerEnvPrefix+short, legacyEnvPrefix+short
-	newV, formerV, oldV := lookup(canonical), lookup(former), lookup(legacy)
-	switch {
-	case newV != "":
-		if (formerV != "" && formerV != newV) || (oldV != "" && oldV != newV) {
-			// Main refuses to start on this (envAliasConflictError); an
-			// embedding program gets the canonical value and a warning.
-			warn(canonical, "env var set under its new and a former name with different values; using the new name", "new", canonical)
-		}
-		return newV
-	case formerV != "":
-		if oldV != "" && oldV != formerV {
-			warn(legacy, "both env vars are set with different values; using the newer name", "new", former, "old", legacy)
-		}
-		return formerV
-	case oldV != "":
-		warn(legacy, "deprecated env var name; rename it", "old", legacy, "new", canonical)
-		return oldV
-	}
-	return ""
 }
 
 func warnEnvOnce(key, msg string, args ...any) {

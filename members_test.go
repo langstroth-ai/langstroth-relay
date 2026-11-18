@@ -202,7 +202,7 @@ func TestMembershipDisabledRoutes404(t *testing.T) {
 func TestMembershipOnOpenRelayViaIdentityKey(t *testing.T) {
 	sk := testKey(t)
 	pub := sk.Public().(ed25519.PublicKey)
-	t.Setenv("HIVE_RELAY_MEMBERSHIP_PUBKEY", hexEncode(pub))
+	t.Setenv("LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY", hexEncode(pub))
 	srv := New(Options{
 		Store:       newMemoryStore(),
 		Entitlement: entitlementPolicy{kind: entOpen}, // OPEN — no entitlement token required

@@ -1,45 +1,40 @@
 package langstrothauth
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestAuthEnvAliases(t *testing.T) {
+// LIGUS_AUTH_* names are not read, and any of them stops the service.
+func TestRemovedAuthEnvNames(t *testing.T) {
 	t.Setenv("LIGUS_AUTH_ENV_ALIAS_TEST", "former")
-	if got := authGetenv("LANGSTROTH_AUTH_ENV_ALIAS_TEST"); got != "former" {
-		t.Fatalf("former name must keep working, got %q", got)
+	if got := authGetenv("LANGSTROTH_AUTH_ENV_ALIAS_TEST"); got != "" {
+		t.Fatalf("former name must not be read, got %q", got)
 	}
-	if err := envConflictError(); err != nil {
-		t.Fatalf("former name alone: %v", err)
+	err := removedEnvError(os.Environ())
+	if err == nil || !strings.Contains(err.Error(), "LIGUS_AUTH_ENV_ALIAS_TEST -> LANGSTROTH_AUTH_ENV_ALIAS_TEST") || strings.Contains(err.Error(), "former") {
+		t.Fatalf("want an error naming the new name and not the value, got %v", err)
 	}
-	t.Setenv("LANGSTROTH_AUTH_ENV_ALIAS_TEST", "former")
-	if err := envConflictError(); err != nil {
-		t.Fatalf("both names agreeing: %v", err)
-	}
-	t.Setenv("LANGSTROTH_AUTH_ENV_ALIAS_TEST", "new")
-	if got := authGetenv("LIGUS_AUTH_ENV_ALIAS_TEST"); got != "new" {
-		t.Fatalf("canonical name must win, got %q", got)
-	}
-	if err := envConflictError(); err == nil {
-		t.Fatal("both names with different values must stop the service")
+	if err := removedEnvError([]string{"LANGSTROTH_AUTH_X=1"}); err != nil {
+		t.Fatalf("canonical names: %v", err)
 	}
 }
 
-func TestSigningKeyFromFormerEnvAndCredential(t *testing.T) {
+func TestSigningKeyFromEnvAndFormerCredential(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := WriteNewSigningKey(filepath.Join(dir, "ligus-auth-signing-key")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LANGSTROTH_AUTH_SIGNING_KEY_FILE", "")
-	t.Setenv("LIGUS_AUTH_SIGNING_KEY_FILE", "")
 	t.Setenv("CREDENTIALS_DIRECTORY", dir)
 	if _, src, err := LoadSigningKey(""); err != nil || src != "file" {
 		t.Fatalf("former systemd credential name: %q %v", src, err)
 	}
 	t.Setenv("CREDENTIALS_DIRECTORY", "")
-	t.Setenv("LIGUS_AUTH_SIGNING_KEY_FILE", filepath.Join(dir, "ligus-auth-signing-key"))
+	t.Setenv("LANGSTROTH_AUTH_SIGNING_KEY_FILE", filepath.Join(dir, "ligus-auth-signing-key"))
 	if _, src, err := LoadSigningKey(""); err != nil || src != "file" {
-		t.Fatalf("former LIGUS_AUTH_SIGNING_KEY_FILE: %q %v", src, err)
+		t.Fatalf("LANGSTROTH_AUTH_SIGNING_KEY_FILE: %q %v", src, err)
 	}
 }

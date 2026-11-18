@@ -52,8 +52,8 @@ func TestKeyringByteCapRefuses(t *testing.T) {
 // Over HTTP: 507 past the cap, 413 for an oversized rotation, and the listing
 // still returns the original rotations.
 func TestKeyringHTTPCapAndSize(t *testing.T) {
-	t.Setenv("LIGUS_RELAY_MAX_KEYRING_PER_WS", "1")
-	t.Setenv("LIGUS_RELAY_MAX_ROTATION_BYTES", "64")
+	t.Setenv("LANGSTROTH_RELAY_MAX_KEYRING_PER_WS", "1")
+	t.Setenv("LANGSTROTH_RELAY_MAX_ROTATION_BYTES", "64")
 	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entOpen}})
 	ts := newTestHTTP(t, srv)
 

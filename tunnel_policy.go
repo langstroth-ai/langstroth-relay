@@ -10,7 +10,7 @@ import (
 )
 
 // Tunnel seams (spec §15.1). The open build wires TunnelPolicyFromEnv and, when
-// HIVE_RELAY_APNS_* is configured, the built-in APNs PushSender (push_apns.go);
+// LANGSTROTH_RELAY_APNS_* is configured, the built-in APNs PushSender (push_apns.go);
 // a downstream build can inject its own through Options.
 
 // HostStatus is a registered host's admission status. !Active means "pending": the
@@ -50,14 +50,14 @@ type PushSender interface {
 }
 
 // ErrTunnelHostNotAllowed is returned by the env policy for a host that isn't
-// on the HIVE_RELAY_TUNNEL_HOSTS allowlist.
+// on the LANGSTROTH_RELAY_TUNNEL_HOSTS allowlist.
 var ErrTunnelHostNotAllowed = errors.New("tunnel: host is not on the allowlist")
 
 // ErrTunnelRegistrationToken is returned when the relay's access gate is
 // configured and the hello's registration token doesn't pass it.
 var ErrTunnelRegistrationToken = errors.New("tunnel: registration token rejected")
 
-// Tunnel modes for HIVE_RELAY_TUNNEL.
+// Tunnel modes for LANGSTROTH_RELAY_TUNNEL.
 const (
 	TunnelOff       = "off"
 	TunnelOpen      = "open"
@@ -73,16 +73,16 @@ type envTunnelPolicy struct {
 	ent EntitlementVerifier
 }
 
-// TunnelPolicyFromEnv returns the open build's policy from HIVE_RELAY_TUNNEL
-// (off|open|allowlist, default off) and HIVE_RELAY_TUNNEL_HOSTS, with the
+// TunnelPolicyFromEnv returns the open build's policy from LANGSTROTH_RELAY_TUNNEL
+// (off|open|allowlist, default off) and LANGSTROTH_RELAY_TUNNEL_HOSTS, with the
 // registration token checked against EntitlementFromEnv(). It returns nil when
 // the tunnel is off: /v1/tunnel/* then answers 404.
 func TunnelPolicyFromEnv() TunnelPolicy { return tunnelPolicyFromEnv(EntitlementFromEnv()) }
 
 func tunnelPolicyFromEnv(ent EntitlementVerifier) TunnelPolicy {
-	p, err := newEnvTunnelPolicy(getenv("HIVE_RELAY_TUNNEL"), getenv("HIVE_RELAY_TUNNEL_HOSTS"), ent)
+	p, err := newEnvTunnelPolicy(getenv("LANGSTROTH_RELAY_TUNNEL"), getenv("LANGSTROTH_RELAY_TUNNEL_HOSTS"), ent)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hive-relay: %v; the tunnel stays off\n", err)
+		fmt.Fprintf(os.Stderr, "langstroth-relay: %v; the tunnel stays off\n", err)
 		return nil
 	}
 	if p == nil {
@@ -103,17 +103,17 @@ func newEnvTunnelPolicy(mode, hostList string, ent EntitlementVerifier) (*envTun
 		for _, h := range strings.Split(hostList, ",") {
 			if h = strings.TrimSpace(h); h != "" {
 				if !validTunnelID(h) {
-					return nil, fmt.Errorf("HIVE_RELAY_TUNNEL_HOSTS: %q is not a host_id", h)
+					return nil, fmt.Errorf("LANGSTROTH_RELAY_TUNNEL_HOSTS: %q is not a host_id", h)
 				}
 				hosts[h] = true
 			}
 		}
 		if len(hosts) == 0 {
-			return nil, errors.New("HIVE_RELAY_TUNNEL=allowlist but HIVE_RELAY_TUNNEL_HOSTS is empty")
+			return nil, errors.New("LANGSTROTH_RELAY_TUNNEL=allowlist but LANGSTROTH_RELAY_TUNNEL_HOSTS is empty")
 		}
 		return &envTunnelPolicy{mode: m, hosts: hosts, ent: ent}, nil
 	default:
-		return nil, fmt.Errorf("HIVE_RELAY_TUNNEL=%q is not off|open|allowlist", mode)
+		return nil, fmt.Errorf("LANGSTROTH_RELAY_TUNNEL=%q is not off|open|allowlist", mode)
 	}
 }
 
