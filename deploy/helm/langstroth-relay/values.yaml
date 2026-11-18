@@ -306,6 +306,36 @@ contacts:
   createRate: null         # 0.01    LANGSTROTH_RELAY_CONTACT_CREATE_RATE (new records per client)
   createBurst: null        # 20      LANGSTROTH_RELAY_CONTACT_CREATE_BURST
 
+# Room quotas, request rates and retention (README "Community limits",
+# docs/tenancy.md). Each value maps to a LANGSTROTH_RELAY_* variable; null
+# keeps the binary's default, which is off for every one of them. Over a
+# storage quota the relay answers 507, over a rate 429 with Retry-After.
+limits:
+  roomMaxBytes: null        # LANGSTROTH_RELAY_ROOM_MAX_BYTES (envelope bodies + key rotations per room)
+  roomMaxEnvelopes: null    # LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES
+  totalRoomBytes: null      # LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES (all rooms)
+  maxRoomsPerClient: null   # LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT (token subject, else address)
+  roomRetentionDays: null   # LANGSTROTH_RELAY_ROOM_RETENTION_DAYS (whole idle rooms only)
+  ipRate: null              # LANGSTROTH_RELAY_IP_RATE (every request per client, per second)
+  ipBurst: null             # LANGSTROTH_RELAY_IP_BURST (default 2x the rate)
+  roomRate: null            # LANGSTROTH_RELAY_ROOM_RATE (every request per room, per second)
+  roomBurst: null           # LANGSTROTH_RELAY_ROOM_BURST
+  tunnelPushRate: null      # 1    LANGSTROTH_RELAY_TUNNEL_PUSH_RATE (per host, per second)
+  tunnelPushBurst: null     # 5    LANGSTROTH_RELAY_TUNNEL_PUSH_BURST
+  tunnelPushPerDay: null    # 2000 LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY
+  metricsMaxTenants: null   # 50   LANGSTROTH_RELAY_METRICS_MAX_TENANTS (tenant label cap)
+
+# Tenancy: one relay for several organisations (docs/tenancy.md). Off unless
+# existingSecret names a Secret holding the tenancy JSON (tenants, issuer
+# public keys, admin token hashes, limits). It is mounted as a file into
+# every relay pod and read through LANGSTROTH_RELAY_TENANCY_FILE; it never
+# goes into the environment. Tenancy needs signed tokens: put
+# LANGSTROTH_RELAY_TOKEN_PUBKEY in config.existingSecret if a shared issuer
+# vouches for tenants.
+tenancy:
+  existingSecret: ""
+  key: tenancy.json
+
 # Deprecated GitHub social routes (directory, account, friends) for older
 # clients: off (404) by default since relay v0.3, removed in v0.4.
 # LANGSTROTH_RELAY_GITHUB_ROUTES.

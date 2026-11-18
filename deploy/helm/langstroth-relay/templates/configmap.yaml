@@ -35,6 +35,17 @@ data:
   {{- end }}
   {{- end }}
   {{- end }}
+  {{- with .Values.limits }}
+  {{- $limitEnv := dict "roomMaxBytes" "LANGSTROTH_RELAY_ROOM_MAX_BYTES" "roomMaxEnvelopes" "LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES" "totalRoomBytes" "LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES" "maxRoomsPerClient" "LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT" "roomRetentionDays" "LANGSTROTH_RELAY_ROOM_RETENTION_DAYS" "ipRate" "LANGSTROTH_RELAY_IP_RATE" "ipBurst" "LANGSTROTH_RELAY_IP_BURST" "roomRate" "LANGSTROTH_RELAY_ROOM_RATE" "roomBurst" "LANGSTROTH_RELAY_ROOM_BURST" "tunnelPushRate" "LANGSTROTH_RELAY_TUNNEL_PUSH_RATE" "tunnelPushBurst" "LANGSTROTH_RELAY_TUNNEL_PUSH_BURST" "tunnelPushPerDay" "LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY" "metricsMaxTenants" "LANGSTROTH_RELAY_METRICS_MAX_TENANTS" }}
+  {{- $l := . }}
+  {{- range $key := keys $limitEnv | sortAlpha }}
+  {{- $v := get $l $key }}
+  {{- if not (kindIs "invalid" $v) }}
+  {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
+  {{ get $limitEnv $key }}: {{ $v | toString | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
   {{- if .Values.githubRoutes }}
   LANGSTROTH_RELAY_GITHUB_ROUTES: "on"
   {{- end }}

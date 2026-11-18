@@ -392,3 +392,43 @@ func TestChartNameOverrideKeepsFormerNames(t *testing.T) {
 		t.Fatalf("default name:\n%s", d)
 	}
 }
+
+// Limits render as their LANGSTROTH_RELAY_* variables (all off by default),
+// and the tenancy config is a Secret mounted as a file into every relay pod,
+// never an environment value.
+func TestChartLimitsAndTenancy(t *testing.T) {
+	out := renderChart(t)
+	if cm := docOfKind(out, "ConfigMap", ""); strings.Contains(cm, "LANGSTROTH_RELAY_ROOM_") || strings.Contains(cm, "LANGSTROTH_RELAY_IP_RATE") {
+		t.Fatalf("default install must keep the limits off:\n%s", cm)
+	}
+	if strings.Contains(out, "TENANCY") {
+		t.Fatal("tenancy rendered without tenancy.existingSecret")
+	}
+	base := []string{"--set", "postgres.enabled=true", "--set", "postgres.existingSecret=pg", "--set", "tunnel.mode=open"}
+	out = renderChart(t, append(base, "--set", "limits.roomMaxBytes=67108864", "--set", "limits.ipRate=20",
+		"--set", "limits.roomRetentionDays=180", "--set", "limits.tunnelPushPerDay=500", "--set", "tenancy.existingSecret=relay-tenancy")...)
+	cm := docOfKind(out, "ConfigMap", "")
+	for _, want := range []string{
+		`LANGSTROTH_RELAY_ROOM_MAX_BYTES: "67108864"`, `LANGSTROTH_RELAY_IP_RATE: "20"`,
+		`LANGSTROTH_RELAY_ROOM_RETENTION_DAYS: "180"`, `LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY: "500"`,
+	} {
+		if !strings.Contains(cm, want) {
+			t.Errorf("missing %s in:\n%s", want, cm)
+		}
+	}
+	if strings.Contains(cm, "TENANCY") {
+		t.Fatal("the tenancy config reached the ConfigMap")
+	}
+	for _, suffix := range []string{"-sync", "-tunnel"} {
+		d := docOfKind(out, "Deployment", suffix)
+		if d == "" {
+			t.Fatalf("no Deployment%s", suffix)
+		}
+		if !strings.Contains(d, "LANGSTROTH_RELAY_TENANCY_FILE") || !strings.Contains(d, "secretName: relay-tenancy") {
+			t.Errorf("Deployment%s doesn't mount the tenancy file:\n%s", suffix, d)
+		}
+	}
+	if msg := renderChartErr(t, append(base, "--set", "config.env.LANGSTROTH_RELAY_TENANCY=x")...); !strings.Contains(msg, "tenancy.existingSecret") {
+		t.Fatalf("tenancy through config.env must fail, got %q", msg)
+	}
+}

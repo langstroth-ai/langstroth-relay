@@ -141,6 +141,9 @@ empty. The shape is what the langstroth-postgres library expects.
 {{- if regexMatch "^(LIGUS|HIVE)_RELAY_" $k -}}
 {{- fail (printf "config.env.%s: HIVE_RELAY_* and LIGUS_RELAY_* names are no longer read (the relay refuses to start with one set); use LANGSTROTH_RELAY_%s" $k (regexReplaceAll "^(LIGUS|HIVE)_RELAY_" $k "")) -}}
 {{- end -}}
+{{- if regexMatch "^LANGSTROTH_RELAY_TENANCY" $k -}}
+{{- fail (printf "config.env.%s: the tenancy config is a file; use tenancy.existingSecret" $k) -}}
+{{- end -}}
 {{- if regexMatch "^LANGSTROTH_RELAY_APNS_" $k -}}
 {{- fail (printf "config.env.%s: APNs settings reach every pod through config.env; use tunnel.apns.* (the key from tunnel.apns.existingSecret)" $k) -}}
 {{- end -}}
@@ -241,6 +244,10 @@ spec:
         - name: DATABASE_URL_FILE
           value: /etc/langstroth-relay/db/DATABASE_URL
         {{- end }}
+        {{- if $v.tenancy.existingSecret }}
+        - name: LANGSTROTH_RELAY_TENANCY_FILE
+          value: /etc/langstroth-relay/tenancy/tenancy.json
+        {{- end }}
         {{- if $v.persistence.enabled }}
         - name: LANGSTROTH_RELAY_DATA_DIR
           value: {{ $v.persistence.mountPath | quote }}
@@ -279,8 +286,13 @@ spec:
         failureThreshold: 3
       resources:
         {{- toYaml .resources | nindent 8 }}
-      {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "langstroth-relay.hasDatabase" $root) $v.metrics.token.existingSecret }}
+      {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "langstroth-relay.hasDatabase" $root) $v.metrics.token.existingSecret $v.tenancy.existingSecret }}
       volumeMounts:
+        {{- if $v.tenancy.existingSecret }}
+        - name: tenancy
+          mountPath: /etc/langstroth-relay/tenancy
+          readOnly: true
+        {{- end }}
         {{- if $v.metrics.token.existingSecret }}
         - name: metrics-token
           mountPath: /etc/langstroth-relay/metrics
@@ -306,8 +318,16 @@ spec:
           readOnly: true
         {{- end }}
       {{- end }}
-  {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "langstroth-relay.hasDatabase" $root) $v.metrics.token.existingSecret }}
+  {{- if or $v.persistence.enabled (and .withApns $v.tunnel.apns.existingSecret) $v.config.existingSecret (include "langstroth-relay.hasDatabase" $root) $v.metrics.token.existingSecret $v.tenancy.existingSecret }}
   volumes:
+    {{- with $v.tenancy.existingSecret }}
+    - name: tenancy
+      secret:
+        secretName: {{ . }}
+        defaultMode: 0400
+        items:
+          - { key: {{ $v.tenancy.key }}, path: tenancy.json }
+    {{- end }}
     {{- with $v.metrics.token.existingSecret }}
     - name: metrics-token
       secret:
@@ -375,6 +395,7 @@ podAnnotations). Args: dict root withApns.
 {{- $names := list -}}
 {{- with $v.config.existingSecret }}{{ $names = append $names . }}{{ end -}}
 {{- with $v.metrics.token.existingSecret }}{{ $names = append $names . }}{{ end -}}
+{{- with $v.tenancy.existingSecret }}{{ $names = append $names . }}{{ end -}}
 {{- $ctx := include "langstroth-relay.dbCtx" $root | fromYaml -}}
 {{- $_ := set $ctx "root" $root -}}
 {{- range (include "langstroth-postgres.clientSecretNames" $ctx | fromJsonArray) }}{{ $names = append $names . }}{{ end -}}
