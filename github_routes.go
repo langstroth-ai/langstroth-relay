@@ -7,7 +7,7 @@ import "net/http"
 // doesn't use them: discovery is links, QR codes, co-members and contacts
 // (/v1/contacts/). Since v0.3 they are registered only when
 // LANGSTROTH_RELAY_GITHUB_ROUTES=on (HIVE_RELAY_GITHUB_ROUTES; the spec's name
-// LANGSTROTH_RELAY_GITHUB_SOCIAL=1 is accepted too) for 1.x clients, and every
+// LANGSTROTH_RELAY_GITHUB_SOCIAL=1 is accepted too) for older clients, and every
 // response carries a deprecation notice. v0.4 removes the handlers, their
 // tables and the GitHub verifier.
 

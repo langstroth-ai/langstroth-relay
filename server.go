@@ -71,7 +71,7 @@ type Options struct {
 	// (push_apns.go), else push unavailable.
 	PushSender PushSender
 	// GitHubRoutes registers the deprecated GitHub social routes (directory,
-	// account, friends) for 1.x clients. Also enabled by env
+	// account, friends) for older clients. Also enabled by env
 	// LANGSTROTH_RELAY_GITHUB_ROUTES=on. Off (the v0.3 default) → 404. Removed in v0.4.
 	GitHubRoutes bool
 }

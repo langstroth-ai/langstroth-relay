@@ -68,7 +68,7 @@ const statusHTML = `<!doctype html>
     </div>
     <p>
       This is a <strong>content-blind sync relay</strong> for
-      <a href="https://github.com/langstroth-ai/ligus">Ligus</a> (formerly Hive) — an API endpoint,
+      <a href="https://github.com/langstroth-ai/ligus">Ligus</a> — an API endpoint,
       not a website to log into. It forwards end-to-end-encrypted traffic between
       devices and never sees plaintext.
     </p>

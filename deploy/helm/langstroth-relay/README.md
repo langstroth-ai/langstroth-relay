@@ -329,7 +329,7 @@ maps to `external`.
 | `memoryStore.maxBytes` | `100000000` | Memory store only: heap budget for workspace data (`LANGSTROTH_RELAY_MAX_STORE_BYTES`); writes past it get 507 |
 | `contacts.enabled` | `true` | `/v1/contacts/*` (contact records + sealed drop boxes); `false` renders `LANGSTROTH_RELAY_CONTACTS=off` (404) |
 | `contacts.*` (`maxRecordBytes`, `maxDropBytes`, `ttlDays`, `dropMaxRows`, `dropMaxBoxBytes`, `dropRetentionDays`, `reclaimHoldDays`, `maxContacts`, `dropRate`/`dropBurst`, `dropCidRate`/`dropCidBurst`, `writeRate`/`writeBurst`, `createRate`/`createBurst`) | `null` (binary defaults) | Contact size caps, TTL, drop-box bounds and rate limits; each maps to a `LANGSTROTH_RELAY_CONTACT*` variable (see the relay README). Rate limiters are per pod |
-| `githubRoutes` | `false` | Deprecated GitHub social routes for 1.x clients (`LANGSTROTH_RELAY_GITHUB_ROUTES=on`); removed in relay v0.4 |
+| `githubRoutes` | `false` | Deprecated GitHub social routes for older clients (`LANGSTROTH_RELAY_GITHUB_ROUTES=on`); removed in relay v0.4 |
 | `persistence.enabled` | `false` | Memory-store snapshot PVC (`single` only) |
 | `config.env` | `{}` | Plain `LANGSTROTH_RELAY_*` settings (membership mode, retention, ...) |
 | `config.existingSecret` | empty | Secret-valued settings, one key per setting name (`LANGSTROTH_RELAY_ACCESS_TOKENS`, `LANGSTROTH_RELAY_METRICS_TOKEN`, `LANGSTROTH_RELAY_TOKEN_PUBKEY`, ...), mounted 0400 as a directory the relay reads (`LANGSTROTH_RELAY_SECRETS_DIR`); never env |

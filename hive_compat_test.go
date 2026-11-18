@@ -8,18 +8,19 @@ import (
 	"testing"
 )
 
-// TestHiveEnvelopeCompat guards the relay↔hive wire contract. The fixtures in
-// testdata/hive_envelopes are the exact sealed bodies hive's RelayClient POSTs
+// TestHiveEnvelopeCompat guards the relay↔Ligus client wire contract. The
+// fixtures in testdata/hive_envelopes are the exact sealed bodies the Ligus
+// client's RelayClient POSTs
 // to /v1/workspaces/{id}/envelopes (a SealedEnvelope: ciphertext + nonce +
-// version), captured from hive's real seal path. They deliberately include
+// version), captured from the client's real seal path. They deliberately include
 // event kinds added AFTER this relay was written — workspaceHostsUpdated and a
-// config-log memberAdded — because hive keeps adding SessionEvent variants and
+// config-log memberAdded — because the client keeps adding SessionEvent variants and
 // they all ride this one opaque body.
 //
 // The relay is content-blind (store.go carries bodies as json.RawMessage), so
 // the guarantee we assert is: (1) a sealed body carries no event plaintext, and
 // (2) the relay stores and returns it byte-for-byte. This runs in the relay's
-// own CI with no hive toolchain; regenerate the fixtures from hive if the
+// own CI with no client toolchain; regenerate the fixtures from the Ligus client if the
 // envelope encoding ever changes.
 func TestHiveEnvelopeCompat(t *testing.T) {
 	files, err := filepath.Glob("testdata/hive_envelopes/*.json")
