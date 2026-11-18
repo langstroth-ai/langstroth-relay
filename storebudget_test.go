@@ -55,7 +55,6 @@ func TestMemoryStoreByteBudget(t *testing.T) {
 
 func TestMemoryStoreBytesAccounting(t *testing.T) {
 	t.Setenv("LANGSTROTH_RELAY_MAX_STORE_BYTES", "1000000")
-	t.Setenv("LANGSTROTH_RELAY_MAX_ENVELOPES", "2")
 	t.Setenv("LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS", "1")
 	s := newMemoryStore()
 	ctx := t.Context()
@@ -67,7 +66,7 @@ func TestMemoryStoreBytesAccounting(t *testing.T) {
 	_ = s.PutPresence(ctx, "w", "d1", []byte(blob(50)))
 	_ = s.PutPresence(ctx, "w", "d1", []byte(blob(10)))
 	_ = s.PutPresence(ctx, "w", "d2", []byte(blob(10))) // evicts d1
-	want := int64(wsOverheadBytes+len("w")) + int64(2*(100+2)+(10+2))
+	want := int64(wsOverheadBytes+len("w")) + int64(5*(100+2)+(10+2))
 	if got := s.storeBytes; got != want {
 		t.Fatalf("storeBytes = %d, want %d", got, want)
 	}

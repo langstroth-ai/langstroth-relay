@@ -80,8 +80,6 @@ route or database table changes.
   default): deletes a whole room nobody has appended to for N days, keeping
   its sequence counter and roster. A room in use keeps its whole log: Ligus
   clients rebuild a workspace from its first envelope.
-  `LANGSTROTH_RELAY_MAX_ENVELOPES` and `LANGSTROTH_RELAY_RETENTION_DAYS`
-  keep working but are now documented as able to break a new device.
 - **Tenancy** (`LANGSTROTH_RELAY_TENANCY`, normally `_TENANCY_FILE`; off by
   default): several organisations on one relay process. The tenant comes
   only from a verified token (`tid` plus that tenant's issuer key or the
@@ -192,6 +190,15 @@ route or database table changes.
 
 ### Removed
 
+- **Per-envelope eviction**: `LANGSTROTH_RELAY_MAX_ENVELOPES` (a rolling
+  window per room, on by default at 50 000) and
+  `LANGSTROTH_RELAY_RETENTION_DAYS`. Both dropped a room's oldest envelopes,
+  including the founder's seed, which permanently broke every device that
+  joined the room afterwards (clients fold from seq 1 and never backfill).
+  The memory store no longer trims on write and Postgres no longer prunes
+  hourly; a relay that relied on the default stops evicting when it runs
+  this release. The relay refuses to start while either is set to anything
+  but `0`. Use the room quotas and `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS`.
 - **The downstream build hooks** `MainWith`, `Extension`, `Addon` and
   `Assemble`, and the `Options.TunnelBilling` override. The relay binary is
   `Main()`; a custom build still composes `New(Options{...})` with the seams

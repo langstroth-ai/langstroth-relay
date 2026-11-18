@@ -194,7 +194,6 @@ func (s *memoryStore) restore(snap snapshot) {
 		if ws.live && ws.lastWrite == 0 {
 			ws.lastWrite = time.Now().Unix()
 		}
-		s.pruneEnvelopesLocked(ws, time.Now().Unix())
 		s.workspaces[id] = ws
 	}
 	s.recountStoreBytesLocked()

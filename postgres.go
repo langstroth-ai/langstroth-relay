@@ -353,37 +353,6 @@ func (s *postgresStore) AppendEnvelope(ctx context.Context, workspace string, bo
 	return seq, nil
 }
 
-// PruneEnvelopes bounds the envelope table so it can't grow without limit: drop
-// rows older than maxAge (those with a created_at stamp), and keep at most
-// maxEnvelopes most-recent per workspace (by seq). A zero bound disables that
-// half. Returns the number of rows deleted. Safe to run periodically.
-func (s *postgresStore) PruneEnvelopes(ctx context.Context, maxEnvelopes int, maxAge time.Duration) (int64, error) {
-	var total int64
-	if maxAge > 0 {
-		cutoff := time.Now().Add(-maxAge).Unix()
-		n, err := s.accountedEnvelopeDelete(ctx,
-			`DELETE FROM relay_envelopes WHERE created_at IS NOT NULL AND created_at < $1 RETURNING workspace, octet_length(body) AS n`, cutoff)
-		if err != nil {
-			return total, err
-		}
-		total += n
-	}
-	if maxEnvelopes > 0 {
-		// Keep the top-N seqs per workspace; delete everything at or below the
-		// (max seq − N) floor.
-		n, err := s.accountedEnvelopeDelete(ctx,
-			`DELETE FROM relay_envelopes e
-			 USING (SELECT workspace, MAX(seq) AS mx FROM relay_envelopes GROUP BY workspace) m
-			 WHERE e.workspace = m.workspace AND e.seq <= m.mx - $1
-			 RETURNING e.workspace, octet_length(e.body) AS n`, int64(maxEnvelopes))
-		if err != nil {
-			return total, err
-		}
-		total += n
-	}
-	return total, nil
-}
-
 // PruneInbox bounds the account-inbox table (P2-13): drop rows older than maxAge
 // (those with a created_at stamp) and keep at most maxRows most-recent per
 // account (by seq). A zero bound disables that half. Returns rows deleted.

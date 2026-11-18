@@ -53,12 +53,11 @@ Consequences for this design:
   stays valid: new envelopes get higher seqs) and, in membership mode, its
   roster and invites (dropping the roster would unclaim the room and let
   anyone claim it).
-- The existing per-envelope bounds `LANGSTROTH_RELAY_MAX_ENVELOPES` (rolling
-  window, default 50 000) and `LANGSTROTH_RELAY_RETENTION_DAYS` (age) are
-  kept for compatibility but **can break a new joiner** in a room larger or
-  older than the bound. The community profile sets
-  `LANGSTROTH_RELAY_MAX_ENVELOPES=0` and leaves `RETENTION_DAYS` off, and
-  bounds rooms by quota (refusal, 507) instead of eviction.
+- The per-envelope bounds `LANGSTROTH_RELAY_MAX_ENVELOPES` (rolling window,
+  once on by default at 50 000) and `LANGSTROTH_RELAY_RETENTION_DAYS` (age)
+  **broke every new joiner** of a room larger or older than the bound, so
+  they are removed: the relay refuses to start while either is set to
+  anything but `0`. Rooms are bounded by quota (refusal, 507) instead.
 - A future client could mark its seed and governance envelopes so a relay
   could prune chat traffic around them; that needs a client change and leaks
   event classes to the relay, so it is out of scope here.

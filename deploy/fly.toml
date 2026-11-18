@@ -24,8 +24,9 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # limit below is off in the binary; uncomment the block to turn it on.
   # Storage quotas refuse with 507 (never evict: a client folds a room's
   # whole log from its first envelope), rates answer 429 with Retry-After.
+  # Never set LANGSTROTH_RELAY_MAX_ENVELOPES or _RETENTION_DAYS: they are
+  # removed and the relay refuses to start with either set (README).
   #
-  # LANGSTROTH_RELAY_MAX_ENVELOPES = "0"                    # no rolling eviction inside a room (it can drop a room's seed)
   # LANGSTROTH_RELAY_ROOM_MAX_BYTES = "67108864"            # 64 MiB per room (envelopes + key rotations)
   # LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES = "200000"
   # LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES = "8589934592"    # 8 GiB on Postgres; size it to the database disk

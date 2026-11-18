@@ -5,32 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Envelope retention bounds the in-memory (and thus snapshot) envelope log so a
-// long-lived self-host doesn't grow without limit and eventually OOM. Two knobs,
-// both prune the OLDEST envelopes of a workspace:
-//
-//   - LANGSTROTH_RELAY_MAX_ENVELOPES — hard cap on retained envelopes per workspace
-//     (0 = unlimited). This is the primary memory bound and is on by default.
-//   - LANGSTROTH_RELAY_RETENTION_DAYS — age cap; envelopes older than N days are pruned
-//     (0 = disabled, the default).
-//
-// Tradeoff: a client fetches everything after its cursor (?after=seq). Pruning
-// below a cursor means a device offline longer than the retention window can't
-// replay the gap from the relay — it must re-sync from a peer that still holds
-// history (the relay is a cache of recent E2EE traffic, not the source of
-// truth). Size the bounds above your expected offline window. Pruning never
-// touches an envelope a still-connected client is about to fetch under normal
-// operation; it only drops the tail beyond the configured horizon.
-const (
-	defaultRetentionMaxEnvelopes = 50000 // per workspace; ~sane default memory bound
-	defaultRetentionDays         = 0     // age-based pruning off unless configured
-)
+// A room's envelope log is never trimmed from the front: a client folds it
+// from seq 1 (the founder's seed), so rooms are bounded by refusal (room
+// quotas, the store byte budget) and expired only whole (eviction.go,
+// docs/tenancy.md).
 
 // memoryStore is the in-process Store: RWMutex-guarded maps plus an optional
 // JSON snapshot (set persistPath). Zero external dependencies; the self-host
@@ -52,10 +35,6 @@ type memoryStore struct {
 	nextIDSeq uint64                 // monotonic id source for users/tokens
 
 	persistPath string // "" = in-memory only
-
-	// Envelope retention bounds (see the retention doc above). 0 = unbounded.
-	retentionMaxEnvelopes int
-	retentionMaxAge       time.Duration
 
 	// Structural caps that bound unauthenticated growth (0 = unbounded):
 	//   inboxMaxRows      — per-account inbox rows (oldest evicted past the cap).
@@ -153,29 +132,26 @@ type memAccount struct {
 }
 
 func newMemoryStore() *memoryStore {
-	maxEnv, maxAge := retentionFromEnv()
 	s := &memoryStore{
-		workspaces:            map[string]*memWorkspace{},
-		directory:             map[string]*DirAccount{},
-		accounts:              map[string]*memAccount{},
-		loginIndex:            map[string]string{},
-		friendReqs:            map[string]*FriendRequest{},
-		friendEdges:           map[[2]string]struct{}{},
-		users:                 map[string]*UserRecord{},
-		tokens:                map[string]*memToken{},
-		tokenHash:             map[string]string{},
-		retentionMaxEnvelopes: maxEnv,
-		retentionMaxAge:       maxAge,
-		inboxMaxRows:          int(envInt64("LANGSTROTH_RELAY_INBOX_MAX_ROWS", defaultInboxMaxRows)),
-		maxKeyringPerWS:       int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
-		maxKeyringBytesPerWS:  int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
-		maxDeviceBlobsPerWS:   int(envInt64("LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS", defaultMaxDeviceBlobsPerWS)),
-		maxStoreBytes:         max(envInt64("LANGSTROTH_RELAY_MAX_STORE_BYTES", 0), 0),
-		notify:                newWSNotifier(),
-		memTunnel:             newMemTunnel(),
-		memContacts:           newMemContacts(),
-		tenantUse:             map[string]*memTenantUse{},
-		creatorRooms:          map[string]int64{},
+		workspaces:           map[string]*memWorkspace{},
+		directory:            map[string]*DirAccount{},
+		accounts:             map[string]*memAccount{},
+		loginIndex:           map[string]string{},
+		friendReqs:           map[string]*FriendRequest{},
+		friendEdges:          map[[2]string]struct{}{},
+		users:                map[string]*UserRecord{},
+		tokens:               map[string]*memToken{},
+		tokenHash:            map[string]string{},
+		inboxMaxRows:         int(envInt64("LANGSTROTH_RELAY_INBOX_MAX_ROWS", defaultInboxMaxRows)),
+		maxKeyringPerWS:      int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_PER_WS", defaultMaxKeyringPerWS)),
+		maxKeyringBytesPerWS: int(envInt64("LANGSTROTH_RELAY_MAX_KEYRING_BYTES_PER_WS", defaultMaxKeyringBytesPerWS)),
+		maxDeviceBlobsPerWS:  int(envInt64("LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS", defaultMaxDeviceBlobsPerWS)),
+		maxStoreBytes:        max(envInt64("LANGSTROTH_RELAY_MAX_STORE_BYTES", 0), 0),
+		notify:               newWSNotifier(),
+		memTunnel:            newMemTunnel(),
+		memContacts:          newMemContacts(),
+		tenantUse:            map[string]*memTenantUse{},
+		creatorRooms:         map[string]int64{},
 	}
 	s.memContacts.reserve = func(n int64) bool {
 		s.mu.Lock()
@@ -198,24 +174,6 @@ func (s *memoryStore) latestSeq(_ context.Context, workspace string) (uint64, er
 		return w.nextSeq, nil
 	}
 	return 0, nil
-}
-
-// retentionFromEnv resolves the envelope-retention bounds from the environment,
-// falling back to the documented defaults.
-func retentionFromEnv() (maxEnvelopes int, maxAge time.Duration) {
-	maxEnvelopes = defaultRetentionMaxEnvelopes
-	if v := getenv("LANGSTROTH_RELAY_MAX_ENVELOPES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			maxEnvelopes = n
-		}
-	}
-	days := defaultRetentionDays
-	if v := getenv("LANGSTROTH_RELAY_RETENTION_DAYS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			days = n
-		}
-	}
-	return maxEnvelopes, time.Duration(days) * 24 * time.Hour
 }
 
 func (s *memoryStore) workspace(id string) *memWorkspace {
@@ -366,56 +324,11 @@ func (s *memoryStore) AppendEnvelope(ctx context.Context, workspace string, body
 		}
 		w.dedup[dedupKey] = seq
 	}
-	s.pruneEnvelopesLocked(w, time.Now().Unix())
 	// Wake SSE subscribers — only reached on a genuinely new seq (the dedup
 	// branch above returns first), so a re-push never spams. publish is
 	// non-blocking and takes a separate mutex, so holding s.mu here is safe.
 	s.notify.publish(workspace, seq)
 	return seq, nil
-}
-
-// pruneEnvelopesLocked drops the oldest envelopes of w that fall outside the
-// configured retention bounds (age first, then the hard count cap). It
-// reallocates the retained tail so the pruned prefix's backing array can be
-// collected rather than pinned forever. Caller holds s.mu.
-func (s *memoryStore) pruneEnvelopesLocked(w *memWorkspace, now int64) {
-	drop := 0
-	if s.retentionMaxAge > 0 {
-		cutoff := now - int64(s.retentionMaxAge/time.Second)
-		for drop < len(w.envAt) && w.envAt[drop] < cutoff {
-			drop++
-		}
-	}
-	if s.retentionMaxEnvelopes > 0 {
-		if over := (len(w.envelopes) - drop) - s.retentionMaxEnvelopes; over > 0 {
-			drop += over
-		}
-	}
-	if drop <= 0 {
-		return
-	}
-	// Forget the idempotency keys of the envelopes being dropped (a re-push of a
-	// pruned envelope re-appends — the relay is a cache of recent traffic).
-	for i := 0; i < drop && i < len(w.envKey); i++ {
-		if k := w.envKey[i]; k != "" {
-			delete(w.dedup, k)
-		}
-	}
-	var freed int64
-	for i := 0; i < drop && i < len(w.envelopes); i++ {
-		freed += int64(len(w.envelopes[i].Body))
-	}
-	s.storeBytes -= freed
-	s.addRoomBytesLocked(w, -freed)
-	if drop >= len(w.envelopes) {
-		w.envelopes = nil
-		w.envAt = nil
-		w.envKey = nil
-		return
-	}
-	w.envelopes = append([]Envelope(nil), w.envelopes[drop:]...)
-	w.envAt = append([]int64(nil), w.envAt[drop:]...)
-	w.envKey = append([]string(nil), w.envKey[drop:]...)
 }
 
 func (s *memoryStore) EnvelopesAfter(_ context.Context, workspace string, after uint64) ([]Envelope, error) {

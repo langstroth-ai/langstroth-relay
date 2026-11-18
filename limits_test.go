@@ -403,7 +403,7 @@ func TestTunnelPushLimitsFromEnv(t *testing.T) {
 }
 
 // The migration backfills relay_rooms once from rooms written before it
-// existed, and the legacy envelope prune keeps the room counters right.
+// existed, and later writes add to the backfilled counters.
 func TestPG_RoomBackfillAndPruneAccounting(t *testing.T) {
 	s := pgStore(t)
 	if _, err := s.pool.Exec(bg, `INSERT INTO relay_envelopes (workspace, seq, body, created_at) VALUES ('legacy', 1, '"abc"', 100), ('legacy', 2, '"de"', 200)`); err != nil {
@@ -432,13 +432,10 @@ func TestPG_RoomBackfillAndPruneAccounting(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n, err := s.PruneEnvelopes(bg, 1, 0); err != nil || n != 3 {
-		t.Fatalf("prune: %d %v", n, err)
+	if err := s.pool.QueryRow(bg, `SELECT bytes, envelopes FROM relay_rooms WHERE workspace = 'acme/r'`).Scan(&bytes, &envs); err != nil || bytes != 18 || envs != 3 {
+		t.Fatalf("after appends: %d bytes %d envelopes (%v)", bytes, envs, err)
 	}
-	if err := s.pool.QueryRow(bg, `SELECT bytes, envelopes FROM relay_rooms WHERE workspace = 'acme/r'`).Scan(&bytes, &envs); err != nil || bytes != 6 || envs != 1 {
-		t.Fatalf("after prune: %d bytes %d envelopes (%v)", bytes, envs, err)
-	}
-	if b, _, _ := s.TenantUsage(bg, "acme"); b != 6 {
-		t.Fatalf("tenant bytes after prune: %d", b)
+	if b, _, _ := s.TenantUsage(bg, "acme"); b != 18 {
+		t.Fatalf("tenant bytes: %d", b)
 	}
 }

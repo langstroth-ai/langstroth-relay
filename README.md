@@ -107,8 +107,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `LANGSTROTH_RELAY_MAX_ENVELOPES` | `50000` | per-workspace retained-envelope cap, evicting the oldest (`0` = unbounded). The memory store enforces it on write; Postgres prunes to it hourly. **Can break a new device**: clients rebuild a workspace from its first envelope, so prefer `0` with the room quotas below |
-| `LANGSTROTH_RELAY_RETENTION_DAYS` | `0` (off) | prune envelopes older than N days; both stores. Same caveat; prefer `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` |
+| `LANGSTROTH_RELAY_MAX_ENVELOPES` | removed | **Removed.** Evicting a room's oldest envelopes dropped its seed and broke every device that joined later. The relay refuses to start while it is set to anything but `0`; use `LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES` (refuses with `507`) |
+| `LANGSTROTH_RELAY_RETENTION_DAYS` | removed | **Removed**, for the same reason; refused unless `0`. Use `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` (whole idle rooms) |
 | `LANGSTROTH_RELAY_MAX_STORE_BYTES` | `0` (unbounded) | memory store: cap on workspace bytes held across all workspaces (envelope bodies, keyring rows, candidate and presence blobs, per-workspace overhead). Writes past it answer `507`. Set it below your memory limit on any relay reachable by untrusted clients |
 | `LANGSTROTH_RELAY_MAX_BODY_BYTES` | `4194304` (4 MiB) | max JSON request-body size |
 | `LANGSTROTH_RELAY_MAX_LIST_BYTES` | `16777216` (16 MiB) | bound on one `GET …/keyring`, `…/candidates` or `…/presence` response, by stored blob bytes (`0` = unbounded). At least one row is always returned |
@@ -261,24 +261,17 @@ relay.example.com {
 
 #### Envelope retention
 
-The in-memory / snapshot store bounds how many envelopes it keeps per workspace
-so a long-running self-host doesn't grow without limit and eventually OOM. By
-default each workspace retains its newest `LANGSTROTH_RELAY_MAX_ENVELOPES` (50 000)
-envelopes; set `LANGSTROTH_RELAY_RETENTION_DAYS` to also drop envelopes older than N
-days. Set either to `0` to disable that bound (`0` for both = unbounded, the old
-behavior).
+The relay never removes envelopes from a room it still holds. A Ligus client
+rebuilds a workspace by folding its whole envelope log from the founder's
+signed seed (seq 1) and does not backfill from peers, so trimming the front of
+a room's log permanently breaks every device that joins afterwards. The
+per-envelope bounds `LANGSTROTH_RELAY_MAX_ENVELOPES` (once on by default at
+50 000) and `LANGSTROTH_RELAY_RETENTION_DAYS` are removed; the relay refuses to
+start while either is set to anything but `0`.
 
-**Tradeoff (vs. offline catch-up):** clients sync by fetching everything after a
-cursor (`?after=seq`). The relay is a cache of *recent* E2EE traffic, not the
-source of truth — pruning below a cursor means a device offline longer than the
-retention window can't replay the gap from the relay and must re-sync from a peer
-that still holds history. Size the bounds above your expected offline window.
-
-The Postgres backend applies the same two settings, hourly rather than on write
-(so a workspace can briefly exceed the cap). Its history is on disk rather than
-in RAM, so it can afford a much larger cap; for unbounded history set
-`LANGSTROTH_RELAY_MAX_ENVELOPES=0` (and leave `LANGSTROTH_RELAY_RETENTION_DAYS` at `0`)
-and watch the database's disk.
+Bound storage instead with the room quotas (`507` refusals, never eviction),
+`LANGSTROTH_RELAY_MAX_STORE_BYTES` on the memory store, and whole-room expiry
+(`LANGSTROTH_RELAY_ROOM_RETENTION_DAYS`); see [Community limits](#community-limits).
 
 ### Community limits
 

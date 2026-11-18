@@ -162,28 +162,6 @@ RETURNING bytes, rooms`, rowTenant, addBytes, newRoom).Scan(&tb, &tr); err != ni
 	return nil
 }
 
-// accountedEnvelopeDelete runs deleteSQL, a DELETE on relay_envelopes that
-// RETURNs (workspace, octet_length(body)), and takes what it removed off the
-// room and tenant counters in the same statement. Returns rows deleted.
-func (s *postgresStore) accountedEnvelopeDelete(ctx context.Context, deleteSQL string, args ...any) (int64, error) {
-	var n int64
-	err := s.pool.QueryRow(ctx, `
-WITH d AS (`+deleteSQL+`),
-a AS (SELECT workspace, sum(n)::bigint AS b, count(*)::bigint AS c FROM d GROUP BY workspace),
-u AS (UPDATE relay_rooms r SET bytes = r.bytes - a.b, envelopes = r.envelopes - a.c
-      FROM a WHERE r.workspace = a.workspace RETURNING r.tenant, a.b),
-t AS (UPDATE relay_tenant_usage tu SET bytes = tu.bytes - x.b
-      FROM (SELECT tenant, sum(b)::bigint AS b FROM u WHERE tenant <> '' GROUP BY tenant) x
-      WHERE tu.tenant = x.tenant RETURNING 1)
-SELECT count(*) FROM d`, args...).Scan(&n)
-	if err == nil && n > 0 {
-		s.total.mu.Lock()
-		s.total.at = time.Time{} // re-read the total
-		s.total.mu.Unlock()
-	}
-	return n, err
-}
-
 func (s *postgresStore) RoomTotals(ctx context.Context) (int64, int64, error) {
 	var rooms, bytes int64
 	err := s.pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(bytes), 0)::bigint FROM relay_rooms`).Scan(&rooms, &bytes)
