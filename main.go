@@ -56,6 +56,7 @@ func Main() {
 	fatalIf(removedEnvError(os.Environ()))
 	fatalIf(secretFilesConfigError(os.Getenv))
 	fatalIf(entitlementConfigError())
+	fatalIf(tenancyConfigError())
 	fatalIf(routesConfigError(getenv))
 	fatalIf(apnsWithoutTunnelError(getenv))
 
@@ -80,6 +81,13 @@ func Main() {
 	// in-memory store already enforces the same caps at write time.
 	if pruner, ok := store.(envelopePruner); ok {
 		go pruneLoop(pruner, stopFlush)
+	}
+	// Idle rooms (LANGSTROTH_RELAY_ROOM_RETENTION_DAYS): a whole room at a
+	// time, never envelopes out of a room in use (docs/tenancy.md).
+	lim := communityLimitsFromEnv()
+	lim.log()
+	if rs, ok := store.(roomStore); ok && lim.roomRetention > 0 {
+		go roomRetentionLoop(rs, lim.roomRetention, stopFlush)
 	}
 	// Expired contact records and old drops, on every backend (the memory
 	// store also hides expired records on access).

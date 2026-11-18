@@ -24,6 +24,34 @@ type TunnelHostRecord struct {
 	// Active is the last status the policy reported (false = pending). Only
 	// used to GC pending hosts that haven't been seen for 30 days.
 	Active bool `json:"active"`
+	// Tenant the host was registered under (tenancy only; "" otherwise).
+	// Set at first registration from the registration token and never
+	// changed: a host can't move to another tenant.
+	Tenant string `json:"tenant,omitempty"`
+}
+
+// tenantHostCounter is implemented by both built-in stores: hosts
+// registered under a tenant (for the tenant's max_hosts).
+type tenantHostCounter interface {
+	TunnelHostsOfTenant(ctx context.Context, tenant string) (int64, error)
+}
+
+func (m *memTunnel) TunnelHostsOfTenant(_ context.Context, tenant string) (int64, error) {
+	m.tmu.RLock()
+	defer m.tmu.RUnlock()
+	var n int64
+	for _, h := range m.tHosts {
+		if h.Tenant == tenant {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *postgresStore) TunnelHostsOfTenant(ctx context.Context, tenant string) (int64, error) {
+	var n int64
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM relay_tunnel_hosts WHERE tenant = $1`, tenant).Scan(&n)
+	return n, err
 }
 
 // TunnelStore is the tunnel's durable state.
@@ -267,13 +295,16 @@ CREATE TABLE IF NOT EXISTS relay_tunnel_push_tokens (
 -- The bundle id the phone reported with its token ('' = an app that predates
 -- multi-topic relays: the relay's default topic).
 ALTER TABLE relay_tunnel_push_tokens ADD COLUMN IF NOT EXISTS topic TEXT NOT NULL DEFAULT '';
+-- The tenant a host registered under (tenancy; '' otherwise). Never updated.
+ALTER TABLE relay_tunnel_hosts ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS relay_tunnel_hosts_tenant ON relay_tunnel_hosts (tenant) WHERE tenant <> '';
 `
 
 func (s *postgresStore) TunnelHost(ctx context.Context, hostID string) (*TunnelHostRecord, error) {
 	var r TunnelHostRecord
 	err := s.pool.QueryRow(ctx,
-		`SELECT host_id, pub, created_at, last_seen, active FROM relay_tunnel_hosts WHERE host_id = $1`, hostID).
-		Scan(&r.HostID, &r.Pub, &r.CreatedAt, &r.LastSeen, &r.Active)
+		`SELECT host_id, pub, created_at, last_seen, active, tenant FROM relay_tunnel_hosts WHERE host_id = $1`, hostID).
+		Scan(&r.HostID, &r.Pub, &r.CreatedAt, &r.LastSeen, &r.Active, &r.Tenant)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -285,9 +316,9 @@ func (s *postgresStore) TunnelHost(ctx context.Context, hostID string) (*TunnelH
 
 func (s *postgresStore) UpsertTunnelHost(ctx context.Context, rec TunnelHostRecord) error {
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO relay_tunnel_hosts (host_id, pub, created_at, last_seen, active) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO relay_tunnel_hosts (host_id, pub, created_at, last_seen, active, tenant) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (host_id) DO UPDATE SET last_seen = EXCLUDED.last_seen, active = EXCLUDED.active`,
-		rec.HostID, rec.Pub, rec.CreatedAt, rec.LastSeen, rec.Active)
+		rec.HostID, rec.Pub, rec.CreatedAt, rec.LastSeen, rec.Active, rec.Tenant)
 	return err
 }
 

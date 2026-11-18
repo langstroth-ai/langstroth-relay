@@ -75,6 +75,13 @@ type memoryStore struct {
 	maxStoreBytes int64
 	storeBytes    int64
 
+	// Room accounting (quota.go): live rooms and their bytes, per tenant and
+	// per creator. Recomputed on restore.
+	liveRooms    int64
+	roomBytes    int64
+	tenantUse    map[string]*memTenantUse
+	creatorRooms map[string]int64
+
 	// notify wakes SSE subscribers of this workspace on a genuinely new append
 	// (in-process; see wsNotifier).
 	notify *wsNotifier
@@ -116,6 +123,19 @@ type memWorkspace struct {
 	members map[string]*MemberRow
 	// Relay-issued invites, keyed by invite id (revocable/expiring self-enroll).
 	invites map[string]*memInvite
+
+	// Room accounting (quota.go). live: the room holds data and counts as a
+	// room (set by its first write, cleared by retention or a purge). The
+	// struct outlives that so nextSeq never restarts.
+	live      bool
+	tenant    string
+	creator   string
+	roomBytes int64 // envelope bodies + key rotations
+	lastWrite int64 // unix seconds of the last envelope or key-rotation write
+}
+
+type memTenantUse struct {
+	bytes, rooms int64
 }
 
 type memDeviceReg struct {
@@ -154,6 +174,8 @@ func newMemoryStore() *memoryStore {
 		notify:                newWSNotifier(),
 		memTunnel:             newMemTunnel(),
 		memContacts:           newMemContacts(),
+		tenantUse:             map[string]*memTenantUse{},
+		creatorRooms:          map[string]int64{},
 	}
 	s.memContacts.reserve = func(n int64) bool {
 		s.mu.Lock()
@@ -215,16 +237,93 @@ func (s *memoryStore) workspace(id string) *memWorkspace {
 // writes can't grow the heap past the budget.
 const wsOverheadBytes = 1024
 
-// workspaceForWrite returns the workspace for a write, charging a new one's
-// overhead to the byte budget. Caller holds s.mu.
-func (s *memoryStore) workspaceForWrite(id string) (*memWorkspace, error) {
-	if w := s.workspaces[id]; w != nil {
-		return w, nil
+// workspaceForWrite returns the workspace for a write of addBytes room bytes
+// and addEnv envelopes, after the quotas in ctx (quota.go) and the store byte
+// budget admit it. It charges a new workspace's overhead to the budget,
+// accounts the room bytes and, when the write creates the room, counts the
+// room for its tenant and creator. Device-blob writes pass 0/0 (they only
+// create the room). Caller holds s.mu.
+func (s *memoryStore) workspaceForWrite(ctx context.Context, id string, addBytes, addEnv int64) (*memWorkspace, error) {
+	q := quotaFrom(ctx)
+	w := s.workspaces[id]
+	creating := w == nil || !w.live
+	tenant := ""
+	if w != nil && w.live {
+		tenant = w.tenant
+	} else if q != nil {
+		tenant = q.Tenant
 	}
-	if !s.reserveLocked(int64(wsOverheadBytes + len(id))) {
+	if q != nil {
+		var rb, re int64
+		if w != nil {
+			rb, re = w.roomBytes, int64(len(w.envelopes))
+		}
+		tu := s.tenantUse[tenant]
+		if tu == nil {
+			tu = &memTenantUse{}
+		}
+		switch {
+		case addBytes > 0 && q.RoomMaxBytes > 0 && rb+addBytes > q.RoomMaxBytes:
+			return nil, errQuota(limRoomBytes, tenant)
+		case addEnv > 0 && q.RoomMaxEnvelopes > 0 && re+addEnv > q.RoomMaxEnvelopes:
+			return nil, errQuota(limRoomEnvelopes, tenant)
+		case addBytes > 0 && q.TotalMaxBytes > 0 && s.roomBytes+addBytes > q.TotalMaxBytes:
+			return nil, errQuota(limTotalBytes, tenant)
+		case addBytes > 0 && q.TenantMaxBytes > 0 && tu.bytes+addBytes > q.TenantMaxBytes:
+			return nil, errQuota(limTenantBytes, tenant)
+		case creating && q.TenantMaxRooms > 0 && tu.rooms >= q.TenantMaxRooms:
+			return nil, errQuota(limTenantRooms, tenant)
+		case creating && q.CreatorMaxRooms > 0 && q.Creator != "" && s.creatorRooms[q.Creator] >= q.CreatorMaxRooms:
+			return nil, errQuota(limClientRooms, tenant)
+		}
+	}
+	reserve := addBytes
+	if w == nil {
+		reserve += int64(wsOverheadBytes + len(id))
+	}
+	if !s.reserveLocked(reserve) {
 		return nil, ErrStoreFull
 	}
-	return s.workspace(id), nil
+	if w == nil {
+		w = s.workspace(id)
+	}
+	if creating {
+		w.live, w.tenant, w.creator = true, tenant, ""
+		if q != nil {
+			w.creator = q.Creator
+		}
+		s.liveRooms++
+		s.tenantUseFor(tenant).rooms++
+		if w.creator != "" {
+			s.creatorRooms[w.creator]++
+		}
+	}
+	if addBytes > 0 || addEnv > 0 {
+		w.lastWrite = time.Now().Unix()
+	}
+	s.addRoomBytesLocked(w, addBytes)
+	return w, nil
+}
+
+func (s *memoryStore) tenantUseFor(t string) *memTenantUse {
+	tu := s.tenantUse[t]
+	if tu == nil {
+		tu = &memTenantUse{}
+		s.tenantUse[t] = tu
+	}
+	return tu
+}
+
+// addRoomBytesLocked moves w's room bytes by n (negative frees) in every
+// total that counts them. It does not touch the store budget. Caller holds
+// s.mu.
+func (s *memoryStore) addRoomBytesLocked(w *memWorkspace, n int64) {
+	if n == 0 {
+		return
+	}
+	w.roomBytes += n
+	s.roomBytes += n
+	s.tenantUseFor(w.tenant).bytes += n
 }
 
 func (s *memoryStore) account(key string) *memAccount {
@@ -238,10 +337,15 @@ func (s *memoryStore) account(key string) *memAccount {
 
 // ── Workspace sync ───────────────────────────────────────────────────────────
 
-func (s *memoryStore) AppendEnvelope(_ context.Context, workspace string, body json.RawMessage, dedupKey string) (uint64, error) {
+func (s *memoryStore) AppendEnvelope(ctx context.Context, workspace string, body json.RawMessage, dedupKey string) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w, err := s.workspaceForWrite(workspace)
+	if w := s.workspaces[workspace]; w != nil && dedupKey != "" {
+		if seq, ok := w.dedup[dedupKey]; ok {
+			return seq, nil // already stored — idempotent no-op, even when full
+		}
+	}
+	w, err := s.workspaceForWrite(ctx, workspace, int64(len(body)), 1)
 	if err != nil {
 		return 0, err
 	}
@@ -250,14 +354,6 @@ func (s *memoryStore) AppendEnvelope(_ context.Context, workspace string, body j
 	// keys so the append below stays index-aligned.
 	if len(w.envKey) < len(w.envelopes) {
 		w.envKey = append(make([]string, len(w.envelopes)-len(w.envKey)), w.envKey...)
-	}
-	if dedupKey != "" {
-		if seq, ok := w.dedup[dedupKey]; ok {
-			return seq, nil // already stored — idempotent no-op
-		}
-	}
-	if !s.reserveLocked(int64(len(body))) {
-		return 0, ErrStoreFull
 	}
 	w.nextSeq++
 	seq := w.nextSeq
@@ -305,9 +401,12 @@ func (s *memoryStore) pruneEnvelopesLocked(w *memWorkspace, now int64) {
 			delete(w.dedup, k)
 		}
 	}
+	var freed int64
 	for i := 0; i < drop && i < len(w.envelopes); i++ {
-		s.storeBytes -= int64(len(w.envelopes[i].Body))
+		freed += int64(len(w.envelopes[i].Body))
 	}
+	s.storeBytes -= freed
+	s.addRoomBytesLocked(w, -freed)
 	if drop >= len(w.envelopes) {
 		w.envelopes = nil
 		w.envAt = nil
@@ -354,10 +453,10 @@ func (s *memoryStore) EnvelopesPage(_ context.Context, workspace string, after u
 	return pb.rows, false, nil
 }
 
-func (s *memoryStore) PutCandidate(_ context.Context, workspace, deviceID string, candidate json.RawMessage) error {
+func (s *memoryStore) PutCandidate(ctx context.Context, workspace, deviceID string, candidate json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w, err := s.workspaceForWrite(workspace)
+	w, err := s.workspaceForWrite(ctx, workspace, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -421,10 +520,10 @@ func (s *memoryStore) Candidates(_ context.Context, workspace string) (map[strin
 	return out, nil
 }
 
-func (s *memoryStore) PutPresence(_ context.Context, workspace, deviceID string, presence json.RawMessage) error {
+func (s *memoryStore) PutPresence(ctx context.Context, workspace, deviceID string, presence json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w, err := s.workspaceForWrite(workspace)
+	w, err := s.workspaceForWrite(ctx, workspace, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -443,12 +542,12 @@ func (s *memoryStore) PresenceBlobs(_ context.Context, workspace string) (map[st
 	return out, nil
 }
 
-func (s *memoryStore) AppendKeyRotation(_ context.Context, workspace string, blob json.RawMessage) error {
+func (s *memoryStore) AppendKeyRotation(ctx context.Context, workspace string, blob json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w, err := s.workspaceForWrite(workspace)
-	if err != nil {
-		return err
+	w := s.workspaces[workspace]
+	if w == nil {
+		w = &memWorkspace{} // for the cap checks only; nothing is stored
 	}
 	// Bound key-rotation growth per workspace (P2-12) by refusing past the
 	// caps, never by evicting: the oldest rows are the real rotations a junk
@@ -465,8 +564,9 @@ func (s *memoryStore) AppendKeyRotation(_ context.Context, workspace string, blo
 			return ErrKeyringFull
 		}
 	}
-	if !s.reserveLocked(int64(len(blob))) {
-		return ErrStoreFull
+	w, err := s.workspaceForWrite(ctx, workspace, int64(len(blob)), 0)
+	if err != nil {
+		return err
 	}
 	w.keyring = append(w.keyring, blob)
 	return nil

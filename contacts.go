@@ -216,7 +216,8 @@ func (s *Server) contactPreamble(w http.ResponseWriter, r *http.Request) (string
 		http.Error(w, "invalid contact id", http.StatusBadRequest)
 		return "", false
 	}
-	return cid, true
+	// Tenancy: a contact and its drop box live in the caller's tenant.
+	return tenantKey(r.Context(), cid), true
 }
 
 // ownerKey reads the owner's capability from X-Ligus-Contact-Key.

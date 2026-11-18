@@ -31,6 +31,9 @@ type postgresStore struct {
 	// Keyring caps (refuse past them; see AppendKeyRotation). 0 = unbounded.
 	maxKeyringPerWS      int
 	maxKeyringBytesPerWS int
+
+	// total caches the sum of room bytes (rooms_postgres.go).
+	total pgTotal
 }
 
 func newPostgresStore(ctx context.Context, dsn string) (Store, error) {
@@ -138,7 +141,7 @@ func (s *postgresStore) migrate(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
 		return fmt.Errorf("migration lock (another pod migrating, or hung holding it): %w", err)
 	}
-	for _, q := range []string{schemaSQL, tunnelSchemaSQL, contactsSchemaSQL} {
+	for _, q := range []string{schemaSQL, tunnelSchemaSQL, contactsSchemaSQL, roomsSchemaSQL} {
 		if _, err := tx.Exec(ctx, q); err != nil {
 			return err
 		}
@@ -315,6 +318,9 @@ func (s *postgresStore) AppendEnvelope(ctx context.Context, workspace string, bo
 	if err != nil {
 		return 0, err
 	}
+	if err := s.touchRoomTx(ctx, tx, workspace, int64(len(body)), 1); err != nil {
+		return 0, err
+	}
 	var keyArg any // NULL when dedup is disabled, so un-keyed appends never collide
 	if dedupKey != "" {
 		keyArg = dedupKey
@@ -339,6 +345,7 @@ func (s *postgresStore) AppendEnvelope(ctx context.Context, workspace string, bo
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
+	s.addTotal(int64(len(body)))
 	// Wake this instance's SSE subscribers. Only the genuinely-new path reaches
 	// here — the dedup fast-path and the 23505 race both return earlier — so a
 	// re-push never spams.
@@ -354,24 +361,25 @@ func (s *postgresStore) PruneEnvelopes(ctx context.Context, maxEnvelopes int, ma
 	var total int64
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
-		ct, err := s.pool.Exec(ctx,
-			`DELETE FROM relay_envelopes WHERE created_at IS NOT NULL AND created_at < $1`, cutoff)
+		n, err := s.accountedEnvelopeDelete(ctx,
+			`DELETE FROM relay_envelopes WHERE created_at IS NOT NULL AND created_at < $1 RETURNING workspace, octet_length(body) AS n`, cutoff)
 		if err != nil {
 			return total, err
 		}
-		total += ct.RowsAffected()
+		total += n
 	}
 	if maxEnvelopes > 0 {
 		// Keep the top-N seqs per workspace; delete everything at or below the
 		// (max seq − N) floor.
-		ct, err := s.pool.Exec(ctx,
+		n, err := s.accountedEnvelopeDelete(ctx,
 			`DELETE FROM relay_envelopes e
 			 USING (SELECT workspace, MAX(seq) AS mx FROM relay_envelopes GROUP BY workspace) m
-			 WHERE e.workspace = m.workspace AND e.seq <= m.mx - $1`, int64(maxEnvelopes))
+			 WHERE e.workspace = m.workspace AND e.seq <= m.mx - $1
+			 RETURNING e.workspace, octet_length(e.body) AS n`, int64(maxEnvelopes))
 		if err != nil {
 			return total, err
 		}
-		total += ct.RowsAffected()
+		total += n
 	}
 	return total, nil
 }
@@ -508,13 +516,30 @@ func (s *postgresStore) EnvelopesPage(ctx context.Context, workspace string, aft
 }
 
 func (s *postgresStore) PutCandidate(ctx context.Context, workspace, deviceID string, candidate json.RawMessage) error {
-	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO relay_candidates (workspace, device_id, blob) VALUES ($1, $2, $3)
-		 ON CONFLICT (workspace, device_id) DO UPDATE SET blob = EXCLUDED.blob`,
-		workspace, deviceID, string(candidate)); err != nil {
+	if err := s.putDeviceBlob(ctx, "relay_candidates", workspace, deviceID, candidate); err != nil {
 		return err
 	}
 	return s.capDeviceBlobs(ctx, "relay_candidates", workspace)
+}
+
+// putDeviceBlob upserts a candidate or presence blob, creating the room on
+// its first write (which the room quotas in ctx may refuse).
+func (s *postgresStore) putDeviceBlob(ctx context.Context, table, workspace, deviceID string, blob json.RawMessage) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.touchRoomTx(ctx, tx, workspace, 0, 0); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO `+table+` (workspace, device_id, blob) VALUES ($1, $2, $3)
+		 ON CONFLICT (workspace, device_id) DO UPDATE SET blob = EXCLUDED.blob`,
+		workspace, deviceID, string(blob)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // capDeviceBlobs bounds the per-workspace device-blob rows so an attacker can't
@@ -537,10 +562,7 @@ func (s *postgresStore) Candidates(ctx context.Context, workspace string) (map[s
 }
 
 func (s *postgresStore) PutPresence(ctx context.Context, workspace, deviceID string, presence json.RawMessage) error {
-	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO relay_presence (workspace, device_id, blob) VALUES ($1, $2, $3)
-		 ON CONFLICT (workspace, device_id) DO UPDATE SET blob = EXCLUDED.blob`,
-		workspace, deviceID, string(presence)); err != nil {
+	if err := s.putDeviceBlob(ctx, "relay_presence", workspace, deviceID, presence); err != nil {
 		return err
 	}
 	return s.capDeviceBlobs(ctx, "relay_presence", workspace)
@@ -596,11 +618,18 @@ func (s *postgresStore) AppendKeyRotation(ctx context.Context, workspace string,
 			return ErrKeyringFull
 		}
 	}
+	if err := s.touchRoomTx(ctx, tx, workspace, int64(len(blob)), 0); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO relay_keyring (workspace, blob) VALUES ($1, $2)`, workspace, string(blob)); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.addTotal(int64(len(blob)))
+	return nil
 }
 
 func (s *postgresStore) KeyRotations(ctx context.Context, workspace string) ([]json.RawMessage, error) {

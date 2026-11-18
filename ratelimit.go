@@ -152,3 +152,18 @@ func (c *keyedConcurrencyLimiter) size() int {
 	defer c.mu.Unlock()
 	return len(c.cur)
 }
+
+// allowWait is allow that also reports, when refused, how long until the
+// bucket holds a token again (for Retry-After).
+func (l *ipRateLimiter) allowWait(key string) (bool, time.Duration) {
+	if l.allow(key) {
+		return true, 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.seen[key]
+	if b == nil || l.rate <= 0 {
+		return false, time.Second
+	}
+	return false, time.Duration((1 - b.tokens) / l.rate * float64(time.Second))
+}

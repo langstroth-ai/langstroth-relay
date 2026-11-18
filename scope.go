@@ -84,6 +84,16 @@ func (s *Server) scoped(h http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "this access token is not scoped to this workspace", http.StatusForbidden)
 			return
 		}
-		h(w, r)
+		// From here on the id is the storage key: "<tenant>/<id>" in tenancy
+		// mode (the scope check above used the id the client sent).
+		room := tenantKey(r.Context(), r.PathValue("id"))
+		r.SetPathValue("id", room)
+		if s.lim.room != nil {
+			if ok, wait := s.lim.room.allowWait(room); !ok {
+				tooMany(w, limRoomRate, tenantID(r.Context()), wait, "room rate limit exceeded")
+				return
+			}
+		}
+		h(w, r.WithContext(withQuota(r.Context(), s.quotaFor(r))))
 	}
 }

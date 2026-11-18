@@ -73,7 +73,8 @@ refusal in `hive_relay_limit_rejections_total{limit}`.
 |---|---|---|
 | `LANGSTROTH_RELAY_ROOM_MAX_BYTES` | stored bytes per room: envelope bodies + key rotations | 507 `room_bytes` |
 | `LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES` | stored envelopes per room | 507 `room_envelopes` |
-| `LANGSTROTH_RELAY_MAX_STORE_BYTES` | total. Memory: every workspace byte (as before). Postgres (new): sum of room bytes, re-read at most every 10 s, so it can overshoot by what is written in that window | 507 `store_bytes` |
+| `LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES` | sum of room bytes across the relay, both backends. Postgres re-reads the sum at most every 10 s and adds its own writes, so it can overshoot by what another writer adds in that window (none on one replica) | 507 `total_bytes` |
+| `LANGSTROTH_RELAY_MAX_STORE_BYTES` | unchanged: memory store only, every workspace byte | 507 `store_bytes` |
 | `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` | delete a room idle for N days (above) | none |
 | `LANGSTROTH_RELAY_IP_RATE` / `_BURST` | every request per client address (IPv6 /64), before authentication | 429 `ip_rate` |
 | `LANGSTROTH_RELAY_ROOM_RATE` / `_BURST` | every request to one room, all clients together | 429 `room_rate` |
@@ -218,7 +219,7 @@ routes don't change):
 |---|---|
 | `GET /v1/tenant` | `{"tenant","usage":{"bytes","rooms","hosts"},"limits":{...}}` |
 | `GET /v1/tenant/rooms?after=<id>&limit=<n>` | `{"rooms":[{"id","bytes","envelopes","lastWrite"}],"next"}`, ids without the prefix, sorted, at most 1000 |
-| `DELETE /v1/tenant/rooms/{id}` | delete the room's envelopes, key rotations, device blobs, roster and invites; `{"ok":true}` |
+| `DELETE /v1/tenant/rooms/{id}` | delete the room's envelopes, key rotations, device blobs, roster and invites; `{"ok":true,"existed":bool}` |
 
 They bypass the room access gate and authenticate themselves: a tenant token
 (as above) carrying the cap `tenant_admin`, or the tenant's static admin

@@ -121,8 +121,11 @@ type tunnelHub struct {
 	sessions map[string]*hostSessions
 	status   map[string]statusEntry
 	pushDay  map[string]*dayCount
-	conns    map[*tconn]struct{}
-	shutting bool
+	// tenancy binds hosts to tenants and limits them per tenant (nil = off).
+	tenancy       *tenancyConf
+	tenantPushDay map[string]*dayCount // pushes per tenant per day
+	conns         map[*tconn]struct{}
+	shutting      bool
 
 	connectLim *ipRateLimiter // per IP
 	openLim    *ipRateLimiter // per host
@@ -139,6 +142,7 @@ type tunnelHub struct {
 
 type hostCtl struct {
 	hostID string
+	tenant string // the host's tenant (tenancy only)
 	conn   *tconn
 	gone   chan struct{}
 	poke   chan struct{} // buffered 1: re-check status now (RefreshTunnelStatus)
@@ -213,6 +217,10 @@ func newTunnelHub(store Store, policy TunnelPolicy, push PushSender) *tunnelHub 
 		ts = newMemTunnel()
 	}
 	lim := defaultTunnelLimits()
+	// Push limits per host (LANGSTROTH_RELAY_TUNNEL_PUSH_*; 0 = no limit).
+	lim.PushRate = envFloat("LANGSTROTH_RELAY_TUNNEL_PUSH_RATE", lim.PushRate)
+	lim.PushBurst = envFloat("LANGSTROTH_RELAY_TUNNEL_PUSH_BURST", lim.PushBurst)
+	lim.PushPerDay = int(envInt64("LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY", int64(lim.PushPerDay)))
 	h := &tunnelHub{
 		store:    ts,
 		policy:   policy,
@@ -225,8 +233,10 @@ func newTunnelHub(store Store, policy TunnelPolicy, push PushSender) *tunnelHub 
 		sessions: map[string]*hostSessions{},
 		status:   map[string]statusEntry{},
 		pushDay:  map[string]*dayCount{},
-		conns:    map[*tconn]struct{}{},
-		stop:     make(chan struct{}),
+
+		tenantPushDay: map[string]*dayCount{},
+		conns:         map[*tconn]struct{}{},
+		stop:          make(chan struct{}),
 
 		revokeSeen: newReplayCache(100_000),
 	}
@@ -531,6 +541,28 @@ func (h *tunnelHub) admitHost(ctx context.Context, m *relayMsg, nonce []byte) (*
 			return nil, terr(tcUnauthorized, "registration refused")
 		}
 		rec = &TunnelHostRecord{HostID: m.HostID, Pub: pubB, CreatedAt: now}
+		if h.tenancy != nil {
+			// The host joins the tenant its registration token proves, once.
+			_, t, ok := h.tenancy.verify(m.Reg, now)
+			if !ok {
+				return nil, terr(tcUnauthorized, "registration refused")
+			}
+			if t.limits.MaxHosts > 0 {
+				hc, ok := h.store.(tenantHostCounter)
+				if !ok {
+					return nil, terr(tcInternal, "store unavailable")
+				}
+				n, err := hc.TunnelHostsOfTenant(ctx, t.id)
+				if err != nil {
+					return nil, terr(tcInternal, "store unavailable")
+				}
+				if n >= t.limits.MaxHosts {
+					countLimit(limTenantHosts, t.id)
+					return nil, terr(tcUnauthorized, "registration refused: the tenant has its maximum number of hosts")
+				}
+			}
+			rec.Tenant = t.id
+		}
 	} else if !bytes.Equal(rec.Pub, pubB) {
 		return nil, terr(tcUnauthorized, "hostPub does not match the registered key")
 	}
@@ -542,7 +574,7 @@ func (h *tunnelHub) admitHost(ctx context.Context, m *relayMsg, nonce []byte) (*
 	if err := h.store.UpsertTunnelHost(ctx, *rec); err != nil {
 		return nil, terr(tcInternal, "store unavailable")
 	}
-	return &hostCtl{hostID: m.HostID, gone: make(chan struct{}), poke: make(chan struct{}, 1)}, nil
+	return &hostCtl{hostID: m.HostID, tenant: rec.Tenant, gone: make(chan struct{}), poke: make(chan struct{}, 1)}, nil
 }
 
 // watchStatus re-checks admission status every StatusTTL (or at once when poked by
@@ -792,7 +824,13 @@ func (h *tunnelHub) handlePush(ctl *hostCtl, m relayMsg) {
 		return
 	}
 	if !h.pushLim.allow(ctl.hostID) || !h.pushDayAllow(ctl.hostID) {
+		countLimit(limPush, ctl.tenant)
 		result("rate_limited", "the host is over the relay's push rate", nil)
+		return
+	}
+	if !h.tenantPushAllow(ctl.tenant) {
+		countLimit(limPush, ctl.tenant)
+		result("rate_limited", "the host's tenant is over the relay's push rate", nil)
 		return
 	}
 	tok, err := h.store.TunnelPushToken(ctx, ctl.hostID, m.PID)
@@ -848,6 +886,30 @@ func (h *tunnelHub) pushDayAllow(hostID string) bool {
 		h.pushDay[hostID] = d
 	}
 	if d.n >= h.lim.PushPerDay {
+		return false
+	}
+	d.n++
+	return true
+}
+
+// tenantPushAllow counts one push against the tenant's push_per_day.
+func (h *tunnelHub) tenantPushAllow(tenant string) bool {
+	if h.tenancy == nil || tenant == "" {
+		return true
+	}
+	t := h.tenancy.tenants[tenant]
+	if t == nil || t.limits.PushPerDay <= 0 {
+		return true
+	}
+	day := h.nowUnix() / 86400
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	d := h.tenantPushDay[tenant]
+	if d == nil || d.day != day {
+		d = &dayCount{day: day}
+		h.tenantPushDay[tenant] = d
+	}
+	if d.n >= t.limits.PushPerDay {
 		return false
 	}
 	d.n++
