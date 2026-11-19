@@ -83,6 +83,11 @@ const (
 	defaultBlobWriterInflight = 4
 	blobInflightRetry         = 5 * time.Second
 
+	// Downloads being written at once, relay-wide and per downloader. Each
+	// holds the whole blob in memory until the client has read it.
+	defaultBlobDownloadInflight       = 8
+	defaultBlobClientDownloadInflight = 2
+
 	// Downloads per blob (enough for a large team's devices to fetch a new
 	// attachment at once, then a steady trickle) and per downloader.
 	defaultBlobDownloadRate        = 0.5
@@ -127,6 +132,7 @@ type blobConfig struct {
 	inflight       *blobInflight  // LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT / _WRITER_INFLIGHT (nil = off)
 	download       *ipRateLimiter // LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE / _BURST, per blob (nil = off)
 	clientDownload *ipRateLimiter // LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE / _BURST, per downloader (nil = off)
+	downloads      *blobInflight  // LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT / _CLIENT_DOWNLOAD_INFLIGHT (nil = off)
 }
 
 func blobConfigFromEnv() blobConfig {
@@ -149,6 +155,10 @@ func blobConfigFromEnv() blobConfig {
 	if n, w := pos("LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT", defaultBlobMaxInflight),
 		pos("LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT", defaultBlobWriterInflight); n > 0 || w > 0 {
 		c.inflight = &blobInflight{max: n, perWriter: w, byWriter: map[string]int64{}}
+	}
+	if n, w := pos("LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT", defaultBlobDownloadInflight),
+		pos("LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_INFLIGHT", defaultBlobClientDownloadInflight); n > 0 || w > 0 {
+		c.downloads = &blobInflight{max: n, perWriter: w, byWriter: map[string]int64{}}
 	}
 	if r := envFloat("LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE", defaultBlobDownloadRate); r > 0 {
 		c.download = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_BLOB_DOWNLOAD_BURST", defaultBlobDownloadBurst), 1))
@@ -184,6 +194,9 @@ func (c blobConfig) log() {
 	}
 	if c.inflight != nil {
 		attrs = append(attrs, "max_inflight", c.inflight.max, "writer_inflight", c.inflight.perWriter)
+	}
+	if c.downloads != nil {
+		attrs = append(attrs, "download_inflight", c.downloads.max, "client_download_inflight", c.downloads.perWriter)
 	}
 	if c.download != nil {
 		attrs = append(attrs, "download_rate", c.download.rate, "download_burst", c.download.burst)
@@ -505,6 +518,16 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 		blobNotFound(w)
 		return
 	}
+	// A slot before the blob is loaded: it stays in memory until the
+	// client has read all of it.
+	if l := s.blobs.downloads; l != nil {
+		who := writerTag(r.Context(), clientKey(r))
+		if !l.acquire(who) {
+			tooMany(w, limBlobInflight, tenantID(r.Context()), blobInflightRetry, "too many attachment downloads in progress")
+			return
+		}
+		defer l.release(who)
+	}
 	_, data, ok, err := s.blobStore.GetBlob(r.Context(), room, id, time.Now().Unix())
 	if storeErr(w, err) {
 		return
@@ -524,7 +547,6 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 		tooMany(w, limBlobDownloadRate, tenantID(r.Context()), wait, "attachment download rate exceeded")
 		return
 	}
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(blobTransferWindow))
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -532,7 +554,35 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	writeBlobPaced(w, data, time.Now().Add(blobTransferWindow))
+}
+
+// blobWriteChunk is how much of a download is written per write deadline.
+const blobWriteChunk = 64 << 10
+
+// writeBlobPaced writes a download by end at the latest, paced like an
+// upload (pacedReader): a client that reads nothing for blobIdleTimeout, or
+// averages under blobMinRate after blobRateGrace, is cut off, so it can't
+// hold a download slot and the blob's memory for the whole window.
+func writeBlobPaced(w http.ResponseWriter, data []byte, end time.Time) {
+	rc := http.NewResponseController(w)
+	start := time.Now()
+	for off := 0; off < len(data); {
+		now := time.Now()
+		if el := now.Sub(start); el > blobRateGrace && float64(off) < el.Seconds()*float64(blobMinRate) {
+			return
+		}
+		d := now.Add(blobIdleTimeout)
+		if d.After(end) {
+			d = end
+		}
+		_ = rc.SetWriteDeadline(d)
+		n := min(len(data)-off, blobWriteChunk)
+		if _, err := w.Write(data[off : off+n]); err != nil {
+			return
+		}
+		off += n
+	}
 }
 
 func (s *Server) deleteBlob(w http.ResponseWriter, r *http.Request) {

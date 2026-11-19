@@ -46,28 +46,29 @@ func quotaFrom(ctx context.Context) *writeQuota {
 
 // Limit names: the label values of hive_relay_limit_rejections_total.
 const (
-	limRoomBytes     = "room_bytes"
-	limRoomEnvelopes = "room_envelopes"
-	limTotalBytes    = "total_bytes"
-	limTotalRooms    = "total_rooms"
-	limStoreBytes    = "store_bytes"
-	limKeyring       = "keyring"
-	limTenantBytes   = "tenant_bytes"
-	limTenantRooms   = "tenant_rooms"
-	limClientRooms   = "client_rooms"
-	limIPRate        = "ip_rate"
-	limRoomRate      = "room_rate"
-	limTenantRate    = "tenant_rate"
-	limPairings      = "pairings"
-	limPush          = "push"
-	limTenantHosts   = "tenant_hosts"
+	limRoomBytes      = "room_bytes"
+	limRoomEnvelopes  = "room_envelopes"
+	limTotalBytes     = "total_bytes"
+	limTotalRooms     = "total_rooms"
+	limStoreBytes     = "store_bytes"
+	limKeyring        = "keyring"
+	limTenantBytes    = "tenant_bytes"
+	limTenantRooms    = "tenant_rooms"
+	limClientRooms    = "client_rooms"
+	limIPRate         = "ip_rate"
+	limRoomRate       = "room_rate"
+	limTenantRate     = "tenant_rate"
+	limPairings       = "pairings"
+	limPush           = "push"
+	limTenantHosts    = "tenant_hosts"
+	limClientInflight = "client_inflight"
 )
 
 // allLimitNames fixes the label set (and its order on /metrics).
 var allLimitNames = []string{
 	limRoomBytes, limRoomEnvelopes, limTotalBytes, limTotalRooms, limStoreBytes, limKeyring,
 	limTenantBytes, limTenantRooms, limClientRooms, limIPRate, limRoomRate,
-	limTenantRate, limPairings, limPush, limTenantHosts,
+	limTenantRate, limPairings, limPush, limTenantHosts, limClientInflight,
 }
 
 // quotaError is a refused write. Storage quotas (storage=true) match

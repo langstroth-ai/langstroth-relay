@@ -23,12 +23,16 @@
 #   - LANGSTROTH_RELAY_<X> already set: it is kept (the running relay already
 #     prefers it); the old names are only unset.
 #   - Settings no longer read at all (DROP below) are unset, not renamed.
+#     That includes the removed eviction settings MAX_ENVELOPES and
+#     RETENTION_DAYS: v0.3 refuses to start while either is set to anything
+#     but 0 (use LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES / _ROOM_RETENTION_DAYS).
 set -euo pipefail
 
 FLY=${FLYCTL:-flyctl}
 # Settings the open relay does not read under any name. ADMIN_LOGINS was read
-# only by the old Rust relay and the enterprise build.
-DROP=" ADMIN_LOGINS "
+# only by the old Rust relay and the enterprise build; MAX_ENVELOPES and
+# RETENTION_DAYS are the removed per-envelope eviction (eviction.go).
+DROP=" ADMIN_LOGINS MAX_ENVELOPES RETENTION_DAYS "
 
 APP=${1:-}
 MODE=${2:-plan}
@@ -51,6 +55,10 @@ for name in ${OLD[@]+"${OLD[@]}"}; do
   UNSET+=("$name")
   if [[ "$DROP" == *" $short "* ]]; then
     echo "drop    $name (not read by the relay)"
+  elif [[ $name == HIVE_RELAY_* ]] && has "LIGUS_RELAY_$short"; then
+    # Checked before the LANGSTROTH_RELAY_ name: on a rerun that name may
+    # already hold the LIGUS_RELAY_ value, which is the one to compare.
+    echo "drop    $name (LIGUS_RELAY_$short is the value in use)"
   elif has "$new"; then
     # The running relay refuses two different values for one setting, so a
     # differing digest means one of them was changed by hand: stop.
@@ -59,8 +67,6 @@ for name in ${OLD[@]+"${OLD[@]}"}; do
       exit 1
     fi
     echo "keep    $new (already set, same digest); unset $name"
-  elif [[ $name == HIVE_RELAY_* ]] && has "LIGUS_RELAY_$short"; then
-    echo "drop    $name (LIGUS_RELAY_$short is the value in use)"
   else
     echo "rename  $name -> $new"
     COPY_FROM+=("$name"); COPY_TO+=("$new")

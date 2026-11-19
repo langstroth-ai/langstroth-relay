@@ -90,6 +90,7 @@ func contactConfigFromEnv() contactConfig {
 			DropMaxRows:     pos("LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS", defaultContactDropMaxRows),
 			DropMaxBoxBytes: pos("LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES", defaultContactDropMaxBoxBytes),
 			ReclaimHold:     time.Duration(nonNeg("LANGSTROTH_RELAY_CONTACT_RECLAIM_HOLD_DAYS", defaultContactReclaimHoldDays)) * 24 * time.Hour,
+			MaxBytes:        max(envInt64("LANGSTROTH_RELAY_MAX_CONTACT_BYTES", 0), 0),
 		},
 	}
 }

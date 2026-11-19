@@ -34,6 +34,8 @@ type postgresStore struct {
 
 	// total caches the sum of room bytes (rooms_postgres.go).
 	total pgTotal
+
+	contactTotal pgContactTotal // ContactLimits.MaxBytes (contacts_postgres.go)
 }
 
 func newPostgresStore(ctx context.Context, dsn string) (Store, error) {

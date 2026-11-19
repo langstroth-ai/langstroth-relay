@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,42 @@ type communityLimits struct {
 
 	ip   *ipRateLimiter // LANGSTROTH_RELAY_IP_RATE / _BURST: every request per client
 	room *ipRateLimiter // LANGSTROTH_RELAY_ROOM_RATE / _BURST: every request per room
+
+	// LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT: ordinary requests one client
+	// may hold open at once (inflight), and an IPv6 /48 in total
+	// (inflight48, inflightSlash48Factor times as many).
+	inflight   *keyedConcurrencyLimiter
+	inflight48 *keyedConcurrencyLimiter
+}
+
+// One IPv6 /48 holds 65536 client /64s; together they may hold this many
+// times the per-client in-flight cap.
+const inflightSlash48Factor = 16
+
+// inflightPath reports whether the per-client in-flight cap applies to path:
+// every limited route but the ones with their own concurrency caps (event
+// streams, the tunnel's WebSockets, blob transfers).
+func inflightPath(path string) bool {
+	return limitedPath(path) && !strings.HasPrefix(path, "/v1/tunnel/") &&
+		!strings.HasSuffix(path, "/events") && !strings.Contains(path, "/blobs")
+}
+
+// acquireInflight takes an in-flight slot for r's client (and its /48);
+// ok=false means the client is at its cap.
+func (l communityLimits) acquireInflight(r *http.Request) (release func(), ok bool) {
+	rel, ok := l.inflight.acquire(clientKey(r))
+	if !ok {
+		return rel, false
+	}
+	if k := slash48Key(r); k != "" {
+		rel48, ok := l.inflight48.acquire(k)
+		if !ok {
+			rel()
+			return rel48, false
+		}
+		return func() { rel48(); rel() }, true
+	}
+	return rel, true
 }
 
 func communityLimitsFromEnv() communityLimits {
@@ -32,6 +69,10 @@ func communityLimitsFromEnv() communityLimits {
 	}
 	if r := envFloat("LANGSTROTH_RELAY_IP_RATE", 0); r > 0 {
 		l.ip = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_IP_BURST", r*2), 1))
+	}
+	if n := pos("LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT"); n > 0 {
+		l.inflight = newKeyedConcurrencyLimiter(n)
+		l.inflight48 = newKeyedConcurrencyLimiter(n * inflightSlash48Factor)
 	}
 	if r := envFloat("LANGSTROTH_RELAY_ROOM_RATE", 0); r > 0 {
 		l.room = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_ROOM_BURST", r*2), 1))
@@ -96,7 +137,7 @@ func roomRetentionLoop(rs roomStore, idle time.Duration, stop <-chan struct{}) {
 // logLimits says at startup which community limits are on.
 func (l communityLimits) log() {
 	if l.roomMaxBytes == 0 && l.roomMaxEnvelopes == 0 && l.totalMaxBytes == 0 && l.totalMaxRooms == 0 && l.maxRoomsPerClient == 0 &&
-		l.roomRetention == 0 && l.ip == nil && l.room == nil {
+		l.roomRetention == 0 && l.ip == nil && l.room == nil && l.inflight == nil {
 		return
 	}
 	attrs := []any{
@@ -109,6 +150,9 @@ func (l communityLimits) log() {
 	}
 	if l.room != nil {
 		attrs = append(attrs, "room_rate", l.room.rate, "room_burst", l.room.burst)
+	}
+	if l.inflight != nil {
+		attrs = append(attrs, "max_inflight_per_client", l.inflight.max)
 	}
 	slog.Info("community limits", attrs...)
 }

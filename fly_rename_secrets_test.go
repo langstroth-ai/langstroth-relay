@@ -72,6 +72,9 @@ func TestFlyRenameSecrets(t *testing.T) {
 		"HIVE_RELAY_APNS_TEAM_ID":      "SECRETTEAM",
 		"HIVE_RELAY_APNS_TOPIC":        "com.zazulam.hive.OLDTOPIC",
 		"LIGUS_RELAY_APNS_TOPIC":       "com.zazulam.ligus.lab",
+		// Removed in v0.3: renamed, it would stop the relay at startup
+		// unless it is 0, so it is dropped.
+		"HIVE_RELAY_MAX_ENVELOPES": "0",
 	}
 	for k, v := range start {
 		if err := os.WriteFile(filepath.Join(sec, k), []byte(v), 0o600); err != nil {
@@ -141,5 +144,64 @@ func TestFlyRenameSecrets(t *testing.T) {
 	// A second run finds nothing to do.
 	if out, err = run("--apply"); err != nil || !strings.Contains(out, "no HIVE_RELAY_* or LIGUS_RELAY_* secrets") {
 		t.Fatalf("rerun: %v\n%s", err, out)
+	}
+}
+
+// A rerun after a run that staged some new names and then stopped (a digest
+// mismatch, say) must still apply the precedence rules: a HIVE_RELAY_ name
+// whose LIGUS_RELAY_ twin exists is dropped, never compared against the
+// LANGSTROTH_RELAY_ copy of the LIGUS_RELAY_ value.
+func TestFlyRenameSecretsRerunAfterPartialRun(t *testing.T) {
+	for _, tool := range []string{"bash", "jq", "shasum"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not installed")
+		}
+	}
+	dir := t.TempDir()
+	fly := filepath.Join(dir, "flyctl")
+	if err := os.WriteFile(fly, []byte(fakeFlyctl), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sec := filepath.Join(dir, "sec")
+	if err := os.Mkdir(sec, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{
+		"HIVE_RELAY_APNS_TOPIC":        "com.zazulam.hive.OLDTOPIC",
+		"LIGUS_RELAY_APNS_TOPIC":       "com.zazulam.ligus.lab",
+		"LANGSTROTH_RELAY_APNS_TOPIC":  "com.zazulam.ligus.lab",
+		"HIVE_RELAY_TUNNEL":            "open",
+		"LANGSTROTH_RELAY_TUNNEL":      "open",
+		"HIVE_RELAY_RETENTION_DAYS":    "0",
+		"HIVE_RELAY_MEMBERSHIP_PUBKEY": "SECRETMEMBERPUB",
+	} {
+		if err := os.WriteFile(filepath.Join(sec, k), []byte(v), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("bash", "deploy/fly-rename-secrets.sh", "hive-relay-enterprise", "--apply")
+	cmd.Env = append(os.Environ(), "FLYCTL="+fly, "FAKE_FLY_STATE="+dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rerun: %v\n%s", err, out)
+	}
+	want := map[string]string{
+		"LANGSTROTH_RELAY_APNS_TOPIC":        "com.zazulam.ligus.lab",
+		"LANGSTROTH_RELAY_TUNNEL":            "open",
+		"LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY": "SECRETMEMBERPUB",
+	}
+	entries, _ := os.ReadDir(sec)
+	if len(entries) != len(want) {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("secrets after the rerun: %v\n%s", names, out)
+	}
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(sec, e.Name()))
+		if want[e.Name()] != string(b) {
+			t.Errorf("%s = %q, want %q", e.Name(), b, want[e.Name()])
+		}
 	}
 }

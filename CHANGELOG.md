@@ -63,6 +63,13 @@ route or database table changes.
   not on every push to main. Fly concurrency counts open connections
   (1500/2000), and the health check uses the current `http_service.checks`
   schema.
+- The project's public relay is deployed with the community profile on
+  (`.github/workflows/deploy.yml`): room quotas, 4 GiB of rooms, 2 GiB of
+  attachments and 1 GiB of contacts in total, memory caps on requests and
+  blob transfers in flight, 50 rooms per client and 100 000 in all, 180-day
+  idle-room expiry, per-client and per-room request rates, and at most
+  1200 event streams (below Fly's 2000-connection hard limit). Before, every
+  one of these was off on it.
 
 ### Added
 
@@ -255,6 +262,27 @@ route or database table changes.
   listed `tid` values.
 - **`LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
   key during a key rotation.
+- **`LANGSTROTH_RELAY_MAX_CONTACT_BYTES`** (Postgres; off by default, the
+  community profile sets 1 GiB): contact records plus drops across the
+  relay, `507` `contacts_full` past it. On Postgres nothing bounded them but
+  the disk, and at the per-client create rate one IPv4 address could add a
+  few GB of drop boxes a day.
+- **`LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT`** (off by default; the
+  community profile sets 32): ordinary requests one client may hold open at
+  once, `429` `client_inflight` past it, so one address can't pin hundreds
+  of multi-MiB bodies or response pages in memory.
+- **Blob downloads in flight** (`LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT`,
+  default 8, and `_CLIENT_DOWNLOAD_INFLIGHT`, default 2; `429
+  blob_inflight`), and downloads are paced like uploads (a reader that
+  stalls for 15 s or averages under 8 KiB/s is cut off). A download holds
+  its whole blob (up to 25 MiB) in memory, and nothing bounded how many ran
+  at once or how long a client that stopped reading kept one.
+- **Pairing codes per client** (`LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT`,
+  default 20; each IPv6 /48 gets 16x in total) and **live pairing bytes**
+  (`LANGSTROTH_RELAY_MAX_PAIRING_BYTES`, default 32 MiB): one address could
+  hold every one of the 50 000 live codes, answering `503` to everyone
+  else's pairing, and 50 000 payloads of 8 KiB would hold 400 MB of memory.
+  Past the per-client cap: `429` `pair_codes` with `Retry-After`.
 - `langstroth-relay issue --tenant <id>` sets `tid`.
 - Exported `IssueToken`, `VerifyToken`, `ParsePubkey` and `ParseSigningKey`.
 
@@ -276,7 +304,9 @@ renamed secrets go live with the v0.3.0 deploy itself. No step prints a value.
    When both old names are set, the `LIGUS_RELAY_` value (the one the v0.2
    relay uses) is kept. `HIVE_RELAY_ADMIN_LOGINS` is dropped: the open relay
    never read it (only the old Rust relay and the enterprise build did).
-   `DATABASE_URL` is unchanged.
+   `HIVE_RELAY_MAX_ENVELOPES` and `HIVE_RELAY_RETENTION_DAYS` are dropped
+   too: per-envelope eviction is removed, and v0.3.0 refuses to start while
+   either is set to anything but `0`. `DATABASE_URL` is unchanged.
 
 2. Stage the renames:
 

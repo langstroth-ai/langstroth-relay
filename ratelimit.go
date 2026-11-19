@@ -24,6 +24,14 @@ type ipRateLimiter struct {
 	lastGC time.Time
 }
 
+// A limiter holding limiterGCKeys buckets or more prunes the ones that have
+// refilled to their burst (no different from an absent bucket), at most every
+// limiterGCMinInterval; below that, idle buckets go every ten minutes.
+const (
+	limiterGCKeys        = 20000
+	limiterGCMinInterval = time.Second
+)
+
 type ipBucket struct {
 	tokens float64
 	last   time.Time
@@ -41,10 +49,14 @@ func (l *ipRateLimiter) allow(key string) bool {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// Occasionally drop idle buckets so the map can't grow without bound.
-	if now.Sub(l.lastGC) > 10*time.Minute {
+	// Occasionally drop idle buckets so the map can't grow without bound;
+	// under pressure (a flood of fresh keys), also every bucket that has
+	// refilled, which loses nothing.
+	pressure := len(l.seen) >= limiterGCKeys && now.Sub(l.lastGC) >= limiterGCMinInterval
+	if pressure || now.Sub(l.lastGC) > 10*time.Minute {
 		for k, b := range l.seen {
-			if now.Sub(b.last) > 10*time.Minute {
+			idle := now.Sub(b.last)
+			if idle > 10*time.Minute || (pressure && b.tokens+idle.Seconds()*l.rate >= l.burst) {
 				delete(l.seen, k)
 			}
 		}

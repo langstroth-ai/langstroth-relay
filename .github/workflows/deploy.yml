@@ -90,5 +90,39 @@ jobs:
           # ephemeral in-memory store if DATABASE_URL is ever missing (P2-16); set
           # here (not in the shared deploy/fly.toml) so self-host copies of the
           # config keep the snapshot-store fallback.
+          #
+          # The community profile (docs/reference.md, "Community limits"):
+          # this app is the public relay anyone may use, and every one of
+          # these limits is off in the binary. Values are for one
+          # shared-cpu-1x machine on Postgres; the three totals (rooms 4 GiB,
+          # blobs 2 GiB, contacts 1 GiB) must fit the database's disk
+          # together, so raise them only with it. MAX_SSE stays well below Fly's
+          # connection hard_limit (deploy/fly.toml) so event streams can't
+          # take every connection from requests and phone tunnels.
+          # Memory (512 MB): a blob transfer holds its whole blob (up to
+          # 25 MiB, twice over while it is decoded), so blob transfers in
+          # flight are capped at 4 each way, ordinary requests at 32 per
+          # client, and GOMEMLIMIT makes the Go runtime collect garbage
+          # before the machine runs out.
           flyctl deploy --remote-only --app hive-relay-enterprise --config deploy/fly.toml \
-            --env LANGSTROTH_RELAY_REQUIRE_DB=1
+            --env LANGSTROTH_RELAY_REQUIRE_DB=1 \
+            --env LANGSTROTH_RELAY_ROOM_MAX_BYTES=67108864 \
+            --env LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES=200000 \
+            --env LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES=4294967296 \
+            --env LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT=50 \
+            --env LANGSTROTH_RELAY_MAX_ROOMS=100000 \
+            --env LANGSTROTH_RELAY_ROOM_RETENTION_DAYS=180 \
+            --env LANGSTROTH_RELAY_IP_RATE=20 \
+            --env LANGSTROTH_RELAY_IP_BURST=200 \
+            --env LANGSTROTH_RELAY_ROOM_RATE=50 \
+            --env LANGSTROTH_RELAY_ROOM_BURST=500 \
+            --env LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES=2147483648 \
+            --env LANGSTROTH_RELAY_MAX_CONTACT_BYTES=1073741824 \
+            --env LANGSTROTH_RELAY_MAX_SSE=1200 \
+            --env LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT=32 \
+            --env LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT=4 \
+            --env LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT=4 \
+            --env GOMEMLIMIT=400MiB \
+            --env LANGSTROTH_RELAY_TUNNEL_PUSH_RATE=0.2 \
+            --env LANGSTROTH_RELAY_TUNNEL_PUSH_BURST=5 \
+            --env LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY=500

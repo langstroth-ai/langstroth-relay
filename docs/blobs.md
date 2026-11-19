@@ -51,6 +51,9 @@ deletes need Contributor and downloads need Viewer, as for envelopes.
   after its first 15 seconds, is cut off with `408 {"error":"blob_too_slow"}`,
   so a client trickling bytes (slowloris) can't hold an upload slot; the
   in-flight caps below bound how many slots one client can hold at once.
+  Downloads are paced the same way: a client that reads nothing for 15
+  seconds, or averages under 8 KiB/s after the first 15, is disconnected
+  (the response is cut short; the client's hash check fails it closed).
 
 ### Deleting
 
@@ -121,6 +124,8 @@ Every limit refuses; nothing is evicted to make room. Storage refusals are
 | `LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT` | `4` | `429 blob_inflight` | uploads being received at once per uploader (`0` = off), so one client holding uploads open can't take every slot |
 | `LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE` / `_BURST` | `0.5` / `100` | `429 blob_download_rate` | downloads per second of one blob (`0` rate = off). The burst lets a large team's devices fetch a new attachment at once; after it, a blob is served about 30 times a minute, so a blob URL can't serve as a public download link (on the open policy reads need no token) |
 | `LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE` / `_BURST` | `2` / `60` | `429 blob_download_rate` | blob downloads per second per downloader (token subject, else address; `0` rate = off), on top of the normal read rate, which is sized for small JSON reads |
+| `LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT` | `8` | `429 blob_inflight` | downloads being written at once, per relay process (`0` = off). Each holds the whole blob in memory until the client has read it; `Retry-After` five seconds |
+| `LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_INFLIGHT` | `2` | `429 blob_inflight` | downloads being written at once per downloader (token subject, else address; `0` = off) |
 
 Tenancy adds per-tenant limits in the tenancy config (`defaults` or a
 tenant's `limits`), all `0` = off: `blob_max_bytes` and `blob_max_count`

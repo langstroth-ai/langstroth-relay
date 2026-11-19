@@ -50,6 +50,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_MAX_ROTATION_BYTES` | `262144` (256 KiB) | one key rotation's size; `413` past it (`0` = only the body cap) |
 | `LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS` | `1000` | candidate and presence device entries per workspace |
 | `LANGSTROTH_RELAY_MAX_PAIRINGS` | `50000` | live pairing codes per instance (`503` past it) |
+| `LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT` | `20` | live pairing codes one client may hold (address; IPv6 by /64, and each IPv6 /48 gets 16x in total); `429` `pair_codes` past it (`0` = off) |
+| `LANGSTROTH_RELAY_MAX_PAIRING_BYTES` | `33554432` (32 MiB) | payload bytes all live pairing codes hold in memory (`503` past it; `0` = off) |
 | `LANGSTROTH_RELAY_INBOX_MAX_ROWS` | `5000` | account-inbox rows per recipient (oldest evicted) |
 | `LANGSTROTH_RELAY_INBOX_RETENTION_DAYS` | `30` | Postgres: prune inbox rows older than N days (`0` = off) |
 | `LANGSTROTH_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
@@ -60,7 +62,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); see eviction under Contacts |
 | `LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
 | `LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
-| `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
+| `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES` |
+| `LANGSTROTH_RELAY_MAX_CONTACT_BYTES` | `0` (off) | Postgres: record plus drop bytes across the relay (re-read every 10 s). New records and drops past it get `507` `contacts_full`; an existing record can still be refreshed. Without it, Postgres is bounded only by its disk and the rate limits |
 
 **Blobs** (encrypted attachments; see [blobs.md](blobs.md))
 
@@ -76,6 +79,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` / `_WRITER_INFLIGHT` | `16` / `4` | uploads being received at once, relay-wide and per uploader (`0` = off); `429 blob_inflight` |
 | `LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE` / `_BURST` | `0.5` / `100` | downloads per second of one blob (`0` = off); `429 blob_download_rate` |
 | `LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE` / `_BURST` | `2` / `60` | blob downloads per second per downloader (token subject, else address; `0` = off); `429 blob_download_rate` |
+| `LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT` / `_CLIENT_DOWNLOAD_INFLIGHT` | `8` / `2` | downloads being written at once, relay-wide and per downloader (`0` = off); `429 blob_inflight`. A download holds its whole blob in memory, and one that stalls is cut off |
 
 **Community limits** (all off by default; see [Community limits](#community-limits))
 
@@ -89,6 +93,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` | `0` (off) | delete a room's envelopes, key rotations and device blobs once nothing has been appended to it for N days; its sequence and roster stay |
 | `LANGSTROTH_RELAY_IP_RATE` / `_BURST` | off / 2x rate | every request per client (except `/`, `/v1/health`, `/metrics`); `429` with `Retry-After` |
 | `LANGSTROTH_RELAY_ROOM_RATE` / `_BURST` | off / 2x rate | every request to one room, all clients together; `429` with `Retry-After` |
+| `LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT` | `0` (off) | ordinary requests one client (address; IPv6 by /64, and each /48 gets 16x in total) may hold open at once; `429` `client_inflight` past it. Event streams, tunnel WebSockets and blob transfers have their own caps and don't count. Each request in progress can hold a few MiB (a 4 MiB body, a page of envelopes), so this bounds what one address can pin in memory |
 | `LANGSTROTH_RELAY_TUNNEL_PUSH_RATE` / `_BURST` / `_PER_DAY` | `1` / `5` / `2000` | pushes per tunnel host (`0` = no limit) |
 | `LANGSTROTH_RELAY_TENANCY` | unset | tenancy config JSON, normally from `LANGSTROTH_RELAY_TENANCY_FILE`; see [Tenancy](#tenancy-several-organisations-on-one-relay) |
 | `LANGSTROTH_RELAY_METRICS_MAX_TENANTS` | `50` | tenants reported under their own metrics label; the rest are `tenant="_other"` |
@@ -175,7 +180,9 @@ Bound storage instead with the room quotas (`507` refusals, never eviction),
 
 For a relay anyone may use (a public relay on one machine). Every limit is
 off by default; `deploy/fly.toml` has a commented community profile with
-values for one small VM, and the Helm chart sets them under `limits.*`.
+values for one small VM, and the Helm chart sets them under `limits.*`. The
+project's own public relay runs that profile on Postgres; its deploy
+(`.github/workflows/deploy.yml`) passes it as `--env` flags.
 
 - **Quotas refuse, they don't evict.** A Ligus client rebuilds a workspace by
   folding its whole envelope log from the founder's seed, and the relay
@@ -208,8 +215,10 @@ should switch on `error`, and treat an unknown code by its status.
 | Status | `error` | Meaning | What a client should do |
 |---|---|---|---|
 | 429 | `ip_rate`, `room_rate`, `tenant_rate`, `write_rate`, `read_rate`, `room_writer_rate`, `contact_create_rate`, `contact_write_rate`, `contact_drop_rate`, `rate_limited` | a request rate | wait `Retry-After` (the time until a token is free), then retry the same request; keep the outbox |
+| 429 | `client_inflight` | too many requests in progress from this client | wait `Retry-After` (a second), then retry |
 | 429 | `sse_streams` | too many open event streams from this client | close a stream; retry after `Retry-After` |
 | 429 | `pair_lockout` | too many failed pairing-code guesses | stop guessing until `Retry-After` |
+| 429 | `pair_codes` | this client holds its quota of live pairing codes | wait `Retry-After` (a minute) or until one of its codes is used or expires |
 | 429 | `client_rooms` | this client created its quota of rooms | don't retry automatically: tell the user; it clears when one of its rooms expires or is deleted |
 | 429 | `too_many_pending` | GitHub routes: too many pending friend requests | as `client_rooms` |
 | 507 | `room_bytes`, `room_envelopes` | this room is full | stop writing to this room and tell the user; the room stays readable; `Retry-After` is an hour |
@@ -217,7 +226,7 @@ should switch on `error`, and treat an unknown code by its status.
 | 507 | `tenant_bytes`, `tenant_rooms` | the tenant's quota (tenancy) | tell the user to contact their admin; `Retry-After` is an hour |
 | 507 | `store_bytes`, `total_bytes`, `contacts_full` | the relay itself is full | back off and retry after `Retry-After` (ten minutes) |
 | 429 | `blob_rate` | attachment uploads per uploader per workspace | wait `Retry-After`, then retry the upload |
-| 429 | `blob_inflight` | too many attachment uploads in progress (relay-wide or this uploader's) | as `blob_rate` |
+| 429 | `blob_inflight` | too many attachment uploads or downloads in progress (relay-wide or this client's) | as `blob_rate` |
 | 429 | `blob_download_rate` | this attachment, or this client, is downloading too often | wait `Retry-After`, then retry the download |
 | 507 | `blob_room_bytes`, `blob_room_count`, `blob_writer_bytes`, `blob_writer_count` | the workspace's (or this uploader's) attachment quota | don't retry automatically: tell the user; it clears as attachments expire or are deleted. Messages are unaffected |
 | 507 | `blob_tenant_bytes`, `blob_tenant_count` | the tenant's attachment quota | as `tenant_bytes` |

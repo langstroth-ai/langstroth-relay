@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -180,5 +181,48 @@ func TestFlyConfig_SingleMachineConnectionsAndHealth(t *testing.T) {
 	}
 	if strings.Contains(fly, "trigger autoscaling") {
 		t.Error("deploy/fly.toml: the relay is single-replica; nothing autoscales")
+	}
+}
+
+// The deploy is the community relay anyone may use, and every community
+// limit is off in the binary: the deploy itself must turn the profile on
+// (docs/reference.md, "Community limits"), or a stranger can fill the
+// database with rooms and blobs at the default per-client write rate.
+func TestDeployWorkflow_TurnsOnTheCommunityProfile(t *testing.T) {
+	src := readRepoFile(t, ".github/workflows/deploy.yml")
+	for _, name := range []string{
+		"LANGSTROTH_RELAY_ROOM_MAX_BYTES",
+		"LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES",
+		"LANGSTROTH_RELAY_MAX_TOTAL_ROOM_BYTES",
+		"LANGSTROTH_RELAY_MAX_ROOMS_PER_CLIENT",
+		"LANGSTROTH_RELAY_MAX_ROOMS",
+		"LANGSTROTH_RELAY_ROOM_RETENTION_DAYS",
+		"LANGSTROTH_RELAY_IP_RATE",
+		"LANGSTROTH_RELAY_ROOM_RATE",
+		"LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES",
+		"LANGSTROTH_RELAY_MAX_CONTACT_BYTES",
+		"LANGSTROTH_RELAY_MAX_SSE",
+		"LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT",
+		"LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT",
+		"LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT",
+		"GOMEMLIMIT",
+	} {
+		if !regexp.MustCompile(`--env "?` + name + `=[1-9]`).MatchString(src) {
+			t.Errorf("the community deploy must set %s", name)
+		}
+	}
+	// SSE streams are long-lived connections: the in-process cap must stay
+	// below Fly's per-machine connection hard limit, or streams alone can
+	// take every connection and the relay stops answering anything else.
+	m := regexp.MustCompile(`--env "?LANGSTROTH_RELAY_MAX_SSE=(\d+)`).FindStringSubmatch(src)
+	fly := readRepoFile(t, "deploy/fly.toml")
+	h := regexp.MustCompile(`hard_limit = (\d+)`).FindStringSubmatch(fly)
+	if m == nil || h == nil {
+		t.Fatal("MAX_SSE or the Fly hard_limit not found")
+	}
+	sse, _ := strconv.Atoi(m[1])
+	hard, _ := strconv.Atoi(h[1])
+	if sse*10 > hard*7 {
+		t.Errorf("LANGSTROTH_RELAY_MAX_SSE=%d leaves too few of Fly's %d connections for requests and tunnels", sse, hard)
 	}
 }
