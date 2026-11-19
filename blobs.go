@@ -80,14 +80,20 @@ const (
 	blobTransferWindow = 5 * time.Minute
 )
 
+// Per-uploader defaults (a quarter of the per-workspace ones).
+const (
+	defaultBlobWriterMaxBytes = 128 << 20
+	defaultBlobWriterMaxCount = 500
+)
+
 // blobConfig is the blob channel's relay-wide configuration.
 type blobConfig struct {
 	enabled        bool
 	maxBytes       int64 // LANGSTROTH_RELAY_BLOB_MAX_BYTES
 	roomMaxBytes   int64 // LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES (0 = off)
 	roomMaxCount   int64 // LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT (0 = off)
-	writerMaxBytes int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES (0 = off)
-	writerMaxCount int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT (0 = off)
+	writerMaxBytes int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES (default 128 MiB; 0 = off)
+	writerMaxCount int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT (default 500; 0 = off)
 	totalMaxBytes  int64 // LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES (0 = off)
 	retention      time.Duration
 	rate           *ipRateLimiter // LANGSTROTH_RELAY_BLOB_RATE / _BURST (nil = off)
@@ -96,12 +102,14 @@ type blobConfig struct {
 func blobConfigFromEnv() blobConfig {
 	pos := func(name string, def int64) int64 { return max(envInt64(name, def), 0) }
 	c := blobConfig{
-		enabled:        blobsEnabled(getenv("LANGSTROTH_RELAY_BLOBS")),
-		maxBytes:       pos("LANGSTROTH_RELAY_BLOB_MAX_BYTES", defaultBlobMaxBytes),
-		roomMaxBytes:   pos("LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES", defaultBlobRoomMaxBytes),
-		roomMaxCount:   pos("LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT", defaultBlobRoomMaxCount),
-		writerMaxBytes: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES", 0),
-		writerMaxCount: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT", 0),
+		enabled:      blobsEnabled(getenv("LANGSTROTH_RELAY_BLOBS")),
+		maxBytes:     pos("LANGSTROTH_RELAY_BLOB_MAX_BYTES", defaultBlobMaxBytes),
+		roomMaxBytes: pos("LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES", defaultBlobRoomMaxBytes),
+		roomMaxCount: pos("LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT", defaultBlobRoomMaxCount),
+		// Per-uploader quotas are on by default: one member (or, on an open
+		// relay, one address) can't fill a workspace's whole blob quota.
+		writerMaxBytes: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES", defaultBlobWriterMaxBytes),
+		writerMaxCount: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT", defaultBlobWriterMaxCount),
 		totalMaxBytes:  pos("LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES", 0),
 		retention:      daysEnv("LANGSTROTH_RELAY_BLOB_RETENTION_DAYS", defaultBlobRetentionDays),
 	}

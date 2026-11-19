@@ -734,7 +734,7 @@ func TestHTTPBlobTenancy(t *testing.T) {
 func TestBlobConfigDefaults(t *testing.T) {
 	c := blobConfigFromEnv()
 	if !c.enabled || c.maxBytes != 25<<20 || c.roomMaxBytes != 512<<20 || c.roomMaxCount != 2000 ||
-		c.writerMaxBytes != 0 || c.writerMaxCount != 0 || c.totalMaxBytes != 0 || c.retention != 30*24*time.Hour || c.rate == nil {
+		c.writerMaxBytes != defaultBlobWriterMaxBytes || c.writerMaxCount != defaultBlobWriterMaxCount || c.totalMaxBytes != 0 || c.retention != 30*24*time.Hour || c.rate == nil {
 		t.Fatalf("defaults: %+v", c)
 	}
 	t.Setenv("LANGSTROTH_RELAY_BLOB_MAX_BYTES", "0")

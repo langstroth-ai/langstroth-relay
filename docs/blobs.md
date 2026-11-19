@@ -77,8 +77,8 @@ Every limit refuses; nothing is evicted to make room. Storage refusals are
 | `LANGSTROTH_RELAY_BLOB_MAX_BYTES` | `26214400` (25 MiB) | `413 blob_too_large` | one blob. `0` keeps the default: there is always a cap |
 | `LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES` | `536870912` (512 MiB) | `507 blob_room_bytes` | blob bytes per workspace (`0` = off) |
 | `LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT` | `2000` | `507 blob_room_count` | blobs per workspace (`0` = off) |
-| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` | `0` (off) | `507 blob_writer_bytes` | blob bytes per uploader per workspace: the per-member quota. The uploader is the token subject (tenant-qualified), else the client address |
-| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT` | `0` (off) | `507 blob_writer_count` | blobs per uploader per workspace |
+| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` | `134217728` (128 MiB) | `507 blob_writer_bytes` | blob bytes per uploader per workspace: the per-member quota. The uploader is the token subject (tenant-qualified), else the client address |
+| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT` | `500` | `507 blob_writer_count` | blobs per uploader per workspace |
 | `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | `507 blob_total_bytes` | blob bytes across the relay; `Retry-After` ten minutes |
 | `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | | a blob expires this many days after upload (`0` = kept until deleted). Expired blobs answer `404` at once and are deleted hourly |
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | `429 blob_rate` | uploads per second per uploader per workspace (`0` rate = off). Downloads count toward the normal read rate |

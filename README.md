@@ -136,7 +136,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_BLOBS` | `on` | `off` → the blob routes answer `404` |
 | `LANGSTROTH_RELAY_BLOB_MAX_BYTES` | `26214400` (25 MiB) | one blob; `413 blob_too_large` past it (`0` keeps the default) |
 | `LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES` / `_ROOM_MAX_COUNT` | `536870912` / `2000` | blob bytes and blobs per workspace (`0` = off); `507 blob_room_bytes` / `blob_room_count` |
-| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` / `_WRITER_MAX_COUNT` | `0` (off) | per uploader (token subject, else address) per workspace; `507 blob_writer_*` |
+| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` / `_WRITER_MAX_COUNT` | 128 MiB / `500` (`0` = off) | per uploader (token subject, else address) per workspace; `507 blob_writer_*` |
 | `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | blob bytes across the relay; `507 blob_total_bytes` |
 | `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | a blob expires N days after upload (`0` = keep until deleted) |
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | uploads per second per uploader per workspace; `429 blob_rate` |
