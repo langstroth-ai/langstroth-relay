@@ -27,7 +27,7 @@ func TestPerClientInflightCap(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = c.Close() })
-		fmt.Fprintf(c, "POST /v1/workspaces/w%d/envelopes HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n{", i)
+		_, _ = fmt.Fprintf(c, "POST /v1/workspaces/w%d/envelopes HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n{", i)
 	}
 	time.Sleep(100 * time.Millisecond)
 	resp, b := blobHTTP(t, "GET", ts.URL+"/v1/workspaces/w/envelopes", "", nil)

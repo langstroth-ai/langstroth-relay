@@ -23,7 +23,7 @@ func stalledDownload(t *testing.T, base, path, token string) net.Conn {
 	if tc, ok := c.(*net.TCPConn); ok {
 		_ = tc.SetReadBuffer(4 << 10)
 	}
-	fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n\r\n", path, token)
+	_, _ = fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n\r\n", path, token)
 	return c
 }
 
