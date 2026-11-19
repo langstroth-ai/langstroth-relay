@@ -292,7 +292,13 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 		tooLarge()
 		return
 	}
-	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(blobTransferWindow))
+	// Both deadlines: the server's write timeout runs from the end of the
+	// request headers, so a long upload would otherwise be stored and its
+	// answer (the id) lost, and the client's retry would store it again.
+	rc := http.NewResponseController(w)
+	deadline := time.Now().Add(blobTransferWindow)
+	_ = rc.SetReadDeadline(deadline)
+	_ = rc.SetWriteDeadline(deadline.Add(30 * time.Second))
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.blobs.maxBytes))
 	if err != nil {
 		var mbe *http.MaxBytesError
