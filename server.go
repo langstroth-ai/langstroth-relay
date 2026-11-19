@@ -1463,7 +1463,7 @@ func bearerToken(r *http.Request) string {
 // clients send). It never falls back to the Authorization bearer: that header
 // carries the relay access token, which must never be forwarded to
 // api.github.com. The operator of a relay can still see GitHub tokens sent in
-// these headers (they're verified server-side); see README "GitHub-backed routes".
+// these headers (they're verified server-side); see docs/reference.md "GitHub social routes".
 func githubTokenHeader(r *http.Request) string {
 	if t := strings.TrimSpace(r.Header.Get("x-ligus-github-token")); t != "" {
 		return t

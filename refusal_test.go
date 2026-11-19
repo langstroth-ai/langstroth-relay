@@ -12,7 +12,7 @@ import (
 )
 
 // Every 429 and 507 carries Retry-After and a JSON body with a stable code
-// (README, "Refusals"), so a client can back off and tell a full room from a
+// (docs/reference.md, "Refusals"), so a client can back off and tell a full room from a
 // busy relay.
 
 func wantRefusal(t *testing.T, resp *http.Response, body []byte, status int, code string) {

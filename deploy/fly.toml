@@ -19,13 +19,13 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # raise min_machines_running.
   LANGSTROTH_RELAY_DATA_DIR = "/data"
 
-  # ── Community profile (docs/tenancy.md, README "Community limits") ──────
+  # ── Community profile (docs/tenancy.md, docs/reference.md "Community limits") ──────
   # For a relay anyone may use, on this one shared-cpu-1x machine. Every
   # limit below is off in the binary; uncomment the block to turn it on.
   # Storage quotas refuse with 507 (never evict: a client folds a room's
   # whole log from its first envelope), rates answer 429 with Retry-After.
   # Never set LANGSTROTH_RELAY_MAX_ENVELOPES or _RETENTION_DAYS: they are
-  # removed and the relay refuses to start with either set (README).
+  # removed and the relay refuses to start with either set (docs/reference.md).
   #
   # LANGSTROTH_RELAY_ROOM_MAX_BYTES = "67108864"            # 64 MiB per room (envelopes + key rotations)
   # LANGSTROTH_RELAY_ROOM_MAX_ENVELOPES = "200000"

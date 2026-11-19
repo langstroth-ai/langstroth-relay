@@ -1,0 +1,41 @@
+# Contributing to the Langstroth relay
+
+Thanks for helping. Questions and ideas go to
+[Discussions](https://github.com/langstroth-ai/langstroth-relay/discussions),
+bugs to [Issues](https://github.com/langstroth-ai/langstroth-relay/issues).
+Security problems: see [SECURITY.md](SECURITY.md), not a public issue.
+
+## Before you open a pull request
+
+```sh
+gofmt -l .          # must print nothing
+go vet ./...
+go test -race ./... # chart render tests run when helm is installed
+helm lint --strict deploy/helm/langstroth-relay
+```
+
+CI runs the same checks and builds both images (`Dockerfile`,
+`deploy/container/Dockerfile.langstroth-auth`).
+
+## Rules
+
+- **Keep the wire stable.** The `/v1` routes and JSON, `hrt1` tokens, the
+  `X-Hive-*` / `X-Ligus-*` headers, the `hive-tunnel.1` subprotocol, metric
+  names, table names and crypto domain-separation strings are protocol
+  identifiers. Don't rename them; add rather than change.
+- **Stay content-blind.** The relay must never need a workspace key,
+  plaintext, or a forge token.
+- **Refuse, don't evict.** New limits answer `429` or `507` with
+  `Retry-After` and a stable `error` code (`refusal.go`), and never drop
+  stored envelopes.
+- **Fail closed.** Settings that gate access must not silently turn off; an
+  unreadable secret file stops the relay at startup.
+- New settings are `LANGSTROTH_RELAY_*`, documented in
+  [docs/reference.md](docs/reference.md), with a test.
+- Behaviour changes get a [CHANGELOG.md](CHANGELOG.md) entry with upgrade
+  notes for self-hosters.
+
+Deploying or operating with a coding agent: [AGENTS.md](AGENTS.md).
+
+By contributing you agree your work is licensed under the repository's
+[MIT licence](LICENSE).

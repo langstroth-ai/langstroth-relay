@@ -104,7 +104,7 @@ room's blobs with its envelopes.
 
 Every limit refuses; nothing is evicted to make room. Storage refusals are
 `507`, the upload rate `429`, both through the shared refusal format
-(README, "Refusals: 429 and 507") with `Retry-After`.
+([reference](reference.md#refusals-429-and-507), "Refusals: 429 and 507") with `Retry-After`.
 
 | Variable | Default | `error` | Meaning |
 |---|---|---|---|
