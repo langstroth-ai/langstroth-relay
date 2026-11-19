@@ -186,8 +186,8 @@ func TestFlyRenameSecretsRerunAfterPartialRun(t *testing.T) {
 		t.Fatalf("rerun: %v\n%s", err, out)
 	}
 	want := map[string]string{
-		"LANGSTROTH_RELAY_APNS_TOPIC":       "com.zazulam.ligus.lab",
-		"LANGSTROTH_RELAY_TUNNEL":           "open",
+		"LANGSTROTH_RELAY_APNS_TOPIC":        "com.zazulam.ligus.lab",
+		"LANGSTROTH_RELAY_TUNNEL":            "open",
 		"LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY": "SECRETMEMBERPUB",
 	}
 	entries, _ := os.ReadDir(sec)
