@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -503,5 +505,100 @@ func TestHTTPBlobSlowlorisCutOff(t *testing.T) {
 	}
 	if resp, b := blobHTTP(t, "POST", url, "", []byte("x")); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("after the trickler was cut off: %d %s", resp.StatusCode, b)
+	}
+}
+
+// Concurrent uploads, deletes, expiry and a room purge leave the Postgres
+// running totals equal to the stored rows, never negative.
+func TestBlobUsageConsistentUnderChurn(t *testing.T) {
+	blobStores(t, func(t *testing.T, s Store) {
+		bs := s.(blobStore)
+		rooms := []string{"a", "b", "c"}
+		for _, r := range rooms {
+			seedRoom(t, s, r)
+		}
+		var mu sync.Mutex
+		var ids []BlobMeta
+		var wg sync.WaitGroup
+		for g := 0; g < 8; g++ {
+			wg.Add(1)
+			go func(g int) {
+				defer wg.Done()
+				for i := 0; i < 15; i++ {
+					room := rooms[(g+i)%len(rooms)]
+					m, err := putTestBlob(s, room, fmt.Sprintf("ip:%d", g%3), 100+i, blobQuota{RoomMaxCount: 30, WriterMaxBytes: 4000})
+					if err == nil {
+						mu.Lock()
+						ids = append(ids, m)
+						mu.Unlock()
+					}
+					mu.Lock()
+					if len(ids) > 0 && i%2 == 0 {
+						victim := ids[0]
+						ids = ids[1:]
+						mu.Unlock()
+						_, _ = bs.DeleteBlob(bg, victim.Room, victim.ID)
+					} else {
+						mu.Unlock()
+					}
+					if i == 7 && g == 0 {
+						if rs, ok := s.(roomStore); ok {
+							_, _ = rs.PurgeRoom(bg, "c")
+						}
+					}
+					if i%5 == 0 {
+						_, _ = bs.PruneExpiredBlobs(bg, time.Now().Unix())
+					}
+				}
+			}(g)
+		}
+		wg.Wait()
+		checkBlobUsage(t, s)
+		if ps, ok := s.(*postgresStore); ok {
+			var neg int64
+			if err := ps.pool.QueryRow(bg, `SELECT count(*) FROM relay_blob_usage WHERE bytes < 0 OR count < 0`).Scan(&neg); err != nil || neg != 0 {
+				t.Fatalf("negative usage rows: %d %v", neg, err)
+			}
+		}
+		if ms, ok := s.(*memoryStore); ok {
+			ms.mu.RLock()
+			defer ms.mu.RUnlock()
+			if ms.blobTotal.bytes < 0 || ms.blobTotal.count < 0 {
+				t.Fatalf("negative totals %+v", ms.blobTotal)
+			}
+		}
+	})
+}
+
+// An expired or revoked-key token can't upload, read or delete; a token
+// scoped to another workspace can't either.
+func TestHTTPBlobExpiredAndScopedTokens(t *testing.T) {
+	t.Setenv("LANGSTROTH_RELAY_WORKSPACE_SCOPE", "claims")
+	sk := testKey(t)
+	srv := New(Options{Store: newMemoryStore(), Entitlement: entitlementPolicy{kind: entSigned, pubkey: sk.Public().(ed25519.PublicKey)}})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	good := issueToken(sk, TokenClaims{Sub: "alice", Exp: uint64(time.Now().Add(time.Hour).Unix()), Workspaces: []string{"a"}})
+	expired := issueToken(sk, TokenClaims{Sub: "alice", Exp: uint64(time.Now().Add(-time.Minute).Unix()), Workspaces: []string{"a"}})
+	otherWS := issueToken(sk, TokenClaims{Sub: "alice", Exp: uint64(time.Now().Add(time.Hour).Unix()), Workspaces: []string{"b"}})
+	seedHTTP(t, ts.URL, "a", good)
+	resp, b := blobHTTP(t, "POST", ts.URL+"/v1/workspaces/a/blobs", good, []byte("x"))
+	var br blobResp
+	_ = json.Unmarshal(b, &br)
+	if resp.StatusCode != 201 {
+		t.Fatalf("upload: %d %s", resp.StatusCode, b)
+	}
+	for _, c := range []struct {
+		tok  string
+		want int
+	}{{expired, 401}, {otherWS, 403}} {
+		for _, m := range []struct{ m, p string }{{"POST", "/v1/workspaces/a/blobs"}, {"GET", "/v1/workspaces/a/blobs/" + br.ID}, {"DELETE", "/v1/workspaces/a/blobs/" + br.ID}} {
+			if resp, _ := blobHTTP(t, m.m, ts.URL+m.p, c.tok, []byte("x")); resp.StatusCode != c.want {
+				t.Fatalf("%s %s: %d, want %d", m.m, m.p, resp.StatusCode, c.want)
+			}
+		}
+	}
+	if resp, _ := blobHTTP(t, "GET", ts.URL+"/v1/workspaces/a/blobs/"+br.ID, good, nil); resp.StatusCode != 200 {
+		t.Fatal("blob gone")
 	}
 }
