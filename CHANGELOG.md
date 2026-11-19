@@ -261,6 +261,12 @@ route or database table changes.
   listed `tid` values.
 - **`LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
   key during a key rotation.
+- **Blob downloads in flight** (`LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT`,
+  default 8, and `_CLIENT_DOWNLOAD_INFLIGHT`, default 2; `429
+  blob_inflight`), and downloads are paced like uploads (a reader that
+  stalls for 15 s or averages under 8 KiB/s is cut off). A download holds
+  its whole blob (up to 25 MiB) in memory, and nothing bounded how many ran
+  at once or how long a client that stopped reading kept one.
 - **Pairing codes per client** (`LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT`,
   default 20; each IPv6 /48 gets 16x in total) and **live pairing bytes**
   (`LANGSTROTH_RELAY_MAX_PAIRING_BYTES`, default 32 MiB): one address could
