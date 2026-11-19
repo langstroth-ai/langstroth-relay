@@ -255,6 +255,12 @@ route or database table changes.
   listed `tid` values.
 - **`LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
   key during a key rotation.
+- **Pairing codes per client** (`LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT`,
+  default 20; each IPv6 /48 gets 16x in total) and **live pairing bytes**
+  (`LANGSTROTH_RELAY_MAX_PAIRING_BYTES`, default 32 MiB): one address could
+  hold every one of the 50 000 live codes, answering `503` to everyone
+  else's pairing, and 50 000 payloads of 8 KiB would hold 400 MB of memory.
+  Past the per-client cap: `429` `pair_codes` with `Retry-After`.
 - `langstroth-relay issue --tenant <id>` sets `tid`.
 - Exported `IssueToken`, `VerifyToken`, `ParsePubkey` and `ParseSigningKey`.
 
@@ -276,7 +282,9 @@ renamed secrets go live with the v0.3.0 deploy itself. No step prints a value.
    When both old names are set, the `LIGUS_RELAY_` value (the one the v0.2
    relay uses) is kept. `HIVE_RELAY_ADMIN_LOGINS` is dropped: the open relay
    never read it (only the old Rust relay and the enterprise build did).
-   `DATABASE_URL` is unchanged.
+   `HIVE_RELAY_MAX_ENVELOPES` and `HIVE_RELAY_RETENTION_DAYS` are dropped
+   too: per-envelope eviction is removed, and v0.3.0 refuses to start while
+   either is set to anything but `0`. `DATABASE_URL` is unchanged.
 
 2. Stage the renames:
 

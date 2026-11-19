@@ -50,6 +50,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_MAX_ROTATION_BYTES` | `262144` (256 KiB) | one key rotation's size; `413` past it (`0` = only the body cap) |
 | `LANGSTROTH_RELAY_MAX_DEVICE_BLOBS_PER_WS` | `1000` | candidate and presence device entries per workspace |
 | `LANGSTROTH_RELAY_MAX_PAIRINGS` | `50000` | live pairing codes per instance (`503` past it) |
+| `LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT` | `20` | live pairing codes one client may hold (address; IPv6 by /64, and each IPv6 /48 gets 16x in total); `429` `pair_codes` past it (`0` = off) |
+| `LANGSTROTH_RELAY_MAX_PAIRING_BYTES` | `33554432` (32 MiB) | payload bytes all live pairing codes hold in memory (`503` past it; `0` = off) |
 | `LANGSTROTH_RELAY_INBOX_MAX_ROWS` | `5000` | account-inbox rows per recipient (oldest evicted) |
 | `LANGSTROTH_RELAY_INBOX_RETENTION_DAYS` | `30` | Postgres: prune inbox rows older than N days (`0` = off) |
 | `LANGSTROTH_RELAY_FRIEND_REQ_RETENTION_DAYS` | `30` | Postgres: prune answered friend requests older than N days (`0` = off) |
@@ -210,6 +212,7 @@ should switch on `error`, and treat an unknown code by its status.
 | 429 | `ip_rate`, `room_rate`, `tenant_rate`, `write_rate`, `read_rate`, `room_writer_rate`, `contact_create_rate`, `contact_write_rate`, `contact_drop_rate`, `rate_limited` | a request rate | wait `Retry-After` (the time until a token is free), then retry the same request; keep the outbox |
 | 429 | `sse_streams` | too many open event streams from this client | close a stream; retry after `Retry-After` |
 | 429 | `pair_lockout` | too many failed pairing-code guesses | stop guessing until `Retry-After` |
+| 429 | `pair_codes` | this client holds its quota of live pairing codes | wait `Retry-After` (a minute) or until one of its codes is used or expires |
 | 429 | `client_rooms` | this client created its quota of rooms | don't retry automatically: tell the user; it clears when one of its rooms expires or is deleted |
 | 429 | `too_many_pending` | GitHub routes: too many pending friend requests | as `client_rooms` |
 | 507 | `room_bytes`, `room_envelopes` | this room is full | stop writing to this room and tell the user; the room stays readable; `Retry-After` is an hour |

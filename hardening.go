@@ -43,6 +43,14 @@ const (
 	// live pairing codes across the instance, keyring rows per workspace, and
 	// candidate/presence device blobs per workspace.
 	defaultMaxLivePairings = 50000
+	// Live pairing codes one client may hold (a device pairs one or two at a
+	// time), and the payload bytes all live codes may hold in memory: 50 000
+	// codes of up to 8 KiB would be 400 MB, most of a small VM.
+	defaultMaxPairingsPerClient = 20
+	defaultMaxPairingBytes      = 32 << 20
+	// One IPv6 /48 holds 65536 client /64s; together they get this many
+	// times the per-client cap (as for contact creates).
+	pairCodesSlash48Factor = 16
 	defaultMaxKeyringPerWS = 2000
 	// Keyring byte cap per workspace and size cap per rotation. The byte cap
 	// equals the default list bound, so GET /keyring always returns the whole

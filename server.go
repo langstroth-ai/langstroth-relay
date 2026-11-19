@@ -136,6 +136,16 @@ type Server struct {
 
 	pairCount map[string]int // live pairing codes per tenant (tenancy only)
 
+	// Live pairing codes per client (pairClient) and per IPv6 /48
+	// (pairSlash48), and the bytes their payloads hold in memory
+	// (pairBytes): one address can't take every code, and a flood of large
+	// payloads can't exhaust a small machine's memory.
+	pairClient           map[string]int
+	pairSlash48          map[string]int
+	pairBytes            int64
+	maxPairingsPerClient int   // LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT (0 = off)
+	maxPairingBytes      int64 // LANGSTROTH_RELAY_MAX_PAIRING_BYTES (0 = off)
+
 	roomGauge roomGaugeCache // /metrics room totals, re-read at most every roomGaugeTTL
 
 	healthMu      sync.Mutex // guards the cached /v1/health ping result
@@ -147,6 +157,8 @@ type pairing struct {
 	payload   string
 	expiresAt time.Time
 	tenant    string // tenancy: the tenant the code lives in
+	client    string // clientKey of the creator (pairClient)
+	slash48   string // the creator's IPv6 /48, "" for IPv4 (pairSlash48)
 }
 
 // newPairCode draws a pairing code (a variable so tests can force collisions).
@@ -201,6 +213,10 @@ func New(o Options) *Server {
 		s.blobStore = bs
 	}
 	s.pairCount = map[string]int{}
+	s.pairClient = map[string]int{}
+	s.pairSlash48 = map[string]int{}
+	s.maxPairingsPerClient = int(max(envInt64("LANGSTROTH_RELAY_MAX_PAIRINGS_PER_CLIENT", defaultMaxPairingsPerClient), 0))
+	s.maxPairingBytes = max(envInt64("LANGSTROTH_RELAY_MAX_PAIRING_BYTES", defaultMaxPairingBytes), 0)
 	tc, terr := tenancyFromEnv()
 	switch {
 	case terr != nil:
@@ -901,6 +917,20 @@ func (s *Server) createPairing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many live pairings", http.StatusServiceUnavailable)
 		return
 	}
+	if s.maxPairingBytes > 0 && s.pairBytes+int64(len(req.Payload)) > s.maxPairingBytes {
+		s.pairMu.Unlock()
+		countLimit(limPairings, tenant)
+		http.Error(w, "too many live pairings", http.StatusServiceUnavailable)
+		return
+	}
+	client, c48 := clientKey(r), slash48Key(r)
+	if s.maxPairingsPerClient > 0 && (s.pairClient[client] >= s.maxPairingsPerClient ||
+		(c48 != "" && s.pairSlash48[c48] >= s.maxPairingsPerClient*pairCodesSlash48Factor)) {
+		s.pairMu.Unlock()
+		countLimit(limPairings, tenant)
+		refuse(w, http.StatusTooManyRequests, refPairCodes, "too many live pairing codes from this client", retryPairCodes)
+		return
+	}
 	var code string
 	for {
 		code = newPairCode()
@@ -908,8 +938,14 @@ func (s *Server) createPairing(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	s.pairings[tenantKey(r.Context(), code)] = pairing{payload: req.Payload, expiresAt: time.Now().Add(time.Duration(ttl) * time.Second), tenant: tenant}
+	s.pairings[tenantKey(r.Context(), code)] = pairing{payload: req.Payload, expiresAt: time.Now().Add(time.Duration(ttl) * time.Second), tenant: tenant,
+		client: client, slash48: c48}
 	s.pairCount[tenant]++
+	s.pairClient[client]++
+	if c48 != "" {
+		s.pairSlash48[c48]++
+	}
+	s.pairBytes += int64(len(req.Payload))
 	s.pairMu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "expires_in": ttl})
@@ -983,6 +1019,15 @@ func (s *Server) deletePairingLocked(key string) {
 	if s.pairCount[p.tenant]--; s.pairCount[p.tenant] <= 0 {
 		delete(s.pairCount, p.tenant)
 	}
+	if s.pairClient[p.client]--; s.pairClient[p.client] <= 0 {
+		delete(s.pairClient, p.client)
+	}
+	if p.slash48 != "" {
+		if s.pairSlash48[p.slash48]--; s.pairSlash48[p.slash48] <= 0 {
+			delete(s.pairSlash48, p.slash48)
+		}
+	}
+	s.pairBytes -= int64(len(p.payload))
 }
 
 // prunePairAttempts drops clients whose failure window has rolled over, so the
