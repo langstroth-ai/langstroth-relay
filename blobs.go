@@ -68,7 +68,7 @@ func init() {
 	}
 }
 
-// Defaults (README "Blobs").
+// Defaults (docs/reference.md "Blobs"; details in docs/blobs.md).
 const (
 	defaultBlobMaxBytes      = 25 << 20  // one blob
 	defaultBlobRoomMaxBytes  = 512 << 20 // one workspace

@@ -330,7 +330,7 @@ blobs:
   clientDownloadRate: null   # 2     LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE (per downloader; 0 = off)
   clientDownloadBurst: null  # 60    LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_BURST
 
-# Room quotas, request rates and retention (README "Community limits",
+# Room quotas, request rates and retention (docs/reference.md "Community limits",
 # docs/tenancy.md). Each value maps to a LANGSTROTH_RELAY_* variable; null
 # keeps the binary's default, which is off for every one of them. Over a
 # storage quota the relay answers 507, over a rate 429 with Retry-After.

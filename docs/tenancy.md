@@ -101,7 +101,7 @@ Rules:
   token is available, rounded up; for a room or tenant quota an hour; for
   relay-wide storage ten minutes) and a JSON body
   `{"error":"<code>","message":"...","retryAfter":n}` whose `error` is the
-  limit name above (README, "Refusals: 429 and 507").
+  limit name above ([reference](reference.md#refusals-429-and-507), "Refusals: 429 and 507").
 
 ## Tenancy
 

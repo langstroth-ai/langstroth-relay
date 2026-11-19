@@ -1,9 +1,8 @@
 # AGENTS.md: deploying the Langstroth relay
 
 For coding agents (Claude Code, Codex, Copilot CLI, ...) and the humans who
-drive them. Langstroth is the server side, named after the Langstroth frame
-hive; the client apps are Ligus (LEE-gus), short for *ligustica*, the Italian
-honeybee.
+drive them. Langstroth is the platform; the client apps are Ligus. Before
+changing code, read [CONTRIBUTING.md](CONTRIBUTING.md).
 This repository holds the relay (`langstroth-relay`) and the optional sign-in
 service (`langstroth-auth`), their Helm charts (`deploy/helm/`) and the agent
 tooling in `deploy/agent/`. Step-by-step skills: `.claude/skills/relay-deploy-k8s`

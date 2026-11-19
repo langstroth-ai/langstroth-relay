@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Refusals (README, "Refusals: 429 and 507"). Every 429 and 507 the relay
+// Refusals (docs/reference.md, "Refusals: 429 and 507"). Every 429 and 507 the relay
 // sends carries a Retry-After header (whole seconds, at least 1) and a JSON
 // body with a stable machine-readable code:
 //

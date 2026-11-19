@@ -14,7 +14,7 @@ import (
 )
 
 // /v1/contacts/ (relay v0.3): opaque contact records and sealed drop boxes.
-// See contacts_store.go for the storage model and README "Contacts" for the
+// See contacts_store.go for the storage model and docs/reference.md "Contacts" for the
 // wire contract. The routes go through the access gate like every other
 // /v1 route. They never read, verify or forward a forge token: a request that
 // carries one is refused (400), so a misbehaving client finds out at once.
