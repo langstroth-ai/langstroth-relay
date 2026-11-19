@@ -41,6 +41,7 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # LANGSTROTH_RELAY_ROOM_RATE = "50"                       # every request to one room, all clients together
   # LANGSTROTH_RELAY_ROOM_BURST = "500"
   # LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES = "2147483648"    # 2 GiB of attachments across the relay (Postgres)
+  # LANGSTROTH_RELAY_MAX_CONTACT_BYTES = "1073741824"       # 1 GiB of contact records + drops (Postgres)
   # LANGSTROTH_RELAY_MAX_SSE = "1200"                       # event streams: well below hard_limit below
   # LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT = "32"         # requests one client holds open at once
   # LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT = "4"                # blob uploads / downloads in memory at once

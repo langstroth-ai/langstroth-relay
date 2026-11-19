@@ -200,6 +200,11 @@ type ContactLimits struct {
 	// any of them could claim the cid of an owner who was offline past the TTL
 	// and receive the drops meant for them.
 	ReclaimHold time.Duration
+	// MaxBytes bounds record plus drop bytes across the relay (Postgres
+	// only; the memory store has MaxContacts and its store budget). New
+	// records and drops past it get ErrContactsFull; an existing record can
+	// still be refreshed. 0 = unbounded.
+	MaxBytes int64
 }
 
 // ContactStore is the contacts' durable state.

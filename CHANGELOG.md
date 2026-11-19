@@ -261,6 +261,11 @@ route or database table changes.
   listed `tid` values.
 - **`LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
   key during a key rotation.
+- **`LANGSTROTH_RELAY_MAX_CONTACT_BYTES`** (Postgres; off by default, the
+  community profile sets 1 GiB): contact records plus drops across the
+  relay, `507` `contacts_full` past it. On Postgres nothing bounded them but
+  the disk, and at the per-client create rate one IPv4 address could add a
+  few GB of drop boxes a day.
 - **`LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT`** (off by default; the
   community profile sets 32): ordinary requests one client may hold open at
   once, `429` `client_inflight` past it, so one address can't pin hundreds

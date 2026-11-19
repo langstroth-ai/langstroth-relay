@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,8 +14,9 @@ import (
 // returns the exact bytes it received, like relay_envelopes. Drop-box
 // sequences use relay_seq with scope "cdrop:<cid>", started at contactSeqBase
 // when the box is created. The global record cap
-// (ContactLimits.MaxContacts) applies to the memory store only: a count per
-// create doesn't scale here, and the database's disk is the bound.
+// (ContactLimits.MaxContacts) applies to the memory store only; here
+// ContactLimits.MaxBytes bounds record plus drop bytes across the relay
+// (pgContactTotal), so contacts can't fill the disk the rooms share.
 
 const contactsSchemaSQL = `
 CREATE TABLE IF NOT EXISTS relay_contacts (
@@ -39,6 +41,40 @@ ALTER TABLE relay_contact_drop ADD COLUMN IF NOT EXISTS delivered BOOLEAN NOT NU
 `
 
 func contactSeqScope(cid string) string { return "cdrop:" + cid }
+
+// pgContactTotal caches the bytes of all records and drops
+// (ContactLimits.MaxBytes), re-read at most every pgTotalTTL and counted up
+// by each admitted write in between.
+type pgContactTotal struct {
+	mu    sync.Mutex
+	bytes int64
+	at    time.Time
+}
+
+// admitContactBytes admits add more contact bytes under max (0 = no bound),
+// or answers ErrContactsFull.
+func (s *postgresStore) admitContactBytes(ctx context.Context, add, max int64) error {
+	if max <= 0 {
+		return nil
+	}
+	t := &s.contactTotal
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.at.IsZero() || time.Since(t.at) >= pgTotalTTL {
+		var b int64
+		if err := s.pool.QueryRow(ctx, `SELECT
+  (SELECT coalesce(sum(octet_length(record)), 0) FROM relay_contacts) +
+  (SELECT coalesce(sum(octet_length(blob)), 0) FROM relay_contact_drop)`).Scan(&b); err != nil {
+			return err
+		}
+		t.bytes, t.at = b, time.Now()
+	}
+	if t.bytes+add > max {
+		return ErrContactsFull
+	}
+	t.bytes += add
+	return nil
+}
 
 // startContactSeqTx starts a new box's seq counter at contactSeqBase(now).
 func startContactSeqTx(ctx context.Context, tx pgx.Tx, cid string, now int64) error {
@@ -76,6 +112,9 @@ ON CONFLICT (cid) DO NOTHING`, cid, keyHash, string(record), now, expiresAt)
 		return false, err
 	}
 	if tag.RowsAffected() == 1 {
+		if err := s.admitContactBytes(ctx, int64(len(record)), lim.MaxBytes); err != nil {
+			return false, err
+		}
 		// A fresh cid: clear any drop-box leftovers of a pruned predecessor.
 		if _, err := tx.Exec(ctx, `DELETE FROM relay_contact_drop WHERE cid = $1`, cid); err != nil {
 			return false, err
@@ -97,6 +136,9 @@ ON CONFLICT (cid) DO NOTHING`, cid, keyHash, string(record), now, expiresAt)
 		// again; after it the cid is free.
 		if now < exp+int64(lim.ReclaimHold/time.Second) && !constantTimeEq(stored, keyHash) {
 			return false, ErrContactKey
+		}
+		if err := s.admitContactBytes(ctx, int64(len(record)), lim.MaxBytes); err != nil {
+			return false, err
 		}
 		if err := wipeContactTx(ctx, tx, cid); err != nil {
 			return false, err
@@ -185,6 +227,9 @@ func (s *postgresStore) AppendContactDrop(ctx context.Context, cid string, blob 
 		return 0, ErrContactNotFound
 	}
 	if err != nil {
+		return 0, err
+	}
+	if err := s.admitContactBytes(ctx, int64(len(blob)), lim.MaxBytes); err != nil {
 		return 0, err
 	}
 	seq, err := s.nextSeqTx(ctx, tx, contactSeqScope(cid))

@@ -62,7 +62,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_CONTACT_DROP_MAX_ROWS` | `5000` | drops per box (same as the inbox cap); see eviction under Contacts |
 | `LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
 | `LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
-| `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
+| `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES` |
+| `LANGSTROTH_RELAY_MAX_CONTACT_BYTES` | `0` (off) | Postgres: record plus drop bytes across the relay (re-read every 10 s). New records and drops past it get `507` `contacts_full`; an existing record can still be refreshed. Without it, Postgres is bounded only by its disk and the rate limits |
 
 **Blobs** (encrypted attachments; see [blobs.md](blobs.md))
 
