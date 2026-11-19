@@ -2,12 +2,21 @@ package relay
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
-// blobStore for the memory store (blobs.go). Blobs live under s.mu, count
-// toward the store byte budget (LANGSTROTH_RELAY_MAX_STORE_BYTES) and ride
-// the JSON snapshot.
+// blobStore for the memory store (blobs.go). Blobs live under s.mu and count
+// toward the store byte budget (LANGSTROTH_RELAY_MAX_STORE_BYTES). With
+// persistence, each blob's bytes are also written to their own file under
+// <data dir>/blobs, and the JSON snapshot (rewritten every few seconds)
+// holds only their metadata: blob bytes in it would make every flush
+// rewrite every attachment.
 
 type memBlob struct {
 	meta BlobMeta
@@ -32,7 +41,37 @@ type blobSnap struct {
 	SHA256    string `json:"sha256"`
 	CreatedAt int64  `json:"createdAt"`
 	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	Data      []byte `json:"data"`
+	// Data is only read (snapshots written before blob files); the bytes
+	// live in blobFile.
+	Data []byte `json:"data,omitempty"`
+}
+
+// blobDir is where a persisted store keeps blob bytes ("" = not persisted).
+func (s *memoryStore) blobDir() string {
+	if s.persistPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(s.persistPath), "blobs")
+}
+
+// blobFile is the file holding one blob's bytes: named by a hash of its
+// room and id, so nothing a client sends shapes a path.
+func (s *memoryStore) blobFile(room, id string) string {
+	return filepath.Join(s.blobDir(), sha256hex(room+"\x00"+id))
+}
+
+// writeBlobFile writes data to path atomically (temp file and rename),
+// owner-only.
+func writeBlobFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // blobUseLocked returns the totals of room and, within it, of uploader.
@@ -50,6 +89,24 @@ func (s *memoryStore) blobUseLocked(room, uploader string) (roomUse, writerUse m
 }
 
 func (s *memoryStore) PutBlob(_ context.Context, meta BlobMeta, data []byte, q blobQuota) error {
+	if err := s.putBlob(meta, data, q); err != nil {
+		return err
+	}
+	if s.blobDir() == "" {
+		return nil
+	}
+	// Written outside the lock. A delete racing this write can leave the
+	// file behind; boot removes files no snapshot lists.
+	if err := writeBlobFile(s.blobFile(meta.Room, meta.ID), data); err != nil {
+		s.mu.Lock()
+		s.dropBlobLocked(meta.Room, meta.ID)
+		s.mu.Unlock()
+		return fmt.Errorf("storing attachment: %w", err)
+	}
+	return nil
+}
+
+func (s *memoryStore) putBlob(meta BlobMeta, data []byte, q blobQuota) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w := s.workspaces[meta.Room]
@@ -135,6 +192,9 @@ func (s *memoryStore) dropBlobLocked(room, id string) bool {
 	s.blobTotal.bytes -= b.meta.Size
 	s.blobTotal.count--
 	s.storeBytes -= b.meta.Size + blobOverheadBytes + int64(len(room))
+	if s.blobDir() != "" {
+		_ = os.Remove(s.blobFile(room, id))
+	}
 	return true
 }
 
@@ -197,7 +257,6 @@ func (s *memoryStore) blobSnapsLocked() []blobSnap {
 			out = append(out, blobSnap{
 				Room: b.meta.Room, ID: b.meta.ID, Tenant: b.meta.Tenant, Uploader: b.meta.Uploader,
 				Size: b.meta.Size, SHA256: b.meta.SHA256, CreatedAt: b.meta.CreatedAt, ExpiresAt: b.meta.ExpiresAt,
-				Data: b.data,
 			})
 		}
 	}
@@ -205,21 +264,46 @@ func (s *memoryStore) blobSnapsLocked() []blobSnap {
 }
 
 // restoreBlobsLocked reloads blobs from a snapshot after the workspaces:
-// expired ones, ones of a room no longer live and malformed ones are
-// dropped. Caller holds s.mu.
+// expired ones, ones of a room no longer live, ones whose file is missing
+// or doesn't match its size and hash, and malformed ones are dropped. Blob
+// files no restored blob uses (deleted ones, uploads after the last flush)
+// are removed. Caller holds s.mu.
 func (s *memoryStore) restoreBlobsLocked(snaps []blobSnap) {
 	s.blobs, s.blobTenant, s.blobTotal = nil, nil, memBlobUse{}
 	now := time.Now().Unix()
+	dir := s.blobDir()
+	keep := map[string]bool{}
 	for _, b := range snaps {
 		w := s.workspaces[b.Room]
-		if w == nil || !w.live || !validBlobID(b.ID) || int64(len(b.Data)) != b.Size || len(b.Data) == 0 ||
-			(b.ExpiresAt != 0 && b.ExpiresAt <= now) {
+		if w == nil || !w.live || !validBlobID(b.ID) || b.Size <= 0 || (b.ExpiresAt != 0 && b.ExpiresAt <= now) {
 			continue
 		}
+		if len(b.Data) == 0 && dir != "" {
+			b.Data, _ = os.ReadFile(s.blobFile(b.Room, b.ID))
+		} else if len(b.Data) > 0 && dir != "" {
+			// An older snapshot carried the bytes inline: move them out.
+			if writeBlobFile(s.blobFile(b.Room, b.ID), b.Data) != nil {
+				continue
+			}
+		}
+		sum := sha256.Sum256(b.Data)
+		if int64(len(b.Data)) != b.Size || hex.EncodeToString(sum[:]) != b.SHA256 {
+			continue
+		}
+		keep[filepath.Base(s.blobFile(b.Room, b.ID))] = true
 		s.storeBytes += b.Size + blobOverheadBytes + int64(len(b.Room))
 		s.addBlobLocked(&memBlob{meta: BlobMeta{
 			Room: b.Room, ID: b.ID, Tenant: w.tenant, Uploader: b.Uploader, Size: b.Size,
 			SHA256: b.SHA256, CreatedAt: b.CreatedAt, ExpiresAt: b.ExpiresAt,
 		}, data: b.Data})
+	}
+	if dir == "" {
+		return
+	}
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if name := e.Name(); !keep[name] && (len(name) == 64 || strings.HasSuffix(name, ".tmp")) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
 	}
 }

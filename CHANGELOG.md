@@ -85,7 +85,8 @@ route or database table changes.
   idle-room retention and (with relay membership) a member's removal delete
   the blobs with them. Postgres gets `relay_blobs` and `relay_blob_usage`
   (migrated under the advisory lock); the memory store counts blobs toward
-  `LANGSTROTH_RELAY_MAX_STORE_BYTES` and snapshots them.
+  `LANGSTROTH_RELAY_MAX_STORE_BYTES` and keeps their bytes in files under
+  `<data dir>/blobs/` (the JSON snapshot holds only their metadata).
   `LANGSTROTH_RELAY_BLOBS=off` turns the routes off. Chart: `blobs.*`, and
   the ingress-nginx body limit follows `blobs.maxBytes`. Operator guide:
   [docs/blobs.md](docs/blobs.md).

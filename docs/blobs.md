@@ -104,9 +104,10 @@ attachment quota never stops a workspace's messages. They are not a way
 around the relay's storage bounds, though:
 
 - On the memory store every blob counts toward
-  `LANGSTROTH_RELAY_MAX_STORE_BYTES` (the heap budget), and blobs are saved
-  in the JSON snapshot. Raise the budget, the pod memory and the volume if
-  you expect many attachments, or use Postgres.
+  `LANGSTROTH_RELAY_MAX_STORE_BYTES` (the heap budget; unbounded when unset
+  outside the chart), and their bytes are saved under the data directory.
+  Raise the budget, the pod memory and the volume if you expect many
+  attachments, or use Postgres.
 - Blobs never create a room, so with `LANGSTROTH_RELAY_MAX_ROOMS` set the
   relay holds at most `MAX_ROOMS × BLOB_ROOM_MAX_BYTES` of blobs. Set
   `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` for a hard relay-wide bound.
@@ -122,9 +123,15 @@ per-workspace quotas, on a relay open to untrusted clients.
 
 ## Storage
 
-- **Memory store:** blobs are held in memory under the store lock and
-  written to `relay-state.json`; on restart an expired blob, or one whose
-  workspace no longer holds anything, is dropped.
+- **Memory store:** blobs are held in memory under the store lock. With
+  persistence on, each blob's bytes are also written to their own file
+  under `<data dir>/blobs/` (owner-only, named by a hash of the workspace and
+  id) when it is uploaded and removed when it is deleted; `relay-state.json`
+  holds only their metadata, so the snapshot rewritten every five seconds
+  stays small however many attachments there are. On restart an expired
+  blob, one whose workspace no longer holds anything, and one whose file is
+  missing or doesn't match its recorded size and SHA-256 are dropped, and
+  files no restored blob uses are removed.
 - **Postgres:** `relay_blobs` (one row per blob, the ciphertext stored
   uncompressed out of line) and `relay_blob_usage` (running byte and count
   totals per workspace, per uploader in a workspace, per tenant and for the

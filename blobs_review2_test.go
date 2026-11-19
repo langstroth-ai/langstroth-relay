@@ -1,10 +1,14 @@
 package relay
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +126,114 @@ func TestHTTPBlobUploadsInFlightCapped(t *testing.T) {
 	}
 	if resp, b := blobHTTP(t, "POST", url, alice, []byte("x")); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("alice after hers finished: %d %s", resp.StatusCode, b)
+	}
+}
+
+// The memory store's JSON snapshot is rewritten every few seconds. Blob
+// bytes inside it (base64) make every flush rewrite every attachment: a
+// workspace's 512 MiB quota becomes ~700 MB of JSON every 5 s. The snapshot
+// must hold only metadata; the bytes live in their own files.
+func TestBlobSnapshotKeepsBytesOutOfJSON(t *testing.T) {
+	dir := t.TempDir()
+	s := newMemoryStoreWithPersistence(dir)
+	seedRoom(t, s, "w")
+	m, d := testBlob("w", "ip:a", 256<<10)
+	if err := s.PutBlob(bg, m, d, blobQuota{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(bg); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, snapshotFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() > 32<<10 {
+		t.Fatalf("snapshot is %d bytes for one 256 KiB blob: blob bytes ride the JSON", fi.Size())
+	}
+	r := newMemoryStoreWithPersistence(dir)
+	if _, data, ok, _ := r.GetBlob(bg, "w", m.ID, time.Now().Unix()); !ok || !bytes.Equal(data, d) {
+		t.Fatalf("blob not restored: ok=%v", ok)
+	}
+	// Deleting removes its file; a restore then doesn't bring it back even
+	// from a snapshot written before the delete.
+	if ok, _ := r.DeleteBlob(bg, "w", m.ID); !ok {
+		t.Fatal("delete")
+	}
+	r2 := newMemoryStoreWithPersistence(dir) // the snapshot still lists it
+	if _, _, ok, _ := r2.GetBlob(bg, "w", m.ID, time.Now().Unix()); ok {
+		t.Fatal("a deleted blob came back from the snapshot")
+	}
+	if r2.blobTotal.count != 0 {
+		t.Fatalf("totals after restore: %+v", r2.blobTotal)
+	}
+}
+
+// A blob file on disk that no snapshot lists (an upload that landed just
+// before a crash) is removed at boot, and a corrupted file isn't served.
+func TestBlobSnapshotOrphanAndCorruptFiles(t *testing.T) {
+	dir := t.TempDir()
+	s := newMemoryStoreWithPersistence(dir)
+	seedRoom(t, s, "w")
+	keep, kd := testBlob("w", "ip:a", 100)
+	if err := s.PutBlob(bg, keep, kd, blobQuota{}); err != nil {
+		t.Fatal(err)
+	}
+	bad, bd := testBlob("w", "ip:a", 100)
+	if err := s.PutBlob(bg, bad, bd, blobQuota{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(bg); err != nil {
+		t.Fatal(err)
+	}
+	orphan, od := testBlob("w", "ip:a", 100) // written after the last flush
+	if err := s.PutBlob(bg, orphan, od, blobQuota{}); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt one stored file (same length, other bytes).
+	if err := os.WriteFile(s.blobFile("w", bad.ID), bytes.Repeat([]byte{1}, 100), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := newMemoryStoreWithPersistence(dir)
+	if _, _, ok, _ := r.GetBlob(bg, "w", keep.ID, time.Now().Unix()); !ok {
+		t.Fatal("intact blob lost")
+	}
+	if _, _, ok, _ := r.GetBlob(bg, "w", bad.ID, time.Now().Unix()); ok {
+		t.Fatal("a corrupted blob file was served")
+	}
+	if _, err := os.Stat(r.blobFile("w", orphan.ID)); !os.IsNotExist(err) {
+		t.Fatalf("orphan blob file left on disk: %v", err)
+	}
+	if r.blobTotal.count != 1 {
+		t.Fatalf("totals %+v", r.blobTotal)
+	}
+}
+
+// A snapshot written before blob files (bytes inline) still restores, and
+// its bytes move out to files.
+func TestBlobSnapshotInlineBytesMigrate(t *testing.T) {
+	dir := t.TempDir()
+	s := newMemoryStoreWithPersistence(dir)
+	seedRoom(t, s, "w")
+	m, d := testBlob("w", "ip:a", 1000)
+	snap := s.toSnapshot()
+	snap.Blobs = []blobSnap{{Room: "w", ID: m.ID, Uploader: m.Uploader, Size: m.Size, SHA256: m.SHA256, CreatedAt: m.CreatedAt, Data: d}}
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, snapshotFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := newMemoryStoreWithPersistence(dir)
+	if _, data, ok, _ := r.GetBlob(bg, "w", m.ID, time.Now().Unix()); !ok || !bytes.Equal(data, d) {
+		t.Fatal("inline blob not restored")
+	}
+	if err := r.Flush(bg); err != nil {
+		t.Fatal(err)
+	}
+	r2 := newMemoryStoreWithPersistence(dir)
+	if _, data, ok, _ := r2.GetBlob(bg, "w", m.ID, time.Now().Unix()); !ok || !bytes.Equal(data, d) {
+		t.Fatal("blob lost after its bytes moved to a file")
 	}
 }
