@@ -29,9 +29,12 @@ import (
 //
 // Ids are minted by the relay (32 random bytes, base64url without padding)
 // and there is no route that lists them, so a blob can't be found by
-// enumeration. Deleting is a capability: write access to the workspace plus
-// knowledge of the id. Clients delete only after a signed deletion event in
-// the workspace log (the authorization of who may delete lives there).
+// enumeration. Deleting needs write access to the workspace and the id, and
+// a blob uploaded with an identified token (a token subject) is bound to
+// it: only that subject, or a workspace Admin or Owner on the relay roster
+// (relay membership), may delete it. A blob uploaded without an identity is
+// a capability (anyone with write access and the id). Clients delete only
+// after a signed deletion event in the workspace log.
 
 // Blob refusal codes (refusal.go). The storage ones answer 507 and are also
 // label values of hive_relay_limit_rejections_total; blob_rate answers 429.
@@ -202,6 +205,31 @@ type BlobMeta struct {
 	SHA256    string // hex of the stored bytes
 	CreatedAt int64
 	ExpiresAt int64 // unix seconds; 0 = kept until deleted
+	// Bound: the uploader was an identified token subject, so only it (or
+	// a workspace Admin) may delete the blob. False for an upload tagged
+	// by client address, which any writer with the id may delete.
+	Bound bool
+}
+
+// blobDeleter is who asks to delete a blob: its uploader tag, and Any when
+// it may delete any blob of the workspace (an Admin on the roster).
+type blobDeleter struct {
+	Uploader string
+	Any      bool
+}
+
+// blobDeleteResult is the outcome of DeleteBlobAs.
+type blobDeleteResult int
+
+const (
+	blobDeleteAbsent  blobDeleteResult = iota // no such blob
+	blobDeleteDone                            // deleted
+	blobDeleteRefused                         // bound to another uploader
+)
+
+// mayDelete reports whether by may delete a blob described by m.
+func (by blobDeleter) mayDelete(m BlobMeta) bool {
+	return by.Any || !m.Bound || m.Uploader == by.Uploader
 }
 
 // blobQuota carries the limits for one upload. Zero fields are unlimited.
@@ -228,6 +256,9 @@ type blobStore interface {
 	GetBlob(ctx context.Context, room, id string, now int64) (BlobMeta, []byte, bool, error)
 	// DeleteBlob removes one blob of room; false if there was none.
 	DeleteBlob(ctx context.Context, room, id string) (bool, error)
+	// DeleteBlobAs removes one blob of room if by may delete it
+	// (blobDeleter.mayDelete), atomically with that check.
+	DeleteBlobAs(ctx context.Context, room, id string, by blobDeleter) (blobDeleteResult, error)
 	// DeleteBlobsByUploader removes every blob uploader put in room.
 	DeleteBlobsByUploader(ctx context.Context, room, uploader string) (int64, error)
 	// PruneExpiredBlobs removes every blob that expired at or before now.
@@ -373,6 +404,7 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 		ID:        newBlobID(),
 		Tenant:    tenantID(r.Context()),
 		Uploader:  blobUploaderTag(writer),
+		Bound:     strings.HasPrefix(writer, "sub:"),
 		Size:      int64(len(data)),
 		SHA256:    hex.EncodeToString(sum[:]),
 		CreatedAt: now,
@@ -446,12 +478,38 @@ func (s *Server) deleteBlob(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceWrite(w, r, room) {
 		return
 	}
-	if id := r.PathValue("blob"); validBlobID(id) {
-		if _, err := s.blobStore.DeleteBlob(r.Context(), room, id); storeErr(w, err) {
+	id := r.PathValue("blob")
+	if !validBlobID(id) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	by := blobDeleter{Uploader: blobUploaderTag(writerTag(r.Context(), clientKey(r)))}
+	res, err := s.blobStore.DeleteBlobAs(r.Context(), room, id, by)
+	if storeErr(w, err) {
+		return
+	}
+	if res == blobDeleteRefused && s.isRosterAdmin(r.Context(), room) {
+		by.Any = true
+		if res, err = s.blobStore.DeleteBlobAs(r.Context(), room, id, by); storeErr(w, err) {
 			return
 		}
 	}
+	if res == blobDeleteRefused {
+		writeJSON(w, http.StatusForbidden, blobError{Error: "blob_not_yours",
+			Message: "only its uploader or a workspace admin may delete this attachment"})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// isRosterAdmin reports whether the caller is an Admin or Owner of room on
+// the relay roster (relay membership only; the open relay has no Admins).
+func (s *Server) isRosterAdmin(ctx context.Context, room string) bool {
+	if !s.membership {
+		return false
+	}
+	caller := callerAccount(claimsFrom(ctx))
+	return caller != "" && s.requireRole(ctx, room, caller, rankAdmin) == nil
 }
 
 // removeMemberBlobs deletes the blobs a removed member uploaded to room

@@ -26,7 +26,7 @@ deletes need Contributor and downloads need Viewer, as for envelopes.
 |---|---|---|---|
 | `POST` | `/v1/workspaces/{id}/blobs` | the ciphertext as the raw body (any `Content-Type`) | `201 {"id":"<43 chars>","size":<bytes>,"sha256":"<hex of the stored bytes>","expiresAt":<unix s, 0 = never>}` |
 | `GET` | `/v1/workspaces/{id}/blobs/{blob}` | | `200 application/octet-stream`, with `Content-Length`, `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` |
-| `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204`, whether or not the blob existed |
+| `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204`, whether or not the blob existed; `403 {"error":"blob_not_yours"}` when the blob is bound to another uploader (below) |
 
 - **Ids are minted by the relay:** 32 random bytes, base64url without padding
   (43 characters of `A–Z a–z 0–9 - _`). There is no route that lists a
@@ -52,12 +52,42 @@ deletes need Contributor and downloads need Viewer, as for envelopes.
 
 ### Deleting
 
-Deleting is a capability: write access to the workspace plus the blob's id.
-The relay has no notion of who may delete which attachment; that rule lives
-in the signed workspace log. Ligus clients delete a blob only after a signed
-deletion event (a message removal, or a member's removal) and every member's
-client stops offering a blob once that event folds, whether or not the relay
-deleted it.
+Deleting needs write access to the workspace and the blob's id, and every
+reader of the workspace log knows the id. So the relay binds a blob to the
+identity that uploaded it, when there is one:
+
+- **Uploaded with an identified token** (a signed token with a subject):
+  the blob is *bound*. Only the same subject (in the same tenant) may delete
+  it, or, with relay membership on, an Admin or Owner of that workspace on
+  the relay roster. Anyone else gets `403 blob_not_yours` and the blob
+  stays. The binding is the relay's own authentication identity, never
+  anything inside the ciphertext, so it doesn't weaken end-to-end
+  encryption; it is stored as a hash with the blob.
+- **Uploaded without an identity** (the open policy with no signed token,
+  where the relay knows only the client address): the blob is a capability,
+  and anyone with write access to the workspace and its id may delete it.
+  An address isn't an identity (it changes as a phone moves, and a NAT
+  shares one), so binding to it would only stop the uploader deleting its
+  own blob. Run with identified tokens if deletion must be bound.
+
+The rule of who may delete which attachment still lives in the signed
+workspace log: Ligus clients delete a blob only after a signed deletion
+event (a message removal, or a member's removal), and every member's client
+stops offering a blob once that event folds, whether or not the relay
+deleted it. The relay's binding is a second line: a member who learned an
+id from the log can't remove someone else's file from the relay.
+
+**What an Admin's client needs.** The relay recognises an Admin only
+through relay membership (`LANGSTROTH_RELAY_MEMBERSHIP`), by the Admin's
+token subject on the workspace roster. A Ligus Admin removing a member
+should therefore call `DELETE /v1/workspaces/{id}/members/{account}` (which
+deletes every blob that member's subject uploaded there, below), or delete
+the blobs one by one with its own identified token. Without relay
+membership the relay has no Admins: an Admin's `DELETE` of another member's
+bound blob answers `403 blob_not_yours`, the blob stays until it expires
+(`LANGSTROTH_RELAY_BLOB_RETENTION_DAYS`), and the clients' signed deletion
+event is what hides it. A client should treat that `403` as "the relay
+keeps it until retention", not as a failure of the removal.
 
 When relay membership is on, removing a member through
 `DELETE /v1/workspaces/{id}/members/{account}` also deletes the blobs that

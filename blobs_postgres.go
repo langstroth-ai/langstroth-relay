@@ -28,8 +28,19 @@ CREATE TABLE IF NOT EXISTS relay_blobs (
   created_at BIGINT NOT NULL,
   expires_at BIGINT NOT NULL DEFAULT 0,
   data       BYTEA  NOT NULL,
+  bound      BOOLEAN NOT NULL DEFAULT false,
   PRIMARY KEY (workspace, id)
 );
+-- bound (only its uploader or an Admin may delete): added after the table
+-- first shipped in development builds. Only when missing, so a boot never
+-- queues an exclusive lock behind an upload.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'relay_blobs'::regclass
+                 AND attname = 'bound' AND NOT attisdropped) THEN
+    ALTER TABLE relay_blobs ADD COLUMN bound BOOLEAN NOT NULL DEFAULT false;
+  END IF;
+END $$;
 -- Ciphertext doesn't compress: store it out of line, uncompressed. Only
 -- when not yet set, so a later boot never queues an exclusive lock behind
 -- an upload in flight.
@@ -97,9 +108,9 @@ RETURNING bytes, count`, sc, size).Scan(&bytes, &count); err != nil {
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO relay_blobs (workspace, id, tenant, uploader, size, sha256, created_at, expires_at, data)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		meta.Room, meta.ID, tenant, meta.Uploader, size, meta.SHA256, meta.CreatedAt, meta.ExpiresAt, data); err != nil {
+INSERT INTO relay_blobs (workspace, id, tenant, uploader, size, sha256, created_at, expires_at, data, bound)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		meta.Room, meta.ID, tenant, meta.Uploader, size, meta.SHA256, meta.CreatedAt, meta.ExpiresAt, data, meta.Bound); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -143,9 +154,9 @@ func (s *postgresStore) GetBlob(ctx context.Context, room, id string, now int64)
 	m := BlobMeta{Room: room, ID: id}
 	var data []byte
 	err := s.pool.QueryRow(ctx, `
-SELECT tenant, uploader, size, sha256, created_at, expires_at, data FROM relay_blobs
+SELECT tenant, uploader, size, sha256, created_at, expires_at, bound, data FROM relay_blobs
 WHERE workspace = $1 AND id = $2 AND (expires_at = 0 OR expires_at > $3)`, room, id, now).
-		Scan(&m.Tenant, &m.Uploader, &m.Size, &m.SHA256, &m.CreatedAt, &m.ExpiresAt, &data)
+		Scan(&m.Tenant, &m.Uploader, &m.Size, &m.SHA256, &m.CreatedAt, &m.ExpiresAt, &m.Bound, &data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BlobMeta{}, nil, false, nil
 	}
@@ -228,6 +239,23 @@ const blobReturning = ` RETURNING workspace, tenant, uploader, size`
 func (s *postgresStore) DeleteBlob(ctx context.Context, room, id string) (bool, error) {
 	n, err := s.pgDeleteBlobs(ctx, `DELETE FROM relay_blobs WHERE workspace = $1 AND id = $2`+blobReturning, room, id)
 	return n > 0, err
+}
+
+func (s *postgresStore) DeleteBlobAs(ctx context.Context, room, id string, by blobDeleter) (blobDeleteResult, error) {
+	n, err := s.pgDeleteBlobs(ctx, `DELETE FROM relay_blobs WHERE workspace = $1 AND id = $2
+AND (NOT bound OR uploader = $3 OR $4)`+blobReturning, room, id, by.Uploader, by.Any)
+	if err != nil || n > 0 {
+		return blobDeleteDone, err
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM relay_blobs WHERE workspace = $1 AND id = $2)`,
+		room, id).Scan(&exists); err != nil {
+		return blobDeleteAbsent, err
+	}
+	if exists {
+		return blobDeleteRefused, nil
+	}
+	return blobDeleteAbsent, nil
 }
 
 func (s *postgresStore) DeleteBlobsByUploader(ctx context.Context, room, uploader string) (int64, error) {

@@ -41,6 +41,7 @@ type blobSnap struct {
 	SHA256    string `json:"sha256"`
 	CreatedAt int64  `json:"createdAt"`
 	ExpiresAt int64  `json:"expiresAt,omitempty"`
+	Bound     bool   `json:"bound,omitempty"`
 	// Data is only read (snapshots written before blob files); the bytes
 	// live in blobFile.
 	Data []byte `json:"data,omitempty"`
@@ -222,6 +223,20 @@ func (s *memoryStore) DeleteBlob(_ context.Context, room, id string) (bool, erro
 	return s.dropBlobLocked(room, id), nil
 }
 
+func (s *memoryStore) DeleteBlobAs(_ context.Context, room, id string, by blobDeleter) (blobDeleteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.blobs[room][id]
+	switch {
+	case b == nil:
+		return blobDeleteAbsent, nil
+	case !by.mayDelete(b.meta):
+		return blobDeleteRefused, nil
+	}
+	s.dropBlobLocked(room, id)
+	return blobDeleteDone, nil
+}
+
 func (s *memoryStore) DeleteBlobsByUploader(_ context.Context, room, uploader string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -257,6 +272,7 @@ func (s *memoryStore) blobSnapsLocked() []blobSnap {
 			out = append(out, blobSnap{
 				Room: b.meta.Room, ID: b.meta.ID, Tenant: b.meta.Tenant, Uploader: b.meta.Uploader,
 				Size: b.meta.Size, SHA256: b.meta.SHA256, CreatedAt: b.meta.CreatedAt, ExpiresAt: b.meta.ExpiresAt,
+				Bound: b.meta.Bound,
 			})
 		}
 	}
@@ -294,7 +310,7 @@ func (s *memoryStore) restoreBlobsLocked(snaps []blobSnap) {
 		s.storeBytes += b.Size + blobOverheadBytes + int64(len(b.Room))
 		s.addBlobLocked(&memBlob{meta: BlobMeta{
 			Room: b.Room, ID: b.ID, Tenant: w.tenant, Uploader: b.Uploader, Size: b.Size,
-			SHA256: b.SHA256, CreatedAt: b.CreatedAt, ExpiresAt: b.ExpiresAt,
+			SHA256: b.SHA256, CreatedAt: b.CreatedAt, ExpiresAt: b.ExpiresAt, Bound: b.Bound,
 		}, data: b.Data})
 	}
 	if dir == "" {

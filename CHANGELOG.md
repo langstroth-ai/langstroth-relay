@@ -70,7 +70,9 @@ route or database table changes.
   existing routes are unchanged): `POST /v1/workspaces/{id}/blobs` (raw
   ciphertext body; the relay mints a random 43-character id and answers
   `201 {"id","size","sha256","expiresAt"}`), `GET …/blobs/{blob}` and
-  `DELETE …/blobs/{blob}` (`204`). No listing route; ids can't be chosen or
+  `DELETE …/blobs/{blob}` (`204`; a blob uploaded with an identified token
+  can be deleted only by that subject or, with relay membership, a
+  workspace Admin: `403 blob_not_yours` otherwise). No listing route; ids can't be chosen or
   enumerated; an unknown, expired or other workspace's blob is `404`. Blobs
   never create a room. Limits: one blob `LANGSTROTH_RELAY_BLOB_MAX_BYTES`
   (25 MiB, `413`), per workspace `_BLOB_ROOM_MAX_BYTES` (512 MiB) and

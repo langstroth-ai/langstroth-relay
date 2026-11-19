@@ -455,7 +455,7 @@ each download against the signed event that refers to it. On by default
 |---|---|---|---|
 | `POST` | `/v1/workspaces/{id}/blobs` | raw ciphertext body (≤ `LANGSTROTH_RELAY_BLOB_MAX_BYTES`, 25 MiB) | `201 {"id":"<43 chars>","size":n,"sha256":"<hex>","expiresAt":<unix s, 0 = never>}` |
 | `GET` | `/v1/workspaces/{id}/blobs/{blob}` | | `200 application/octet-stream` (`Content-Disposition: attachment`, `nosniff`, `no-store`) |
-| `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204` (also when absent) |
+| `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204` (also when absent); `403 blob_not_yours` when it was uploaded by another token subject and the caller isn't a workspace Admin on the relay roster |
 
 Ids are 32 random bytes minted by the relay (base64url, no padding); there
 is no listing route. An unknown, expired or other workspace's blob is `404

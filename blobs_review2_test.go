@@ -237,3 +237,161 @@ func TestBlobSnapshotInlineBytesMigrate(t *testing.T) {
 		t.Fatal("blob lost after its bytes moved to a file")
 	}
 }
+
+// Deleting a blob an identified writer uploaded is bound to that writer: a
+// fellow writer who learned the id (every reader of the workspace log does)
+// can't delete it. A workspace Admin can (relay membership), and blobs
+// uploaded without an identity stay a capability.
+func TestHTTPBlobDeleteBoundToUploader(t *testing.T) {
+	ts, sk := membershipServer(t)
+	tk := func(sub string) string {
+		return issueToken(sk, TokenClaims{Sub: sub, Exp: uint64(time.Now().Add(time.Hour).Unix())})
+	}
+	owner, admin, bob, carol := tk("owner"), tk("admin"), tk("bob"), tk("carol")
+	up := func(ws, tok string) string {
+		t.Helper()
+		resp, b := blobHTTP(t, "POST", ts.URL+"/v1/workspaces/"+ws+"/blobs", tok, []byte("bytes"))
+		var br blobResp
+		_ = json.Unmarshal(b, &br)
+		if resp.StatusCode != 201 {
+			t.Fatalf("upload: %d %s", resp.StatusCode, b)
+		}
+		return br.ID
+	}
+	del := func(ws, id, tok string) (int, string) {
+		resp, b := blobHTTP(t, "DELETE", ts.URL+"/v1/workspaces/"+ws+"/blobs/"+id, tok, nil)
+		return resp.StatusCode, string(b)
+	}
+	get := func(ws, id, tok string) int {
+		resp, _ := blobHTTP(t, "GET", ts.URL+"/v1/workspaces/"+ws+"/blobs/"+id, tok, nil)
+		return resp.StatusCode
+	}
+
+	// Unclaimed workspace, identified writers.
+	seedHTTP(t, ts.URL, "open", bob)
+	b1 := up("open", bob)
+	if code, body := del("open", b1, carol); code != http.StatusForbidden || !strings.Contains(body, "blob_not_yours") {
+		t.Fatalf("carol deleted bob's blob: %d %s", code, body)
+	}
+	if get("open", b1, bob) != 200 {
+		t.Fatal("bob's blob gone after a refused delete")
+	}
+	if code, _ := del("open", b1, ""); code == http.StatusNoContent {
+		t.Fatalf("an anonymous caller deleted bob's blob: %d", code)
+	}
+	if code, _ := del("open", b1, bob); code != http.StatusNoContent {
+		t.Fatalf("bob deleting his own: %d", code)
+	}
+	if get("open", b1, bob) != 404 {
+		t.Fatal("bob's delete didn't delete")
+	}
+	// Absent ids still answer 204.
+	if code, _ := del("open", newBlobID(), carol); code != http.StatusNoContent {
+		t.Fatalf("absent id: %d", code)
+	}
+	// (An upload without an identity stays a capability: TestHTTPBlobRoundTrip
+	// on the open relay, TestBlobStoreDeleteOwnership.)
+
+	// Claimed workspace: Admin+ may delete anyone's blob, Contributors only
+	// their own.
+	if code, b := req(t, "POST", ts.URL+"/v1/workspaces/team/members/claim", owner, map[string]string{"login": "o"}); code != 200 {
+		t.Fatalf("claim: %d %s", code, b)
+	}
+	for acct, role := range map[string]string{"admin": "admin", "bob": "contributor", "carol": "contributor"} {
+		if code, b := req(t, "POST", ts.URL+"/v1/workspaces/team/members", owner, map[string]string{"account": acct, "role": role}); code != 200 {
+			t.Fatalf("add %s: %d %s", acct, code, b)
+		}
+	}
+	seedHTTP(t, ts.URL, "team", owner)
+	b2, b3 := up("team", bob), up("team", bob)
+	if code, _ := del("team", b2, carol); code != http.StatusForbidden {
+		t.Fatalf("a contributor deleted another's blob: %d", code)
+	}
+	if code, _ := del("team", b2, admin); code != http.StatusNoContent || get("team", b2, owner) != 404 {
+		t.Fatalf("admin deleting a member's blob: %d", code)
+	}
+	if code, _ := del("team", b3, owner); code != http.StatusNoContent || get("team", b3, owner) != 404 {
+		t.Fatalf("owner deleting a member's blob: %d", code)
+	}
+	// An owner's blob can't be deleted by a contributor either.
+	o1 := up("team", owner)
+	if code, _ := del("team", o1, bob); code != http.StatusForbidden {
+		t.Fatalf("a contributor deleted the owner's blob: %d", code)
+	}
+}
+
+// The store-level ownership check, on both stores.
+func TestBlobStoreDeleteOwnership(t *testing.T) {
+	blobStores(t, func(t *testing.T, s Store) {
+		seedRoom(t, s, "w")
+		bs := s.(blobStore)
+		m, d := testBlob("w", "sub:bob", 10)
+		m.Bound = true
+		if err := bs.PutBlob(bg, m, d, blobQuota{}); err != nil {
+			t.Fatal(err)
+		}
+		carol := blobDeleter{Uploader: blobUploaderTag("sub:carol")}
+		if res, err := bs.DeleteBlobAs(bg, "w", m.ID, carol); err != nil || res != blobDeleteRefused {
+			t.Fatalf("carol: %v %v", res, err)
+		}
+		if res, err := bs.DeleteBlobAs(bg, "w", m.ID, blobDeleter{Uploader: m.Uploader}); err != nil || res != blobDeleteDone {
+			t.Fatalf("bob: %v %v", res, err)
+		}
+		if res, err := bs.DeleteBlobAs(bg, "w", m.ID, blobDeleter{Uploader: m.Uploader}); err != nil || res != blobDeleteAbsent {
+			t.Fatalf("again: %v %v", res, err)
+		}
+		n, d2 := testBlob("w", "ip:1.2.3.4", 10) // unbound: a capability
+		if err := bs.PutBlob(bg, n, d2, blobQuota{}); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := bs.DeleteBlobAs(bg, "w", n.ID, carol); err != nil || res != blobDeleteDone {
+			t.Fatalf("unbound: %v %v", res, err)
+		}
+		o, d3 := testBlob("w", "sub:bob", 10)
+		o.Bound = true
+		if err := bs.PutBlob(bg, o, d3, blobQuota{}); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := bs.DeleteBlobAs(bg, "w", o.ID, blobDeleter{Uploader: carol.Uploader, Any: true}); err != nil || res != blobDeleteDone {
+			t.Fatalf("admin: %v %v", res, err)
+		}
+		checkBlobUsage(t, s)
+	})
+}
+
+// The binding survives a memory-store restart and a Postgres table that
+// predates the column gets it.
+func TestBlobBoundPersists(t *testing.T) {
+	dir := t.TempDir()
+	s := newMemoryStoreWithPersistence(dir)
+	seedRoom(t, s, "w")
+	m, d := testBlob("w", "sub:bob", 10)
+	m.Bound = true
+	if err := s.PutBlob(bg, m, d, blobQuota{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(bg); err != nil {
+		t.Fatal(err)
+	}
+	r := newMemoryStoreWithPersistence(dir)
+	if res, _ := r.DeleteBlobAs(bg, "w", m.ID, blobDeleter{Uploader: blobUploaderTag("sub:carol")}); res != blobDeleteRefused {
+		t.Fatalf("binding lost on restore: %v", res)
+	}
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		return
+	}
+	ps := pgStore(t)
+	if _, err := ps.pool.Exec(bg, `ALTER TABLE relay_blobs DROP COLUMN bound`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.migrate(bg); err != nil {
+		t.Fatal(err)
+	}
+	seedRoom(t, ps, "w")
+	if err := ps.PutBlob(bg, m, d, blobQuota{}); err != nil {
+		t.Fatalf("upload after the migration: %v", err)
+	}
+	if res, _ := ps.DeleteBlobAs(bg, "w", m.ID, blobDeleter{Uploader: blobUploaderTag("sub:carol")}); res != blobDeleteRefused {
+		t.Fatalf("postgres binding: %v", res)
+	}
+}
