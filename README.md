@@ -129,6 +129,21 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
 | `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES`. Postgres is bounded by its disk and the rate limits |
 
+**Blobs** (encrypted attachments; see [docs/blobs.md](docs/blobs.md))
+
+| Var | Default | Meaning |
+|---|---|---|
+| `LANGSTROTH_RELAY_BLOBS` | `on` | `off` → the blob routes answer `404` |
+| `LANGSTROTH_RELAY_BLOB_MAX_BYTES` | `26214400` (25 MiB) | one blob; `413 blob_too_large` past it (`0` keeps the default) |
+| `LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES` / `_ROOM_MAX_COUNT` | `536870912` / `2000` | blob bytes and blobs per workspace (`0` = off); `507 blob_room_bytes` / `blob_room_count` |
+| `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` / `_WRITER_MAX_COUNT` | 128 MiB / `500` (`0` = off) | per uploader (token subject, else address) per workspace; `507 blob_writer_*` |
+| `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | blob bytes across the relay; `507 blob_total_bytes` |
+| `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | a blob expires N days after upload (`0` = keep until deleted) |
+| `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | uploads per second per uploader per workspace; `429 blob_rate` |
+| `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` / `_WRITER_INFLIGHT` | `16` / `4` | uploads being received at once, relay-wide and per uploader (`0` = off); `429 blob_inflight` |
+| `LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE` / `_BURST` | `0.5` / `100` | downloads per second of one blob (`0` = off); `429 blob_download_rate` |
+| `LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE` / `_BURST` | `2` / `60` | blob downloads per second per downloader (token subject, else address; `0` = off); `429 blob_download_rate` |
+
 **Community limits** (all off by default; see [Community limits](#community-limits))
 
 | Var | Default | Meaning |
@@ -319,6 +334,12 @@ should switch on `error`, and treat an unknown code by its status.
 | 507 | `keyring` | the room's key-rotation log is full | as `room_bytes` |
 | 507 | `tenant_bytes`, `tenant_rooms` | the tenant's quota (tenancy) | tell the user to contact their admin; `Retry-After` is an hour |
 | 507 | `store_bytes`, `total_bytes`, `contacts_full` | the relay itself is full | back off and retry after `Retry-After` (ten minutes) |
+| 429 | `blob_rate` | attachment uploads per uploader per workspace | wait `Retry-After`, then retry the upload |
+| 429 | `blob_inflight` | too many attachment uploads in progress (relay-wide or this uploader's) | as `blob_rate` |
+| 429 | `blob_download_rate` | this attachment, or this client, is downloading too often | wait `Retry-After`, then retry the download |
+| 507 | `blob_room_bytes`, `blob_room_count`, `blob_writer_bytes`, `blob_writer_count` | the workspace's (or this uploader's) attachment quota | don't retry automatically: tell the user; it clears as attachments expire or are deleted. Messages are unaffected |
+| 507 | `blob_tenant_bytes`, `blob_tenant_count` | the tenant's attachment quota | as `tenant_bytes` |
+| 507 | `blob_total_bytes` | the relay's attachment storage is full | as `total_bytes` |
 
 A refused write stored nothing, so retrying it later is always safe; an
 envelope re-push keeps its idempotency key and gets its original seq.
@@ -349,7 +370,9 @@ tenants that don't trust each other. Design and rules: [docs/tenancy.md](docs/te
   registration token, for good.
 - **Per-tenant limits:** `max_bytes` and `max_rooms` (`507`),
   `room_max_bytes`, `room_max_envelopes`, `rate`/`burst` (`429`),
-  `max_pairings`, `max_hosts`, `push_per_day`.
+  `max_pairings`, `max_hosts`, `push_per_day`, and for attachments
+  `blob_max_bytes`, `blob_max_count`, `blob_room_max_bytes`,
+  `blob_room_max_count` ([docs/blobs.md](docs/blobs.md)).
 - **Tenant admin** (only with tenancy): `GET /v1/tenant` (usage and limits),
   `GET /v1/tenant/rooms?after=&limit=` (the tenant's rooms), `DELETE
   /v1/tenant/rooms/{id}` (purge one), admitted by a tenant token with the
@@ -423,6 +446,26 @@ channel you trust. A code is **single-use**: the first successful resolve
 consumes it, and a second resolve gets `404`. Unresolved codes still expire at
 their TTL. Failed resolves are capped per client (10 per minute, then `429`),
 so the code space can't be enumerated.
+
+### Blobs (`/v1/workspaces/{id}/blobs`)
+
+End-to-end encrypted file attachments: the relay stores and returns opaque
+ciphertext and never sees a file's contents, name or type; clients check
+each download against the signed event that refers to it. On by default
+(`LANGSTROTH_RELAY_BLOBS=off` → `404`).
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| `POST` | `/v1/workspaces/{id}/blobs` | raw ciphertext body (≤ `LANGSTROTH_RELAY_BLOB_MAX_BYTES`, 25 MiB) | `201 {"id":"<43 chars>","size":n,"sha256":"<hex>","expiresAt":<unix s, 0 = never>}` |
+| `GET` | `/v1/workspaces/{id}/blobs/{blob}` | | `200 application/octet-stream` (`Content-Disposition: attachment`, `nosniff`, `no-store`) |
+| `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204` (also when absent); `403 blob_not_yours` when it was uploaded by another token subject and the caller isn't a workspace Admin on the relay roster |
+
+Ids are 32 random bytes minted by the relay (base64url, no padding); there
+is no listing route. An unknown, expired or other workspace's blob is `404
+blob_not_found`; an upload to a workspace that holds nothing is `404
+no_workspace` (blobs never create rooms). Per-blob, per-workspace,
+per-uploader, per-tenant and relay-wide quotas, an upload rate, 30-day
+retention and deletion: [docs/blobs.md](docs/blobs.md).
 
 ### Contacts (`/v1/contacts/*`)
 

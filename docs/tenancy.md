@@ -116,7 +116,9 @@ Unset = tenancy off; the relay behaves exactly as without this feature and
 {
   "defaults": { "max_bytes": 0, "max_rooms": 0, "room_max_bytes": 0,
                 "room_max_envelopes": 0, "rate": 0, "burst": 0,
-                "max_pairings": 0, "max_hosts": 0, "push_per_day": 0 },
+                "max_pairings": 0, "max_hosts": 0, "push_per_day": 0,
+                "blob_max_bytes": 0, "blob_max_count": 0,
+                "blob_room_max_bytes": 0, "blob_room_max_count": 0 },
   "tenants": [
     { "id": "acme",
       "issuer_pubkeys": ["<hex or base64 Ed25519 public key>"],

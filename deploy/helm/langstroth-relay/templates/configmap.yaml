@@ -29,9 +29,23 @@ data:
   {{- $c := . }}
   {{- range $key := keys $contactEnv | sortAlpha }}
   {{- $v := get $c $key }}
-  {{- if not (kindIs "invalid" $v) }}
+  {{- if not (or (kindIs "invalid" $v) (eq (toString $v) "")) }}
   {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
   {{ get $contactEnv $key }}: {{ $v | toString | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.blobs }}
+  {{- if not .enabled }}
+  LANGSTROTH_RELAY_BLOBS: "off"
+  {{- end }}
+  {{- $blobEnv := dict "maxBytes" "LANGSTROTH_RELAY_BLOB_MAX_BYTES" "roomMaxBytes" "LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES" "roomMaxCount" "LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT" "writerMaxBytes" "LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES" "writerMaxCount" "LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT" "totalMaxBytes" "LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES" "retentionDays" "LANGSTROTH_RELAY_BLOB_RETENTION_DAYS" "rate" "LANGSTROTH_RELAY_BLOB_RATE" "burst" "LANGSTROTH_RELAY_BLOB_BURST" "maxInflight" "LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT" "writerInflight" "LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT" "downloadRate" "LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE" "downloadBurst" "LANGSTROTH_RELAY_BLOB_DOWNLOAD_BURST" "clientDownloadRate" "LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE" "clientDownloadBurst" "LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_BURST" }}
+  {{- $b := . }}
+  {{- range $key := keys $blobEnv | sortAlpha }}
+  {{- $v := get $b $key }}
+  {{- if not (or (kindIs "invalid" $v) (eq (toString $v) "")) }}
+  {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
+  {{ get $blobEnv $key }}: {{ $v | toString | quote }}
   {{- end }}
   {{- end }}
   {{- end }}
@@ -40,7 +54,7 @@ data:
   {{- $l := . }}
   {{- range $key := keys $limitEnv | sortAlpha }}
   {{- $v := get $l $key }}
-  {{- if not (kindIs "invalid" $v) }}
+  {{- if not (or (kindIs "invalid" $v) (eq (toString $v) "")) }}
   {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
   {{ get $limitEnv $key }}: {{ $v | toString | quote }}
   {{- end }}

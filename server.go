@@ -129,8 +129,10 @@ type Server struct {
 	contactCfg contactConfig
 	contactLim contactLimiters
 
-	lim     communityLimits // room quotas, request rates, retention (limits.go)
-	tenancy *tenancyConf    // nil = tenancy off (tenancy.go)
+	lim       communityLimits // room quotas, request rates, retention (limits.go)
+	blobs     blobConfig      // blob channel limits (blobs.go)
+	blobStore blobStore       // nil = the store has no blobs (routes 404)
+	tenancy   *tenancyConf    // nil = tenancy off (tenancy.go)
 
 	pairCount map[string]int // live pairing codes per tenant (tenancy only)
 
@@ -194,6 +196,10 @@ func New(o Options) *Server {
 		s.metricsTokHash = sha256hex(metricsToken)
 	}
 	s.lim = communityLimitsFromEnv()
+	s.blobs = blobConfigFromEnv()
+	if bs, ok := o.Store.(blobStore); ok {
+		s.blobStore = bs
+	}
 	s.pairCount = map[string]int{}
 	tc, terr := tenancyFromEnv()
 	switch {
@@ -332,6 +338,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/admin/users/{id}/tokens", s.adminIssueToken)
 	mux.HandleFunc("POST /v1/admin/users/{id}/disabled", s.adminSetDisabled)
 	mux.HandleFunc("DELETE /v1/admin/tokens/{id}", s.adminRevokeToken)
+
+	// Blob channel (blobs.go): additive; off → 404.
+	s.registerBlobs(mux)
 
 	// Tenant admin scope (tenancy only; 404 otherwise).
 	if s.tenancy != nil {

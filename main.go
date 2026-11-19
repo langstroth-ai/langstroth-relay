@@ -90,6 +90,12 @@ func Main() {
 	if rs, ok := store.(roomStore); ok && lim.roomRetention > 0 {
 		go roomRetentionLoop(rs, lim.roomRetention, stopFlush)
 	}
+	// Expired attachment blobs (LANGSTROTH_RELAY_BLOB_RETENTION_DAYS).
+	bcfg := blobConfigFromEnv()
+	bcfg.log()
+	if bs, ok := store.(blobStore); ok && bcfg.enabled {
+		go blobRetentionLoop(bs, stopFlush)
+	}
 	// Expired contact records and old drops, on every backend (the memory
 	// store also hides expired records on access).
 	if cs, ok := store.(ContactStore); ok {

@@ -278,6 +278,7 @@ func (s *Server) memberRemove(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.RemoveMember(r.Context(), ws, account); storeErr(w, err) {
 		return
 	}
+	s.removeMemberBlobs(r.Context(), ws, account)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

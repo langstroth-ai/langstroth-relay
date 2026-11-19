@@ -45,7 +45,7 @@ const (
 // quotaRetry is the Retry-After for a storage refusal code.
 func quotaRetry(code string) time.Duration {
 	switch code {
-	case limTotalBytes, limTotalRooms, limStoreBytes, refContactsFull:
+	case limTotalBytes, limTotalRooms, limStoreBytes, refContactsFull, limBlobTotalBytes:
 		return retryStoreFull
 	}
 	return retryQuota
