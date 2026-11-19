@@ -78,7 +78,9 @@ route or database table changes.
   `_BLOB_WRITER_MAX_BYTES` / `_COUNT`, relay-wide `_BLOB_TOTAL_MAX_BYTES`,
   per-tenant `blob_max_bytes` / `blob_max_count` and per-workspace overrides
   in the tenancy config (`507 blob_*`), upload rate `_BLOB_RATE` / `_BURST`
-  (1/s, burst 20, `429 blob_rate`), retention `_BLOB_RETENTION_DAYS` (30).
+  (1/s, burst 20, `429 blob_rate`), uploads in flight `_BLOB_MAX_INFLIGHT`
+  (16) and `_BLOB_WRITER_INFLIGHT` (4 per uploader, `429 blob_inflight`),
+  retention `_BLOB_RETENTION_DAYS` (30).
   Quotas are checked atomically with the insert on both stores. Room purges,
   idle-room retention and (with relay membership) a member's removal delete
   the blobs with them. Postgres gets `relay_blobs` and `relay_blob_usage`

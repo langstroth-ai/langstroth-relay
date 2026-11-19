@@ -140,6 +140,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | blob bytes across the relay; `507 blob_total_bytes` |
 | `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | a blob expires N days after upload (`0` = keep until deleted) |
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | uploads per second per uploader per workspace; `429 blob_rate` |
+| `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` / `_WRITER_INFLIGHT` | `16` / `4` | uploads being received at once, relay-wide and per uploader (`0` = off); `429 blob_inflight` |
 
 **Community limits** (all off by default; see [Community limits](#community-limits))
 
@@ -332,6 +333,7 @@ should switch on `error`, and treat an unknown code by its status.
 | 507 | `tenant_bytes`, `tenant_rooms` | the tenant's quota (tenancy) | tell the user to contact their admin; `Retry-After` is an hour |
 | 507 | `store_bytes`, `total_bytes`, `contacts_full` | the relay itself is full | back off and retry after `Retry-After` (ten minutes) |
 | 429 | `blob_rate` | attachment uploads per uploader per workspace | wait `Retry-After`, then retry the upload |
+| 429 | `blob_inflight` | too many attachment uploads in progress (relay-wide or this uploader's) | as `blob_rate` |
 | 507 | `blob_room_bytes`, `blob_room_count`, `blob_writer_bytes`, `blob_writer_count` | the workspace's (or this uploader's) attachment quota | don't retry automatically: tell the user; it clears as attachments expire or are deleted. Messages are unaffected |
 | 507 | `blob_tenant_bytes`, `blob_tenant_count` | the tenant's attachment quota | as `tenant_bytes` |
 | 507 | `blob_total_bytes` | the relay's attachment storage is full | as `total_bytes` |

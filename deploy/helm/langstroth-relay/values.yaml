@@ -323,6 +323,8 @@ blobs:
   retentionDays: null    # 30        LANGSTROTH_RELAY_BLOB_RETENTION_DAYS (0 = keep until deleted)
   rate: null             # 1         LANGSTROTH_RELAY_BLOB_RATE (uploads per second per uploader per workspace)
   burst: null            # 20        LANGSTROTH_RELAY_BLOB_BURST
+  maxInflight: null      # 16        LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT (uploads being received at once, per pod; 0 = off)
+  writerInflight: null   # 4         LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT (per uploader, per pod; 0 = off)
 
 # Room quotas, request rates and retention (README "Community limits",
 # docs/tenancy.md). Each value maps to a LANGSTROTH_RELAY_* variable; null

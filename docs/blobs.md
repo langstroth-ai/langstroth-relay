@@ -45,7 +45,10 @@ deletes need Contributor and downloads need Viewer, as for envelopes.
   `401` no valid access token, `403` the workspace scope or roster refuses,
   `429`/`507` limits (below).
 - A blob upload or download may take up to five minutes; the relay's 30 s
-  read and write timeouts are for JSON requests.
+  read and write timeouts are for JSON requests. The five minutes are a
+  hard limit, not an idle timeout, so a client trickling bytes (slowloris)
+  holds an upload slot for at most that long, and the in-flight caps below
+  bound how many it can hold.
 
 ### Deleting
 
@@ -82,6 +85,8 @@ Every limit refuses; nothing is evicted to make room. Storage refusals are
 | `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | `507 blob_total_bytes` | blob bytes across the relay; `Retry-After` ten minutes |
 | `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | | a blob expires this many days after upload (`0` = kept until deleted). Expired blobs answer `404` at once and are deleted hourly |
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | `429 blob_rate` | uploads per second per uploader per workspace (`0` rate = off). Downloads count toward the normal read rate |
+| `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` | `16` | `429 blob_inflight` | uploads being received at once, per relay process (`0` = off). Each holds up to `BLOB_MAX_BYTES` in memory while it arrives, so this bounds upload memory to about `16 × 25 MiB`; `Retry-After` five seconds |
+| `LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT` | `4` | `429 blob_inflight` | uploads being received at once per uploader (`0` = off), so one client holding uploads open can't take every slot |
 
 Tenancy adds per-tenant limits in the tenancy config (`defaults` or a
 tenant's `limits`), all `0` = off: `blob_max_bytes` and `blob_max_count`

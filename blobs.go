@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,11 +44,12 @@ const (
 	limBlobTenantCount = "blob_tenant_count"
 	limBlobTotalBytes  = "blob_total_bytes"
 	limBlobRate        = "blob_rate"
+	limBlobInflight    = "blob_inflight"
 )
 
 func init() {
 	allLimitNames = append(allLimitNames, limBlobRoomBytes, limBlobRoomCount, limBlobWriterBytes,
-		limBlobWriterCount, limBlobTenantBytes, limBlobTenantCount, limBlobTotalBytes, limBlobRate)
+		limBlobWriterCount, limBlobTenantBytes, limBlobTenantCount, limBlobTotalBytes, limBlobRate, limBlobInflight)
 	for k, v := range map[string]string{
 		limBlobRoomBytes:   "workspace attachment storage quota reached",
 		limBlobRoomCount:   "workspace attachment count quota reached",
@@ -69,6 +71,12 @@ const (
 	defaultBlobRetentionDays = 30
 	defaultBlobRate          = 1.0 // uploads per second per writer per workspace
 	defaultBlobBurst         = 20
+
+	// Uploads being received at once, relay-wide and per uploader. Each
+	// holds up to the blob size cap in memory for up to blobTransferWindow.
+	defaultBlobMaxInflight    = 16
+	defaultBlobWriterInflight = 4
+	blobInflightRetry         = 5 * time.Second
 
 	// blobIDBytes is the entropy of a blob id; its base64url form is
 	// blobIDLen characters.
@@ -97,6 +105,7 @@ type blobConfig struct {
 	totalMaxBytes  int64 // LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES (0 = off)
 	retention      time.Duration
 	rate           *ipRateLimiter // LANGSTROTH_RELAY_BLOB_RATE / _BURST (nil = off)
+	inflight       *blobInflight  // LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT / _WRITER_INFLIGHT (nil = off)
 }
 
 func blobConfigFromEnv() blobConfig {
@@ -115,6 +124,10 @@ func blobConfigFromEnv() blobConfig {
 	}
 	if c.maxBytes == 0 {
 		c.maxBytes = defaultBlobMaxBytes // a blob size cap is never off
+	}
+	if n, w := pos("LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT", defaultBlobMaxInflight),
+		pos("LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT", defaultBlobWriterInflight); n > 0 || w > 0 {
+		c.inflight = &blobInflight{max: n, perWriter: w, byWriter: map[string]int64{}}
 	}
 	if r := envFloat("LANGSTROTH_RELAY_BLOB_RATE", defaultBlobRate); r > 0 {
 		c.rate = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_BLOB_BURST", defaultBlobBurst), 1))
@@ -142,7 +155,40 @@ func (c blobConfig) log() {
 	if c.rate != nil {
 		attrs = append(attrs, "rate", c.rate.rate, "burst", c.rate.burst)
 	}
+	if c.inflight != nil {
+		attrs = append(attrs, "max_inflight", c.inflight.max, "writer_inflight", c.inflight.perWriter)
+	}
 	slog.Info("blob channel", attrs...)
+}
+
+// blobInflight counts the uploads being received, relay-wide and per
+// uploader (zero limits are off). A client that opens uploads and never
+// finishes them holds at most these many buffers.
+type blobInflight struct {
+	mu             sync.Mutex
+	max, perWriter int64
+	total          int64
+	byWriter       map[string]int64
+}
+
+func (l *blobInflight) acquire(writer string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if (l.max > 0 && l.total >= l.max) || (l.perWriter > 0 && l.byWriter[writer] >= l.perWriter) {
+		return false
+	}
+	l.total++
+	l.byWriter[writer]++
+	return true
+}
+
+func (l *blobInflight) release(writer string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.total--
+	if l.byWriter[writer]--; l.byWriter[writer] <= 0 {
+		delete(l.byWriter, writer)
+	}
 }
 
 // BlobMeta describes one stored blob. Uploader is a hash of the writing
@@ -292,6 +338,13 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 		tooLarge()
 		return
 	}
+	if l := s.blobs.inflight; l != nil {
+		if !l.acquire(writer) {
+			tooMany(w, limBlobInflight, tenantID(r.Context()), blobInflightRetry, "too many attachment uploads in progress")
+			return
+		}
+		defer l.release(writer)
+	}
 	// Both deadlines: the server's write timeout runs from the end of the
 	// request headers, so a long upload would otherwise be stored and its
 	// answer (the id) lost, and the client's retry would store it again.
@@ -299,7 +352,7 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 	deadline := time.Now().Add(blobTransferWindow)
 	_ = rc.SetReadDeadline(deadline)
 	_ = rc.SetWriteDeadline(deadline.Add(30 * time.Second))
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.blobs.maxBytes))
+	data, err := readBlobBody(w, r, s.blobs.maxBytes)
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
@@ -339,6 +392,21 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": meta.ID, "size": meta.Size, "sha256": meta.SHA256, "expiresAt": meta.ExpiresAt,
 	})
+}
+
+// readBlobBody reads an upload of at most limit bytes. With a declared
+// length (already checked against limit) it reads into one exact buffer
+// instead of growing one, so an upload never holds twice its size.
+func readBlobBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	body := http.MaxBytesReader(w, r.Body, limit)
+	if n := r.ContentLength; n > 0 && n <= limit {
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(body, buf); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	}
+	return io.ReadAll(body)
 }
 
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
