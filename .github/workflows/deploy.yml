@@ -99,6 +99,11 @@ jobs:
           # raise them only with it. MAX_SSE stays well below Fly's
           # connection hard_limit (deploy/fly.toml) so event streams can't
           # take every connection from requests and phone tunnels.
+          # Memory (512 MB): a blob transfer holds its whole blob (up to
+          # 25 MiB, twice over while it is decoded), so blob transfers in
+          # flight are capped at 4 each way, ordinary requests at 32 per
+          # client, and GOMEMLIMIT makes the Go runtime collect garbage
+          # before the machine runs out.
           flyctl deploy --remote-only --app hive-relay-enterprise --config deploy/fly.toml \
             --env LANGSTROTH_RELAY_REQUIRE_DB=1 \
             --env LANGSTROTH_RELAY_ROOM_MAX_BYTES=67108864 \
@@ -113,6 +118,10 @@ jobs:
             --env LANGSTROTH_RELAY_ROOM_BURST=500 \
             --env LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES=2147483648 \
             --env LANGSTROTH_RELAY_MAX_SSE=1200 \
+            --env LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT=32 \
+            --env LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT=4 \
+            --env LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT=4 \
+            --env GOMEMLIMIT=400MiB \
             --env LANGSTROTH_RELAY_TUNNEL_PUSH_RATE=0.2 \
             --env LANGSTROTH_RELAY_TUNNEL_PUSH_BURST=5 \
             --env LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY=500

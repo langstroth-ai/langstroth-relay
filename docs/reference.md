@@ -92,6 +92,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_ROOM_RETENTION_DAYS` | `0` (off) | delete a room's envelopes, key rotations and device blobs once nothing has been appended to it for N days; its sequence and roster stay |
 | `LANGSTROTH_RELAY_IP_RATE` / `_BURST` | off / 2x rate | every request per client (except `/`, `/v1/health`, `/metrics`); `429` with `Retry-After` |
 | `LANGSTROTH_RELAY_ROOM_RATE` / `_BURST` | off / 2x rate | every request to one room, all clients together; `429` with `Retry-After` |
+| `LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT` | `0` (off) | ordinary requests one client (address; IPv6 by /64, and each /48 gets 16x in total) may hold open at once; `429` `client_inflight` past it. Event streams, tunnel WebSockets and blob transfers have their own caps and don't count. Each request in progress can hold a few MiB (a 4 MiB body, a page of envelopes), so this bounds what one address can pin in memory |
 | `LANGSTROTH_RELAY_TUNNEL_PUSH_RATE` / `_BURST` / `_PER_DAY` | `1` / `5` / `2000` | pushes per tunnel host (`0` = no limit) |
 | `LANGSTROTH_RELAY_TENANCY` | unset | tenancy config JSON, normally from `LANGSTROTH_RELAY_TENANCY_FILE`; see [Tenancy](#tenancy-several-organisations-on-one-relay) |
 | `LANGSTROTH_RELAY_METRICS_MAX_TENANTS` | `50` | tenants reported under their own metrics label; the rest are `tenant="_other"` |
@@ -213,6 +214,7 @@ should switch on `error`, and treat an unknown code by its status.
 | Status | `error` | Meaning | What a client should do |
 |---|---|---|---|
 | 429 | `ip_rate`, `room_rate`, `tenant_rate`, `write_rate`, `read_rate`, `room_writer_rate`, `contact_create_rate`, `contact_write_rate`, `contact_drop_rate`, `rate_limited` | a request rate | wait `Retry-After` (the time until a token is free), then retry the same request; keep the outbox |
+| 429 | `client_inflight` | too many requests in progress from this client | wait `Retry-After` (a second), then retry |
 | 429 | `sse_streams` | too many open event streams from this client | close a stream; retry after `Retry-After` |
 | 429 | `pair_lockout` | too many failed pairing-code guesses | stop guessing until `Retry-After` |
 | 429 | `pair_codes` | this client holds its quota of live pairing codes | wait `Retry-After` (a minute) or until one of its codes is used or expires |

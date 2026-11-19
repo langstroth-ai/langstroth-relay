@@ -404,6 +404,15 @@ func (s *Server) gate(next http.Handler) http.Handler {
 				return
 			}
 		}
+		if s.lim.inflight != nil && inflightPath(r.URL.Path) {
+			release, ok := s.lim.acquireInflight(r)
+			if !ok {
+				countLimit(limClientInflight, "")
+				refuse(w, http.StatusTooManyRequests, refClientInflight, "too many requests in progress from this client", retryInflight)
+				return
+			}
+			defer release()
+		}
 		if r.URL.Path == "/" || r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/v1/admin/") ||
 			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") || (s.tenancy != nil && (r.URL.Path == "/v1/tenant" || strings.HasPrefix(r.URL.Path, "/v1/tenant/"))) {
 			// The tunnel authenticates hosts and phones itself (signed

@@ -261,6 +261,10 @@ route or database table changes.
   listed `tid` values.
 - **`LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT`** (off by default): accept a second issuer
   key during a key rotation.
+- **`LANGSTROTH_RELAY_MAX_INFLIGHT_PER_CLIENT`** (off by default; the
+  community profile sets 32): ordinary requests one client may hold open at
+  once, `429` `client_inflight` past it, so one address can't pin hundreds
+  of multi-MiB bodies or response pages in memory.
 - **Blob downloads in flight** (`LANGSTROTH_RELAY_BLOB_DOWNLOAD_INFLIGHT`,
   default 8, and `_CLIENT_DOWNLOAD_INFLIGHT`, default 2; `429
   blob_inflight`), and downloads are paced like uploads (a reader that

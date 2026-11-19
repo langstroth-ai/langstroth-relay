@@ -27,6 +27,7 @@ const (
 	refSSEStreams     = "sse_streams"      // concurrent event streams per client
 	refPairLockout    = "pair_lockout"     // too many failed pairing-code guesses
 	refPairCodes      = "pair_codes"       // too many live pairing codes from one client
+	refClientInflight = "client_inflight"  // too many requests in progress from one client
 	refContactsFull   = "contacts_full"    // the relay's contact capacity
 	refContactCreate  = "contact_create_rate"
 	refContactWrite   = "contact_write_rate"
@@ -41,6 +42,7 @@ const (
 	retryStoreFull = 10 * time.Minute // relay-wide storage: retention or the operator frees it
 	retrySSE       = 5 * time.Second  // a stream of this client's closes
 	retryPairCodes = time.Minute      // one of this client's codes is resolved or expires
+	retryInflight  = time.Second      // one of this client's requests finishes
 
 )
 
