@@ -22,6 +22,8 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # ── Community profile (docs/tenancy.md, docs/reference.md "Community limits") ──────
   # For a relay anyone may use, on this one shared-cpu-1x machine. Every
   # limit below is off in the binary; uncomment the block to turn it on.
+  # (The project's own public relay gets this profile from
+  # .github/workflows/deploy.yml, as --env flags.)
   # Storage quotas refuse with 507 (never evict: a client folds a room's
   # whole log from its first envelope), rates answer 429 with Retry-After.
   # Never set LANGSTROTH_RELAY_MAX_ENVELOPES or _RETENTION_DAYS: they are
@@ -38,6 +40,8 @@ primary_region = "iad"      # change to one near your users (e.g. lhr, fra, sjc)
   # LANGSTROTH_RELAY_IP_BURST = "200"
   # LANGSTROTH_RELAY_ROOM_RATE = "50"                       # every request to one room, all clients together
   # LANGSTROTH_RELAY_ROOM_BURST = "500"
+  # LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES = "2147483648"    # 2 GiB of attachments across the relay (Postgres)
+  # LANGSTROTH_RELAY_MAX_SSE = "1200"                       # event streams: well below hard_limit below
   # LANGSTROTH_RELAY_TUNNEL_PUSH_RATE = "0.2"               # pushes per tunnel host
   # LANGSTROTH_RELAY_TUNNEL_PUSH_BURST = "5"
   # LANGSTROTH_RELAY_TUNNEL_PUSH_PER_DAY = "500"

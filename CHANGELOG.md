@@ -63,6 +63,12 @@ route or database table changes.
   not on every push to main. Fly concurrency counts open connections
   (1500/2000), and the health check uses the current `http_service.checks`
   schema.
+- The project's public relay is deployed with the community profile on
+  (`.github/workflows/deploy.yml`): room quotas, 4 GiB of rooms and 2 GiB of
+  attachments in total, 50 rooms per client and 100 000 in all, 180-day
+  idle-room expiry, per-client and per-room request rates, and at most
+  1200 event streams (below Fly's 2000-connection hard limit). Before, every
+  one of these was off on it.
 
 ### Added
 

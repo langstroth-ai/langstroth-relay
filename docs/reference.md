@@ -177,7 +177,9 @@ Bound storage instead with the room quotas (`507` refusals, never eviction),
 
 For a relay anyone may use (a public relay on one machine). Every limit is
 off by default; `deploy/fly.toml` has a commented community profile with
-values for one small VM, and the Helm chart sets them under `limits.*`.
+values for one small VM, and the Helm chart sets them under `limits.*`. The
+project's own public relay runs that profile on Postgres; its deploy
+(`.github/workflows/deploy.yml`) passes it as `--env` flags.
 
 - **Quotas refuse, they don't evict.** A Ligus client rebuilds a workspace by
   folding its whole envelope log from the founder's seed, and the relay
