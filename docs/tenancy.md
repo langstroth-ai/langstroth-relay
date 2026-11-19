@@ -22,8 +22,8 @@ tunnel control connections are in-process state, as before.
 
 ## What a client needs from the relay (retention constraint)
 
-Studied in the Ligus client (`crates/hive-runtime/src/sync_engine.rs`,
-`hive-core/src/events.rs`, `envelope_verifier.rs`, `relay_client.rs`):
+Studied in the Ligus client (`crates/ligus-runtime/src/sync_engine.rs`,
+`crates/ligus-core/src/events.rs`, `envelope_verifier.rs`, `relay_client.rs`):
 
 - A device rebuilds a workspace by folding the **whole** envelope log from
   seq 1: the founder's signed creation seed (`SessionSnapshot`), every
