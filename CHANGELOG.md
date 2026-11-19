@@ -85,7 +85,8 @@ route or database table changes.
   download rates per blob `_BLOB_DOWNLOAD_RATE` / `_BURST` (0.5/s, burst
   100) and per downloader `_BLOB_CLIENT_DOWNLOAD_RATE` / `_BURST` (2/s,
   burst 60, `429 blob_download_rate`),
-  retention `_BLOB_RETENTION_DAYS` (30).
+  retention `_BLOB_RETENTION_DAYS` (30). An upload idle for 15 s, or
+  averaging under 8 KiB/s after 15 s, is cut off (`408 blob_too_slow`).
   Quotas are checked atomically with the insert on both stores. Room purges,
   idle-room retention and (with relay membership) a member's removal delete
   the blobs with them. Postgres gets `relay_blobs` and `relay_blob_usage`

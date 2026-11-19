@@ -40,15 +40,17 @@ deletes need Contributor and downloads need Viewer, as for envelopes.
   `404 {"error":"no_workspace"}`. Room limits (`LANGSTROTH_RELAY_MAX_ROOMS`
   and the per-client and per-tenant room counts) therefore bound the number
   of workspaces that can hold blobs.
-- Other errors: `400` empty body (`empty_blob`), `413` larger than
+- Other errors: `400` empty body (`empty_blob`), `408` an upload that
+  stalled or arrived too slowly (`blob_too_slow`), `413` larger than
   `LANGSTROTH_RELAY_BLOB_MAX_BYTES` (`{"error":"blob_too_large","maxBytes":n}`),
   `401` no valid access token, `403` the workspace scope or roster refuses,
   `429`/`507` limits (below).
 - A blob upload or download may take up to five minutes; the relay's 30 s
-  read and write timeouts are for JSON requests. The five minutes are a
-  hard limit, not an idle timeout, so a client trickling bytes (slowloris)
-  holds an upload slot for at most that long, and the in-flight caps below
-  bound how many it can hold.
+  read and write timeouts are for JSON requests. Within those five minutes
+  an upload that sends nothing for 15 seconds, or averages under 8 KiB/s
+  after its first 15 seconds, is cut off with `408 {"error":"blob_too_slow"}`,
+  so a client trickling bytes (slowloris) can't hold an upload slot; the
+  in-flight caps below bound how many slots one client can hold at once.
 
 ### Deleting
 

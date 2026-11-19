@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -97,6 +98,13 @@ const (
 	// blobTransferWindow is how long one upload or download may take: the
 	// server's 30 s read and write timeouts are for JSON, not 25 MiB.
 	blobTransferWindow = 5 * time.Minute
+)
+
+// Upload pacing (package variables so tests can shorten them).
+var (
+	blobIdleTimeout = 15 * time.Second
+	blobRateGrace   = 15 * time.Second
+	blobMinRate     = 8 << 10 // bytes per second, averaged after blobRateGrace
 )
 
 // Per-uploader defaults (a quarter of the per-workspace ones).
@@ -401,15 +409,19 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 	// Both deadlines: the server's write timeout runs from the end of the
 	// request headers, so a long upload would otherwise be stored and its
 	// answer (the id) lost, and the client's retry would store it again.
-	rc := http.NewResponseController(w)
 	deadline := time.Now().Add(blobTransferWindow)
-	_ = rc.SetReadDeadline(deadline)
-	_ = rc.SetWriteDeadline(deadline.Add(30 * time.Second))
-	data, err := readBlobBody(w, r, s.blobs.maxBytes)
+	_ = http.NewResponseController(w).SetWriteDeadline(deadline.Add(30 * time.Second))
+	data, err := readBlobBody(w, r, s.blobs.maxBytes, deadline)
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			tooLarge()
+			return
+		}
+		var ne net.Error
+		if errors.Is(err, errBlobTooSlow) || (errors.As(err, &ne) && ne.Timeout()) {
+			writeJSON(w, http.StatusRequestTimeout, blobError{Error: "blob_too_slow",
+				Message: "the upload stalled or arrived too slowly"})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, blobError{Error: "bad_body", Message: "could not read the request body"})
@@ -448,19 +460,39 @@ func (s *Server) postBlob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// readBlobBody reads an upload of at most limit bytes. With a declared
-// length (already checked against limit) it reads into one exact buffer
-// instead of growing one, so an upload never holds twice its size.
-func readBlobBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
-	body := http.MaxBytesReader(w, r.Body, limit)
-	if n := r.ContentLength; n > 0 && n <= limit {
-		buf := make([]byte, n)
-		if _, err := io.ReadFull(body, buf); err != nil {
-			return nil, err
-		}
-		return buf, nil
+// errBlobTooSlow is an upload arriving slower than blobMinRate.
+var errBlobTooSlow = errors.New("upload too slow")
+
+// readBlobBody reads an upload of at most limit bytes, by end at the latest.
+// The buffer grows as bytes arrive (never sized from a declared length, so
+// headers alone allocate nothing). A client that sends nothing for
+// blobIdleTimeout, or averages under blobMinRate after blobRateGrace, is
+// cut off, so it can't hold an upload slot for the whole window.
+func readBlobBody(w http.ResponseWriter, r *http.Request, limit int64, end time.Time) ([]byte, error) {
+	return io.ReadAll(&pacedReader{r: http.MaxBytesReader(w, r.Body, limit),
+		rc: http.NewResponseController(w), start: time.Now(), end: end})
+}
+
+type pacedReader struct {
+	r          io.Reader
+	rc         *http.ResponseController
+	start, end time.Time
+	n          int64
+}
+
+func (p *pacedReader) Read(b []byte) (int, error) {
+	now := time.Now()
+	if el := now.Sub(p.start); el > blobRateGrace && float64(p.n) < el.Seconds()*float64(blobMinRate) {
+		return 0, errBlobTooSlow
 	}
-	return io.ReadAll(body)
+	d := now.Add(blobIdleTimeout)
+	if d.After(p.end) {
+		d = p.end
+	}
+	_ = p.rc.SetReadDeadline(d)
+	n, err := p.r.Read(b)
+	p.n += int64(n)
+	return n, err
 }
 
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {

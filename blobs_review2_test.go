@@ -444,3 +444,64 @@ func TestHTTPBlobDownloadRate(t *testing.T) {
 		t.Fatalf("past the per-client download rate: %d %s", code, body)
 	}
 }
+
+// A client that opens an upload and then trickles (or sends nothing) held
+// its upload slot for the whole five-minute window, so a few such clients
+// kept every slot and blocked uploads for everyone. An idle timeout and a
+// minimum average rate cut them off.
+func TestHTTPBlobSlowlorisCutOff(t *testing.T) {
+	idle, grace := blobIdleTimeout, blobRateGrace
+	blobIdleTimeout, blobRateGrace = 300*time.Millisecond, 400*time.Millisecond
+	t.Cleanup(func() { blobIdleTimeout, blobRateGrace = idle, grace })
+	t.Setenv("LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT", "1")
+	ts := blobServer(t, newMemoryStore(), nil)
+	seedHTTP(t, ts.URL, "w", "")
+	url := ts.URL + "/v1/workspaces/w/blobs"
+
+	// Stalled: sends a few bytes, then nothing.
+	_ = stalledUpload(t, url, "")
+	time.Sleep(600 * time.Millisecond)
+	if resp, b := blobHTTP(t, "POST", url, "", []byte("x")); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("a stalled upload still holds the slot: %d %s", resp.StatusCode, b)
+	}
+
+	// Trickling: a byte every 100 ms beats the idle timeout but not the rate.
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(100 * time.Millisecond):
+				if _, err := pw.Write([]byte{1}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	done := make(chan int, 1)
+	go func() {
+		r, _ := http.NewRequest("POST", url, pr)
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			done <- -1
+			return
+		}
+		_ = resp.Body.Close()
+		done <- resp.StatusCode
+	}()
+	select {
+	case code := <-done:
+		if code == http.StatusCreated {
+			t.Fatalf("a trickled upload was accepted")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a trickling upload was not cut off")
+	}
+	if resp, b := blobHTTP(t, "POST", url, "", []byte("x")); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("after the trickler was cut off: %d %s", resp.StatusCode, b)
+	}
+}
