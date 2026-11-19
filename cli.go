@@ -202,7 +202,7 @@ func cmdBootstrapAgent(args []string) error {
 
 	// The one line the developer pastes on the remote box.
 	fmt.Println("# Run on the remote agent box:")
-	fmt.Printf("brew install langstroth-ai/hive/ligus && \\\n")
+	fmt.Printf("brew install langstroth-ai/ligus/ligus && \\\n")
 	fmt.Printf("  ligus enroll %q --token %q && \\\n", invite, tok)
 	fmt.Printf("  ligus worker --label %s\n", label)
 

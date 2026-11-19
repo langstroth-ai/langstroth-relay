@@ -301,7 +301,7 @@ func TestWorkspacesClaimScopesStrict(t *testing.T) {
 // roster entry: the relay's membership roster for W stays empty, and the
 // langstroth-auth API has no route that writes one. Refusal of the posted events
 // by the workspace's signed-roster authz is proven in the Ligus client tests
-// (crates/hive-runtime/tests/ligus_auth_membership.rs).
+// (crates/ligus-runtime/tests/ligus_auth_membership.rs).
 func TestIdPCannotGrantMembership(t *testing.T) {
 	h, _ := homeHarness(t)
 	d := newDevice("d1")

@@ -58,7 +58,7 @@ route or database table changes.
 - The generic APNs alert (shown when the app's extension can't decrypt a
   push) is titled "Ligus" (was "Hive"). The payload's `hive` member keeps its
   name: it is a wire identifier the app reads.
-- `langstroth-relay bootstrap-agent` prints `brew install langstroth-ai/hive/ligus`.
+- `langstroth-relay bootstrap-agent` prints `brew install langstroth-ai/ligus/ligus`.
 - The Fly deploy runs only for a release tag `v*`, after `ci` passes on it,
   not on every push to main. Fly concurrency counts open connections
   (1500/2000), and the health check uses the current `http_service.checks`

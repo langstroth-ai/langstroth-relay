@@ -440,7 +440,7 @@ func TestRevokeEndsTheSession(t *testing.T) {
 }
 
 // Cross-language vector shared with the Ligus client
-// (crates/hive-runtime/src/ligus_auth.rs, device_proof_matches_ligus_auth).
+// (crates/ligus-runtime/src/ligus_auth.rs, device_proof_matches_ligus_auth).
 func TestDeviceProofVectorFrozen(t *testing.T) {
 	m := DeviceProofMessage("home", "refresh_token", "bm9uY2U", "5d0b7c1e-2f43-4a8e-9a51-0c6f3d2e1b07", "rt-123")
 	const wantMsg = "6c696775732d617574682d6465766963652d70726f6f662d763100686f6d6500726566726573685f746f6b656e00626d39755932550035643062376331652d326634332d346138652d396135312d3063366633643265316230370032383165366439643761623363653837376635653361633862343334363461316130353564323533313564623364313839313466666334333133303736396539"
