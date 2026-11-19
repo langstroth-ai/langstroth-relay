@@ -29,7 +29,7 @@ data:
   {{- $c := . }}
   {{- range $key := keys $contactEnv | sortAlpha }}
   {{- $v := get $c $key }}
-  {{- if not (kindIs "invalid" $v) }}
+  {{- if not (or (kindIs "invalid" $v) (eq (toString $v) "")) }}
   {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
   {{ get $contactEnv $key }}: {{ $v | toString | quote }}
   {{- end }}
@@ -43,7 +43,7 @@ data:
   {{- $b := . }}
   {{- range $key := keys $blobEnv | sortAlpha }}
   {{- $v := get $b $key }}
-  {{- if not (kindIs "invalid" $v) }}
+  {{- if not (or (kindIs "invalid" $v) (eq (toString $v) "")) }}
   {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
   {{ get $blobEnv $key }}: {{ $v | toString | quote }}
   {{- end }}
@@ -54,7 +54,7 @@ data:
   {{- $l := . }}
   {{- range $key := keys $limitEnv | sortAlpha }}
   {{- $v := get $l $key }}
-  {{- if not (kindIs "invalid" $v) }}
+  {{- if not (or (kindIs "invalid" $v) (eq (toString $v) "")) }}
   {{- if and (kindIs "float64" $v) (eq (floor $v) $v) }}{{ $v = int64 $v }}{{ end }}
   {{ get $limitEnv $key }}: {{ $v | toString | quote }}
   {{- end }}
