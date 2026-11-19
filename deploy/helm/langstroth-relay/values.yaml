@@ -325,6 +325,10 @@ blobs:
   burst: null            # 20        LANGSTROTH_RELAY_BLOB_BURST
   maxInflight: null      # 16        LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT (uploads being received at once, per pod; 0 = off)
   writerInflight: null   # 4         LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT (per uploader, per pod; 0 = off)
+  downloadRate: null         # 0.5   LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE (downloads per second of one blob; 0 = off)
+  downloadBurst: null        # 100   LANGSTROTH_RELAY_BLOB_DOWNLOAD_BURST
+  clientDownloadRate: null   # 2     LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE (per downloader; 0 = off)
+  clientDownloadBurst: null  # 60    LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_BURST
 
 # Room quotas, request rates and retention (README "Community limits",
 # docs/tenancy.md). Each value maps to a LANGSTROTH_RELAY_* variable; null

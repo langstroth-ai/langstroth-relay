@@ -82,6 +82,9 @@ route or database table changes.
   in the tenancy config (`507 blob_*`), upload rate `_BLOB_RATE` / `_BURST`
   (1/s, burst 20, `429 blob_rate`), uploads in flight `_BLOB_MAX_INFLIGHT`
   (16) and `_BLOB_WRITER_INFLIGHT` (4 per uploader, `429 blob_inflight`),
+  download rates per blob `_BLOB_DOWNLOAD_RATE` / `_BURST` (0.5/s, burst
+  100) and per downloader `_BLOB_CLIENT_DOWNLOAD_RATE` / `_BURST` (2/s,
+  burst 60, `429 blob_download_rate`),
   retention `_BLOB_RETENTION_DAYS` (30).
   Quotas are checked atomically with the insert on both stores. Room purges,
   idle-room retention and (with relay membership) a member's removal delete

@@ -463,12 +463,14 @@ func TestChartBlobs(t *testing.T) {
 	}
 	out = renderChart(t, append(pub, "--set", "blobs.maxBytes=1048576", "--set", "blobs.roomMaxCount=50",
 		"--set", "blobs.writerMaxBytes=10485760", "--set", "blobs.retentionDays=7", "--set", "blobs.rate=0.5",
-		"--set", "blobs.totalMaxBytes=0", "--set", "blobs.maxInflight=8", "--set", "blobs.writerInflight=2")...)
+		"--set", "blobs.totalMaxBytes=0", "--set", "blobs.maxInflight=8", "--set", "blobs.writerInflight=2",
+		"--set", "blobs.downloadRate=0.25", "--set", "blobs.clientDownloadBurst=30")...)
 	cm := docOfKind(out, "ConfigMap", "")
 	for _, want := range []string{`LANGSTROTH_RELAY_BLOB_MAX_BYTES: "1048576"`, `LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT: "50"`,
 		`LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES: "10485760"`, `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS: "7"`,
 		`LANGSTROTH_RELAY_BLOB_RATE: "0.5"`, `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES: "0"`,
-		`LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT: "8"`, `LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT: "2"`} {
+		`LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT: "8"`, `LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT: "2"`,
+		`LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE: "0.25"`, `LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_BURST: "30"`} {
 		if !strings.Contains(cm, want) {
 			t.Errorf("missing %s in:\n%s", want, cm)
 		}

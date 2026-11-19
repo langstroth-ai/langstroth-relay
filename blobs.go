@@ -39,20 +39,21 @@ import (
 // Blob refusal codes (refusal.go). The storage ones answer 507 and are also
 // label values of hive_relay_limit_rejections_total; blob_rate answers 429.
 const (
-	limBlobRoomBytes   = "blob_room_bytes"
-	limBlobRoomCount   = "blob_room_count"
-	limBlobWriterBytes = "blob_writer_bytes"
-	limBlobWriterCount = "blob_writer_count"
-	limBlobTenantBytes = "blob_tenant_bytes"
-	limBlobTenantCount = "blob_tenant_count"
-	limBlobTotalBytes  = "blob_total_bytes"
-	limBlobRate        = "blob_rate"
-	limBlobInflight    = "blob_inflight"
+	limBlobRoomBytes    = "blob_room_bytes"
+	limBlobRoomCount    = "blob_room_count"
+	limBlobWriterBytes  = "blob_writer_bytes"
+	limBlobWriterCount  = "blob_writer_count"
+	limBlobTenantBytes  = "blob_tenant_bytes"
+	limBlobTenantCount  = "blob_tenant_count"
+	limBlobTotalBytes   = "blob_total_bytes"
+	limBlobRate         = "blob_rate"
+	limBlobInflight     = "blob_inflight"
+	limBlobDownloadRate = "blob_download_rate"
 )
 
 func init() {
 	allLimitNames = append(allLimitNames, limBlobRoomBytes, limBlobRoomCount, limBlobWriterBytes,
-		limBlobWriterCount, limBlobTenantBytes, limBlobTenantCount, limBlobTotalBytes, limBlobRate, limBlobInflight)
+		limBlobWriterCount, limBlobTenantBytes, limBlobTenantCount, limBlobTotalBytes, limBlobRate, limBlobInflight, limBlobDownloadRate)
 	for k, v := range map[string]string{
 		limBlobRoomBytes:   "workspace attachment storage quota reached",
 		limBlobRoomCount:   "workspace attachment count quota reached",
@@ -80,6 +81,13 @@ const (
 	defaultBlobMaxInflight    = 16
 	defaultBlobWriterInflight = 4
 	blobInflightRetry         = 5 * time.Second
+
+	// Downloads per blob (enough for a large team's devices to fetch a new
+	// attachment at once, then a steady trickle) and per downloader.
+	defaultBlobDownloadRate        = 0.5
+	defaultBlobDownloadBurst       = 100
+	defaultBlobClientDownloadRate  = 2.0
+	defaultBlobClientDownloadBurst = 60
 
 	// blobIDBytes is the entropy of a blob id; its base64url form is
 	// blobIDLen characters.
@@ -109,6 +117,8 @@ type blobConfig struct {
 	retention      time.Duration
 	rate           *ipRateLimiter // LANGSTROTH_RELAY_BLOB_RATE / _BURST (nil = off)
 	inflight       *blobInflight  // LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT / _WRITER_INFLIGHT (nil = off)
+	download       *ipRateLimiter // LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE / _BURST, per blob (nil = off)
+	clientDownload *ipRateLimiter // LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE / _BURST, per downloader (nil = off)
 }
 
 func blobConfigFromEnv() blobConfig {
@@ -131,6 +141,12 @@ func blobConfigFromEnv() blobConfig {
 	if n, w := pos("LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT", defaultBlobMaxInflight),
 		pos("LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT", defaultBlobWriterInflight); n > 0 || w > 0 {
 		c.inflight = &blobInflight{max: n, perWriter: w, byWriter: map[string]int64{}}
+	}
+	if r := envFloat("LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE", defaultBlobDownloadRate); r > 0 {
+		c.download = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_BLOB_DOWNLOAD_BURST", defaultBlobDownloadBurst), 1))
+	}
+	if r := envFloat("LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE", defaultBlobClientDownloadRate); r > 0 {
+		c.clientDownload = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_BURST", defaultBlobClientDownloadBurst), 1))
 	}
 	if r := envFloat("LANGSTROTH_RELAY_BLOB_RATE", defaultBlobRate); r > 0 {
 		c.rate = newIPRateLimiter(r, max(envFloat("LANGSTROTH_RELAY_BLOB_BURST", defaultBlobBurst), 1))
@@ -160,6 +176,12 @@ func (c blobConfig) log() {
 	}
 	if c.inflight != nil {
 		attrs = append(attrs, "max_inflight", c.inflight.max, "writer_inflight", c.inflight.perWriter)
+	}
+	if c.download != nil {
+		attrs = append(attrs, "download_rate", c.download.rate, "download_burst", c.download.burst)
+	}
+	if c.clientDownload != nil {
+		attrs = append(attrs, "client_download_rate", c.clientDownload.rate, "client_download_burst", c.clientDownload.burst)
 	}
 	slog.Info("blob channel", attrs...)
 }
@@ -457,6 +479,17 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		blobNotFound(w)
+		return
+	}
+	// Download rates, checked only for a blob that exists (unknown ids are
+	// under the read rate and mint no buckets): per blob, so a blob URL
+	// can't serve as a public download link, then per downloader.
+	if ok, wait := s.blobs.download.allowWait(room + "|" + id); !ok {
+		tooMany(w, limBlobDownloadRate, tenantID(r.Context()), wait, "this attachment is being downloaded too often")
+		return
+	}
+	if ok, wait := s.blobs.clientDownload.allowWait(writerTag(r.Context(), clientKey(r))); !ok {
+		tooMany(w, limBlobDownloadRate, tenantID(r.Context()), wait, "attachment download rate exceeded")
 		return
 	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(blobTransferWindow))

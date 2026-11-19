@@ -395,3 +395,52 @@ func TestBlobBoundPersists(t *testing.T) {
 		t.Fatalf("postgres binding: %v", res)
 	}
 }
+
+// Downloads were limited only by the general read rate (100/s, burst 400 per
+// client): one 25 MiB upload could be fetched gigabytes a second, and on an
+// open relay (tokenless reads) a blob URL works as a public download link.
+// A per-blob and a per-downloader rate stop the relay serving as a
+// distribution point.
+func TestHTTPBlobDownloadRate(t *testing.T) {
+	ts := blobServer(t, newMemoryStore(), map[string]string{
+		"LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE":         "0.001",
+		"LANGSTROTH_RELAY_BLOB_DOWNLOAD_BURST":        "2",
+		"LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE":  "0.001",
+		"LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_BURST": "3",
+	})
+	seedHTTP(t, ts.URL, "w", "")
+	up := func() string {
+		resp, b := blobHTTP(t, "POST", ts.URL+"/v1/workspaces/w/blobs", "", []byte("bytes"))
+		var br blobResp
+		_ = json.Unmarshal(b, &br)
+		if resp.StatusCode != 201 {
+			t.Fatalf("upload: %d %s", resp.StatusCode, b)
+		}
+		return br.ID
+	}
+	a, b := up(), up()
+	get := func(id string) (int, string) {
+		resp, body := blobHTTP(t, "GET", ts.URL+"/v1/workspaces/w/blobs/"+id, "", nil)
+		return resp.StatusCode, string(body)
+	}
+	for i := 0; i < 2; i++ {
+		if code, _ := get(a); code != 200 {
+			t.Fatalf("download %d: %d", i, code)
+		}
+	}
+	if code, body := get(a); code != http.StatusTooManyRequests || !strings.Contains(body, limBlobDownloadRate) {
+		t.Fatalf("third download of one blob: %d %s", code, body)
+	}
+	// Unknown ids don't spend a blob's budget, and another blob has its own.
+	if code, _ := get(newBlobID()); code != 404 {
+		t.Fatalf("unknown id: %d", code)
+	}
+	if code, _ := get(b); code != 200 {
+		t.Fatalf("other blob: %d", code)
+	}
+	// This client has now had 3 downloads (burst 3): refused whatever the
+	// blob, though b's own budget allows one more.
+	if code, body := get(b); code != http.StatusTooManyRequests || !strings.Contains(body, limBlobDownloadRate) {
+		t.Fatalf("past the per-client download rate: %d %s", code, body)
+	}
+}

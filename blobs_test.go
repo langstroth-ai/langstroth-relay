@@ -735,7 +735,9 @@ func TestBlobConfigDefaults(t *testing.T) {
 	c := blobConfigFromEnv()
 	if !c.enabled || c.maxBytes != 25<<20 || c.roomMaxBytes != 512<<20 || c.roomMaxCount != 2000 ||
 		c.writerMaxBytes != defaultBlobWriterMaxBytes || c.writerMaxCount != defaultBlobWriterMaxCount || c.totalMaxBytes != 0 || c.retention != 30*24*time.Hour || c.rate == nil ||
-		c.inflight == nil || c.inflight.max != 16 || c.inflight.perWriter != 4 {
+		c.inflight == nil || c.inflight.max != 16 || c.inflight.perWriter != 4 ||
+		c.download == nil || c.download.rate != 0.5 || c.download.burst != 100 ||
+		c.clientDownload == nil || c.clientDownload.rate != 2 || c.clientDownload.burst != 60 {
 		t.Fatalf("defaults: %+v", c)
 	}
 	t.Setenv("LANGSTROTH_RELAY_BLOB_MAX_BYTES", "0")

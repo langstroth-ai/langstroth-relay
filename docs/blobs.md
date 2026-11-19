@@ -117,6 +117,8 @@ Every limit refuses; nothing is evicted to make room. Storage refusals are
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | `429 blob_rate` | uploads per second per uploader per workspace (`0` rate = off). Downloads count toward the normal read rate |
 | `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` | `16` | `429 blob_inflight` | uploads being received at once, per relay process (`0` = off). Each holds up to `BLOB_MAX_BYTES` in memory while it arrives, so this bounds upload memory to about `16 × 25 MiB`; `Retry-After` five seconds |
 | `LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT` | `4` | `429 blob_inflight` | uploads being received at once per uploader (`0` = off), so one client holding uploads open can't take every slot |
+| `LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE` / `_BURST` | `0.5` / `100` | `429 blob_download_rate` | downloads per second of one blob (`0` rate = off). The burst lets a large team's devices fetch a new attachment at once; after it, a blob is served about 30 times a minute, so a blob URL can't serve as a public download link (on the open policy reads need no token) |
+| `LANGSTROTH_RELAY_BLOB_CLIENT_DOWNLOAD_RATE` / `_BURST` | `2` / `60` | `429 blob_download_rate` | blob downloads per second per downloader (token subject, else address; `0` rate = off), on top of the normal read rate, which is sized for small JSON reads |
 
 Tenancy adds per-tenant limits in the tenancy config (`defaults` or a
 tenant's `limits`), all `0` = off: `blob_max_bytes` and `blob_max_count`
@@ -125,6 +127,8 @@ tenant's `limits`), all `0` = off: `blob_max_bytes` and `blob_max_count`
 per-workspace values for that tenant's workspaces.
 
 Refusals count in `hive_relay_limit_rejections_total{limit="blob_…"}`.
+Rate limits and in-flight caps are per relay process: with several
+replicas, each enforces them on its own.
 
 ### Relay-wide storage
 
