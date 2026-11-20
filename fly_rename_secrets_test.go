@@ -26,8 +26,9 @@ case "$1 $2" in
   done
   printf ']\n' ;;
 "ssh console")
+  # Like the real one, the command runs on a pty: every LF comes back CRLF.
   name=${@: -1}; name=${name#printenv }
-  [ -e "$S/sec/$name" ] && { cat "$S/sec/$name"; printf '\n'; } ;;
+  [ -e "$S/sec/$name" ] && { cat "$S/sec/$name"; printf '\n'; } | sed 's/$/\r/' ;;
 "secrets import")
   multi=""
   while IFS= read -r line; do

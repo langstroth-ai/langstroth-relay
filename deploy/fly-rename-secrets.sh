@@ -83,8 +83,10 @@ for ((i = 0; i < ${#COPY_FROM[@]}; i++)); do
   from=${COPY_FROM[$i]} to=${COPY_TO[$i]}
   # The machine's environment holds the deployed secret values.
   "$FLY" ssh console --app "$APP" --quiet -C "printenv $from" >"$TMP/v" </dev/null
-  # Drop the trailing newline printenv adds (and a CR if a pty added one).
-  v=$(cat "$TMP/v"); v=${v%$'\r'}
+  # Drop the trailing newline printenv adds. `fly ssh console` runs the
+  # command on a pty, which turns every LF into CRLF, so a multi-line value
+  # (an APNs key) comes back with a CR on each line: undo that everywhere.
+  v=$(cat "$TMP/v"); v=${v//$'\r\n'/$'\n'}; v=${v%$'\r'}
   [ -n "$v" ] || { echo "could not read $from from the running machine; nothing was changed" >&2; exit 1; }
   if [[ "$v" == *$'\n'* ]]; then
     printf '%s="""\n%s\n"""\n' "$to" "$v" >>"$TMP/import"
