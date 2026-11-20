@@ -33,7 +33,9 @@ case "$1 $2" in
   multi=""
   while IFS= read -r line; do
     if [ -n "$multi" ]; then
-      if [ "$line" = '"""' ]; then printf '%s' "${buf%$'\n'}" >"$S/sec/$multi"; multi=""
+      # Like the real flyctl, the multi-line form keeps the newline before
+      # the closing quotes, so the stored value gains a trailing newline.
+      if [ "$line" = '"""' ]; then printf '%s' "$buf" >"$S/sec/$multi"; multi=""
       else buf+="$line"$'\n'; fi
     elif [[ "$line" == *'="""' ]]; then multi=${line%%=*}; buf=""
     else printf '%s' "${line#*=}" >"$S/sec/${line%%=*}"; fi
@@ -104,6 +106,24 @@ func TestFlyRenameSecrets(t *testing.T) {
 		t.Fatal("plan mode changed secrets")
 	}
 
+	// A multi-line value (the APNs key) is left for the operator: flyctl's
+	// multi-line import adds a trailing newline. The single-line values are
+	// staged, every old name stays, and the output says what to run.
+	out, err = run("--apply")
+	if err == nil || !strings.Contains(out, "need staging by hand") || !strings.Contains(out, "printenv HIVE_RELAY_APNS_KEY") || !strings.Contains(out, "LANGSTROTH_RELAY_APNS_KEY=") {
+		t.Fatalf("apply with a multi-line value: %v\n%s", err, out)
+	}
+	noValues("first apply output", out)
+	if _, e := os.Stat(filepath.Join(sec, "HIVE_RELAY_APNS_KEY")); e != nil {
+		t.Fatal("an old name went away before every value was copied")
+	}
+	if _, e := os.Stat(filepath.Join(sec, "LANGSTROTH_RELAY_APNS_KEY")); e == nil {
+		t.Fatal("the multi-line value was staged by import")
+	}
+	// The operator stages it byte for byte, as the script says, and reruns.
+	if err := os.WriteFile(filepath.Join(sec, "LANGSTROTH_RELAY_APNS_KEY"), []byte(pem), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out, err = run("--apply")
 	if err != nil {
 		t.Fatalf("apply: %v\n%s", err, out)
