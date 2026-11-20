@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.0 (unreleased)
+## v0.3.0
 
 Additive for every existing `/v1` route and for `hrt1`: their requests and
 responses are byte-identical to v0.2.0 (checked by golden responses recorded
