@@ -46,7 +46,7 @@ digest_of() { awk -F'\t' -v n="$1" '$1 == n { print $2 }' <<<"$LIST"; }
 has() { awk -F'\t' -v n="$1" '$1 == n { f = 1 } END { exit !f }' <<<"$LIST"; }
 
 LIST=$(list)
-declare -a COPY_FROM=() COPY_TO=() UNSET=()
+declare -a COPY_FROM=() COPY_TO=() UNSET=() MANUAL=()
 OLD=()
 while IFS= read -r n; do [ -n "$n" ] && OLD+=("$n"); done < <(cut -f1 <<<"$LIST" | grep -E '^(HIVE|LIGUS)_RELAY_' | sort -u || true)
 for name in ${OLD[@]+"${OLD[@]}"}; do
@@ -89,17 +89,30 @@ for ((i = 0; i < ${#COPY_FROM[@]}; i++)); do
   v=$(cat "$TMP/v"); v=${v//$'\r\n'/$'\n'}; v=${v%$'\r'}
   [ -n "$v" ] || { echo "could not read $from from the running machine; nothing was changed" >&2; exit 1; }
   if [[ "$v" == *$'\n'* ]]; then
-    printf '%s="""\n%s\n"""\n' "$to" "$v" >>"$TMP/import"
+    # flyctl's multi-line import form (NAME="""...""") stores the value
+    # with an extra trailing newline, and `secrets set` only takes a value as
+    # an argument, so a multi-line value is left for the operator to stage by
+    # hand (MANUAL below); the digest check then confirms it.
+    MANUAL+=("$from $to")
   else
     printf '%s=%s\n' "$to" "$v" >>"$TMP/import"
   fi
   v=
 done
 rm -f "$TMP/v"
-if [ ${#COPY_FROM[@]} -gt 0 ]; then
+if [ -s "$TMP/import" ]; then
   "$FLY" secrets import --app "$APP" --stage <"$TMP/import" >/dev/null
 fi
 rm -f "$TMP/import"
+if [ ${#MANUAL[@]} -gt 0 ]; then
+  echo "These multi-line secrets need staging by hand, byte for byte (the old names are left in place):" >&2
+  for m in "${MANUAL[@]}"; do
+    from=${m% *} to=${m#* }
+    echo "  umask 077; $FLY ssh console -a $APP --quiet -C 'printenv $from' | tr -d '\\r' > /tmp/v; $FLY secrets set --stage -a $APP $to=\"\$(cat /tmp/v)\"; rm -f /tmp/v" >&2
+  done
+  echo "Then rerun this script with --apply." >&2
+  exit 1
+fi
 
 # Each new name must hold exactly the old value (same digest) before any old
 # name goes away.
