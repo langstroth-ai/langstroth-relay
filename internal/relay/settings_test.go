@@ -244,18 +244,19 @@ func TestHelpTopics(t *testing.T) {
 
 // Every flag the issue and bootstrap-agent parsers accept is in their help.
 func TestCommandHelpListsEveryFlag(t *testing.T) {
-	src, err := os.ReadFile("cli.go")
+	// The parsers live with the binary's command line.
+	src, err := os.ReadFile("../../cmd/langstroth-relay/cli.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	flags := regexp.MustCompile(`case "(--[a-z-]+)":`).FindAllStringSubmatch(string(src), -1)
 	if len(flags) < 15 {
-		t.Fatalf("found only %d flags in cli.go", len(flags))
+		t.Fatalf("found only %d flags in cmd/langstroth-relay/cli.go", len(flags))
 	}
 	both := helpText(t, "issue") + helpText(t, "bootstrap-agent")
 	for _, f := range flags {
 		if !strings.Contains(both, f[1]+" ") {
-			t.Errorf("flag %s is parsed in cli.go but not in the command help", f[1])
+			t.Errorf("flag %s is parsed in cmd/langstroth-relay/cli.go but not in the command help", f[1])
 		}
 	}
 }

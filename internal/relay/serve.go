@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,7 +15,7 @@ import (
 // langstroth-relay — the rendezvous + envelope-forwarding server.
 //
 // Address resolution (cloud-friendly), most specific first:
-//  1. $PORT (set by Fly / Cloud Run / Railway / Heroku) → 0.0.0.0:$PORT
+//  1. $PORT (set by most PaaS hosts) → 0.0.0.0:$PORT
 //  2. $LANGSTROTH_RELAY_ADDR (full host:port)
 //  3. default 0.0.0.0:8443
 //
@@ -27,27 +26,11 @@ import (
 //
 // $LANGSTROTH_RELAY_FRIEND_CAP (optional) caps accepted friends per account.
 
-// Main runs the open relay binary (cmd/langstroth-relay).
-func Main() {
-	// Structured JSON logs (request lines come from the observability middleware).
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
-
-	args := os.Args[1:]
-	if len(args) > 0 {
-		switch args[0] {
-		case "help", "--help", "-h":
-			exitWith(cmdHelp(args[1:], os.Stdout))
-		}
-		cmd, ok := commands[args[0]]
-		if !ok {
-			exitWith(usageErrorf("unknown command %q (the server takes no arguments; try `langstroth-relay help`)", args[0]))
-		}
-		if wantsHelp(args[1:]) {
-			exitWith(cmdHelp([]string{args[0]}, os.Stdout))
-		}
-		exitWith(cmd(args[1:]))
-	}
-
+// Serve runs the relay server until SIGINT or SIGTERM: it checks the
+// configuration, opens the store, serves HTTP and flushes on the way out. It
+// exits the process on a configuration error. cmd/langstroth-relay sets up
+// logging and handles the operator subcommands before calling it.
+func Serve() {
 	// Before anything reads a setting: a variable under a name from before
 	// the Langstroth rename (HIVE_RELAY_*, LIGUS_RELAY_*; no longer read), or
 	// an unreadable secret file (either would read as unset: push or the
@@ -260,35 +243,6 @@ func daysEnv(name string, def int) time.Duration {
 		}
 	}
 	return time.Duration(d) * 24 * time.Hour
-}
-
-// commands are the subcommands; no argument runs the server.
-var commands = map[string]func(args []string) error{
-	"keygen": func(args []string) error {
-		if len(args) > 0 {
-			return usageErrorf("keygen takes no arguments")
-		}
-		return cmdKeygen()
-	},
-	"issue":           cmdIssue,
-	"bootstrap-agent": cmdBootstrapAgent,
-	"check":           func(args []string) error { return cmdCheck(args, os.Stdout) },
-}
-
-// exitWith ends a subcommand: 0 on success, 2 for a usage error, else 1.
-func exitWith(err error) {
-	switch {
-	case err == nil:
-		os.Exit(exitOK)
-	case errors.Is(err, errChecksFailed):
-		os.Exit(exitFailed) // the report already said why
-	case errors.Is(err, errUsage):
-		fmt.Fprintf(os.Stderr, "langstroth-relay: %v\n", err)
-		os.Exit(exitUsage)
-	default:
-		fmt.Fprintf(os.Stderr, "langstroth-relay: %v\n", err)
-		os.Exit(exitFailed)
-	}
 }
 
 func fatalIf(err error) {

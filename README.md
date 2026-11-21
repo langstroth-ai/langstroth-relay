@@ -55,6 +55,8 @@ proxy (for example Caddy: `relay.example.com { reverse_proxy localhost:8443 }`).
 
 ## Deploy
 
+Full guide: [docs/deploy.md](docs/deploy.md), or `langstroth-relay help deploy`.
+
 **Docker.** The root `Dockerfile` builds a small Alpine image;
 `deploy/container/Dockerfile` is a non-root distroless variant for Kubernetes.
 
@@ -74,17 +76,12 @@ and the `langstroth-postgres` library) and are published per release at
 [deploy/helm/langstroth-relay/README.md](deploy/helm/langstroth-relay/README.md)
 and [Kubernetes](https://docs.langstroth.ai/operate/deploy/kubernetes/).
 
-**Fly.io.** `deploy/fly.toml` is a worked single-machine example (it also
-carries a commented community-limits profile):
-
-```sh
-fly launch --copy-config --no-deploy --config deploy/fly.toml
-fly volumes create hive_data --size 1 --region <region>
-fly deploy . --config deploy/fly.toml
-```
-
-Any other container platform works too: the binary honours `$PORT` (else
-`LANGSTROTH_RELAY_ADDR`, else `0.0.0.0:8443`).
+**Compose, systemd or a PaaS.** [docs/deploy.md](docs/deploy.md) has
+one-shot sequences for Docker Compose (relay + Postgres, or the relay alone;
+optional Caddy for TLS) in `deploy/compose/langstroth-relay/`, a hardened
+systemd unit in `deploy/systemd/`, Helm, and any platform that runs a
+container image (the binary honours `$PORT`, else `LANGSTROTH_RELAY_ADDR`,
+else `0.0.0.0:8443`), plus settings, storage, TLS, backups and upgrades.
 
 **With a coding agent.** [AGENTS.md](AGENTS.md) has the decision table
 (local binary, `eval-memory`, `team-bundled`, `team-external`, `team-cnpg`,
@@ -190,9 +187,11 @@ TEST_DATABASE_URL=postgres://... go test ./... # also the Postgres integration t
 helm lint --strict deploy/helm/langstroth-relay
 ```
 
-The package exposes extension seams (`Store`, `EntitlementVerifier`,
-`AdminAuthorizer`, `WriteGuard`, `Hooks`, `TunnelPolicy`, `PushSender`) for
-downstream builds through `New(Options{...})`; see `seams.go`. Release notes
+The relay package (`internal/relay`) exposes extension seams (`Store`,
+`EntitlementVerifier`, `AdminAuthorizer`, `WriteGuard`, `Hooks`,
+`TunnelPolicy`, `PushSender`) through `New(Options{...})` for another binary
+under `cmd/` in this module; see `internal/relay/seams.go`. Repository layout:
+[CONTRIBUTING.md](CONTRIBUTING.md#repository-layout). Release notes
 and upgrade steps: [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
@@ -202,7 +201,7 @@ and upgrade steps: [CHANGELOG.md](CHANGELOG.md).
 - [Wire protocols](https://docs.langstroth.ai/operate/reference/wire-protocols/)
 - [Threat model](https://docs.langstroth.ai/operate/security/threat-model/)
 - [Using Ligus](https://docs.langstroth.ai/ligus/)
-- This repo: [docs/reference.md](docs/reference.md), [docs/blobs.md](docs/blobs.md), [docs/tenancy.md](docs/tenancy.md)
+- This repo: [docs/deploy.md](docs/deploy.md), [docs/reference.md](docs/reference.md), [docs/blobs.md](docs/blobs.md), [docs/tenancy.md](docs/tenancy.md)
 
 ## Contributing
 

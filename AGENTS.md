@@ -24,6 +24,8 @@ below, with no context keys; exit 0 ok, 1 a check failed, 2 usage).
 | Team with a managed/existing Postgres | scenario `team-external` | external, `sslmode=verify-full` | DSN file, database CIDRs, exposure |
 | Production-shaped, HA database | scenario `team-cnpg` | CloudNativePG, 3 instances, backups | operator install, backup bucket + credentials, exposure |
 | Evaluate the CloudNativePG path | scenario `team-cnpg-eval` | CNPG, 1 instance, backups OFF | operator install |
+| One Linux host with Docker (relay + Postgres, or alone) | `deploy/compose/langstroth-relay` ([docs/deploy.md](docs/deploy.md#docker-compose)) | Postgres container, or memory + snapshot on a volume | `.env` (database password; `RELAY_DOMAIN` for the Caddy TLS profile) |
+| One Linux host, no containers | `deploy/systemd/` ([docs/deploy.md](docs/deploy.md#systemd)) | memory + snapshot, or `DATABASE_URL` | root to install the unit, a TLS proxy |
 | Sign-in with your IdP in front of a relay | scenario `auth-file` / `auth-bundled` / `auth-cnpg-eval` / `auth-external` (chart `langstroth-auth`) | as named | IdP client + secret, public URL, tenants, exposure |
 
 Not sure? Ask the human. Default to `local.sh` for one person and
@@ -153,6 +155,6 @@ examples that need a human throughout (domains, TLS, IdP client).
 
 ## Developing
 
-`go test ./...` (includes `agent_deploy_test.go`: shellcheck, exit codes,
+`go test ./...` (includes `deploy/agent_scripts_test.go`: shellcheck, exit codes,
 the `--json` contract, scenario renders), `go vet ./...`,
 `helm lint --strict deploy/helm/langstroth-relay` (and each `ci/*-values.yaml`).
