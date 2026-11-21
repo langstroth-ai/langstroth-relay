@@ -1,4 +1,4 @@
-// Package main — the Hive relay: a content-blind rendezvous + envelope-forwarding
+// Package main — the Langstroth relay: a content-blind rendezvous + envelope-forwarding
 // server. Clients post opaque (end-to-end encrypted) event envelopes keyed by
 // workspace and fetch everything after a cursor; the relay also brokers short
 // pairing codes, presence, and contacts (opaque signed records + sealed drop
