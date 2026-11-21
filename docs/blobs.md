@@ -19,8 +19,9 @@ blob is caught on the client and the download fails closed.
 ## Routes
 
 All three sit behind the access gate and the workspace scope check like the
-other `/v1/workspaces/{id}/…` routes; with relay membership on, uploads and
-deletes need Contributor and downloads need Viewer, as for envelopes.
+other `/v1/workspaces/{id}/…` routes; with relay membership on, any member
+(Viewer included) may upload, download and delete, as for envelopes. A delete
+still succeeds only for the blob's uploader or a workspace Admin (below).
 
 | Method | Path | Request | Response |
 |---|---|---|---|
