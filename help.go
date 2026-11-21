@@ -155,7 +155,7 @@ func wantsHelp(args []string) bool {
 func writeConfigHelp(w io.Writer) {
 	fmt.Fprint(w, `Configuration: environment variables
 
-Every setting is an environment variable. Values are read once at startup.
+Every setting is an environment variable; set them before the relay starts.
 
 Settings from files (for secrets): a setting X that is unset in the
 environment is read from the file named by X_FILE, else from the file
