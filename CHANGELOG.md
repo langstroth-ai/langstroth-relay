@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.1
+
+A fix release. `/v1` and `hrt1` are unchanged (byte-identical to v0.3.0).
+
+### Fixed
+
+- **A phone's failed pairing attempts no longer lock out its box.** The relay
+  limits failed tunnel attempts per network (10 a minute, then a 5-minute
+  block; IPv6 counts per /64). Box (host) connections and phone connections
+  were counted together, so a phone retrying a used-up pairing link on the
+  same home network could block the box's own control connection, and the
+  box couldn't reconnect until the block lifted. Host endpoints
+  (`/v1/tunnel/host` and `/v1/tunnel/accept`) now count their failures
+  separately from phone endpoints, with the same limits.
+
+### Changed
+
+- Package comments name the relay Langstroth and point at the ligus
+  repository for the tunnel spec.
+
 ## v0.3.0
 
 Additive for every existing `/v1` route and for `hrt1`: their requests and
