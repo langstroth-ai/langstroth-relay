@@ -117,7 +117,10 @@ func TestSystemdUnit(t *testing.T) {
 	if err := os.WriteFile(p, []byte(u), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(sa, "verify", "--man=no", p).CombinedOutput(); err != nil || len(out) > 0 {
+	// Only findings about this unit count: verify also loads the host's own
+	// units, which may warn about themselves.
+	out, err := exec.Command(sa, "verify", "--man=no", p).CombinedOutput()
+	if err != nil || strings.Contains(string(out), "langstroth-relay") {
 		t.Errorf("systemd-analyze verify: %v\n%s", err, out)
 	}
 }
