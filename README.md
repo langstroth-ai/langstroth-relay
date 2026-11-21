@@ -37,7 +37,13 @@ creates a workspace picks a relay.
 ```sh
 go run ./cmd/langstroth-relay        # serves http on 0.0.0.0:8443, in memory
 curl localhost:8443/v1/health        # ok
+go run ./cmd/langstroth-relay help   # every command, setting and help topic
 ```
+
+The binary documents itself: `langstroth-relay help config` lists every
+setting with its default, `langstroth-relay help deploy` has one-shot
+Docker Compose, systemd and Helm sequences plus what a PaaS needs, and
+`langstroth-relay check --json` checks a configuration (and, with `--url`, a running relay).
 
 Keep data across restarts with `LANGSTROTH_RELAY_DATA_DIR=/some/dir`
 (memory plus a JSON snapshot), or point several processes' storage at
@@ -49,7 +55,7 @@ proxy (for example Caddy: `relay.example.com { reverse_proxy localhost:8443 }`).
 
 ## Deploy
 
-Full guide: [docs/deploy.md](docs/deploy.md).
+Full guide: [docs/deploy.md](docs/deploy.md), or `langstroth-relay help deploy`.
 
 **Docker.** The root `Dockerfile` builds a small Alpine image;
 `deploy/container/Dockerfile` is a non-root distroless variant for Kubernetes.

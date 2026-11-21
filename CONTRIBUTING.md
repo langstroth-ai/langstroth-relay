@@ -20,7 +20,8 @@ CI runs the same checks and builds both images (`Dockerfile`,
 ## Repository layout
 
 ```
-cmd/langstroth-relay/    the relay binary: subcommands (keygen, issue, bootstrap-agent, help), then relay.Serve
+cmd/langstroth-relay/    the relay binary: command dispatch and keygen/issue/bootstrap-agent;
+                         help, check and the settings list are in internal/relay
 cmd/langstroth-auth/     the optional sign-in service binary
 internal/relay/          the relay server package; files grouped by prefix
                          (blobs_*, contacts_*, tunnel_*, tenancy_*, limits_*, store_*),
