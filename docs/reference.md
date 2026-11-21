@@ -583,7 +583,9 @@ tokens. It never holds a key that opens session traffic.
 Limits (spec defaults): 8 KiB text / 65 535 B binary messages; 8 concurrent
 sessions per host and 3 per phone; 60 sessions opened per host per minute; 30
 connects per IP per minute, and 10 failed auths per minute blocks the IP for
-5 minutes; 2 enrollment windows per host (≤ 15 min, 5 attempts each);
+5 minutes (counted apart for phones, on connect and revoke, and for hosts, on
+host and accept, so a phone failing from a box's network doesn't lock the box
+out); 2 enrollment windows per host (≤ 15 min, 5 attempts each);
 enrollment sessions capped at 5 min / 4 MiB; 20 control messages per second.
 Every tunnel socket is pinged every 20 s and closed after 60 s of silence; the
 `http.Server` read/write timeouts are cleared on upgrade. On shutdown every
