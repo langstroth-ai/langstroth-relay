@@ -452,5 +452,5 @@ database mode), renders every documented combination and the refusals,
 builds the image, installs the chart on kind (split on the deprecated dev
 Postgres, single on memory, split on the bundled Postgres with TLS, a backup
 and a restore) under Pod Security `restricted` and runs `helm test`.
-`helm_chart_test.go` and `helm_chart_db_test.go` (`go test`, needs helm)
+`deploy/helm_chart_test.go` and `deploy/helm_chart_db_test.go` (`go test`, needs helm)
 check the rendered security properties of every mode and the refusals.

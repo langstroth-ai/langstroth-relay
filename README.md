@@ -184,9 +184,11 @@ TEST_DATABASE_URL=postgres://... go test ./... # also the Postgres integration t
 helm lint --strict deploy/helm/langstroth-relay
 ```
 
-The package exposes extension seams (`Store`, `EntitlementVerifier`,
-`AdminAuthorizer`, `WriteGuard`, `Hooks`, `TunnelPolicy`, `PushSender`) for
-downstream builds through `New(Options{...})`; see `seams.go`. Release notes
+The relay package (`internal/relay`) exposes extension seams (`Store`,
+`EntitlementVerifier`, `AdminAuthorizer`, `WriteGuard`, `Hooks`,
+`TunnelPolicy`, `PushSender`) through `New(Options{...})` for another binary
+under `cmd/` in this module; see `internal/relay/seams.go`. Repository layout:
+[CONTRIBUTING.md](CONTRIBUTING.md#repository-layout). Release notes
 and upgrade steps: [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation

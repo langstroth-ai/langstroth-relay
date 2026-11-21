@@ -147,6 +147,6 @@ examples that need a human throughout (domains, TLS, IdP client).
 
 ## Developing
 
-`go test ./...` (includes `agent_deploy_test.go`: shellcheck, exit codes,
+`go test ./...` (includes `deploy/agent_scripts_test.go`: shellcheck, exit codes,
 the `--json` contract, scenario renders), `go vet ./...`,
 `helm lint --strict deploy/helm/langstroth-relay` (and each `ci/*-values.yaml`).

@@ -674,9 +674,10 @@ for 30 days are forgotten) and an APNs `PushSender` through
 
 ## Extending (seams)
 
-This package is a complete relay on its own. It also exposes extension points
-(see `seams.go`) so a downstream build can add custom behavior via
-`New(Options{...})` without forking.
+The relay package (`internal/relay`) is a complete relay on its own. It also
+exposes extension points (see `internal/relay/seams.go`) so another binary
+under `cmd/` in this module can add custom behavior via `New(Options{...})`.
+The package is internal: code outside this module can't import it.
 
 Seams:
 
