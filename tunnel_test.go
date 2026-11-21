@@ -926,6 +926,39 @@ func TestTunnel_Limits(t *testing.T) {
 		c := env.mustDial("/v1/tunnel/connect?host=" + h.id)
 		expectClose(t, c, 4029)
 	})
+	t.Run("phone failures don't lock the host on the same network out", func(t *testing.T) {
+		// A phone retrying a stale pairing link from home shares the box's
+		// IP (or IPv6 /64): its failures block phones, not the box's control
+		// connection, which proves its key on every connect.
+		env := newTunnelEnv(t, nil, nil, func(l *tunnelLimits) { l.FailedAuthPerMin = 3 })
+		h := newFakeHost(t, env)
+		h.connect()
+		p := newFakePhone()
+		for i := 0; i < 3; i++ {
+			expectClose(t, p.connect(t, env, h.id, "hpc1.bad.bad", nil), 4001)
+		}
+		expectClose(t, env.mustDial("/v1/tunnel/connect?host="+h.id), 4029)
+		h.ctl.Close()
+		h2 := newFakeHost(t, env)
+		h2.sign, h2.pub, h2.id = h.sign, h.pub, h.id
+		if w := h2.connect(); w["t"] != "welcome" {
+			t.Fatalf("host locked out by phone failures: %v", w)
+		}
+	})
+	t.Run("failed host auth blocks hosts from the IP", func(t *testing.T) {
+		env := newTunnelEnv(t, nil, nil, func(l *tunnelLimits) { l.FailedAuthPerMin = 3 })
+		h := newFakeHost(t, env)
+		for i := 0; i < 3; i++ {
+			c := env.mustDial("/v1/tunnel/host")
+			h.hello(c, map[string]any{"sig": b64u(make([]byte, 64))})
+			expectClose(t, c, 4001)
+		}
+		c := env.mustDial("/v1/tunnel/host")
+		if m := readJSONMsg(t, c); m["t"] != "error" || m["code"] != "rate_limited" {
+			t.Fatalf("want rate_limited, got %v", m)
+		}
+		expectClose(t, c, 4029)
+	})
 	t.Run("connect rate per IP", func(t *testing.T) {
 		env := newTunnelEnv(t, nil, nil, func(l *tunnelLimits) { l.ConnectsPerMin = 2 })
 		for i := 0; i < 2; i++ {

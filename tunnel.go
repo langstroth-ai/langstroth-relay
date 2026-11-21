@@ -134,7 +134,12 @@ type tunnelHub struct {
 	openLim    *ipRateLimiter // per host
 	ctlLim     *ipRateLimiter // per host
 	pushLim    *ipRateLimiter // per host
-	authFail   *failLimiter   // per IP
+	authFail   *failLimiter   // per IP: phone-side failures (connect, revoke)
+	// hostFail counts host-side failures (/v1/tunnel/host, /accept) per IP,
+	// apart from authFail: a phone retrying a stale pairing link from the
+	// same home network (one IPv4 NAT address, or one IPv6 /64) must not
+	// lock the box on that network out of its own control connection.
+	hostFail *failLimiter
 
 	// revokeSeen: accepted POST /v1/tunnel/revoke nonces (replay refusal).
 	revokeSeen *replayCache
@@ -264,6 +269,7 @@ func (h *tunnelHub) applyLimits() {
 	h.ctlLim = newIPRateLimiter(h.lim.ControlRate, h.lim.ControlBurst)
 	h.pushLim = newIPRateLimiter(h.lim.PushRate, h.lim.PushBurst)
 	h.authFail = newFailLimiter(h.lim.FailedAuthPerMin, time.Minute, h.lim.FailedAuthBlock)
+	h.hostFail = newFailLimiter(h.lim.FailedAuthPerMin, time.Minute, h.lim.FailedAuthBlock)
 }
 
 func (h *tunnelHub) nowUnix() int64 { return h.now().Unix() }
@@ -449,7 +455,7 @@ func (h *tunnelHub) handleHost(w http.ResponseWriter, r *http.Request) {
 	if c == nil {
 		return
 	}
-	if h.authFail.blocked(ip, h.now()) || !h.connectLim.allow(ip) {
+	if h.hostFail.blocked(ip, h.now()) || !h.connectLim.allow(ip) {
 		c.fail(tcRateLimited, "too many attempts")
 		return
 	}
@@ -471,7 +477,7 @@ func (h *tunnelHub) handleHost(w http.ResponseWriter, r *http.Request) {
 	ctl, te := h.admitHost(ctx, m, nonce)
 	if te != nil {
 		if te.tc == tcUnauthorized {
-			h.authFail.note(ip, h.now())
+			h.hostFail.note(ip, h.now())
 		}
 		c.fail(te.tc, te.msg)
 		return
@@ -963,7 +969,7 @@ func (h *tunnelHub) handleAccept(w http.ResponseWriter, r *http.Request) {
 	if c == nil {
 		return
 	}
-	if h.authFail.blocked(ip, h.now()) {
+	if h.hostFail.blocked(ip, h.now()) {
 		c.fail(tcRateLimited, "too many failed attempts")
 		return
 	}
@@ -975,7 +981,7 @@ func (h *tunnelHub) handleAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Unlock()
 	if po == nil || !h.now().Before(po.expires) {
-		h.authFail.note(ip, h.now())
+		h.hostFail.note(ip, h.now())
 		c.fail(tcUnauthorized, "unknown, used or expired sid")
 		return
 	}
