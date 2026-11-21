@@ -301,9 +301,10 @@ contributor, viewer.
     POST /v1/workspaces/{id}/members/claim and becomes its owner. An
     unclaimed workspace behaves as if membership were off.
   - On a claimed workspace the caller's token subject (sub) must be on the
-    roster: reads need any role; writes (envelopes, key rotations, presence,
-    candidates, blob uploads) need contributor or above; roster changes and
-    invites need admin or above. Nobody can grant a role above their own
+    roster: reads and writes (envelopes, presence, candidates, blob uploads)
+    need any role, viewer included; key rotations need contributor or above;
+    roster changes and invites need admin or above; a blob delete needs its
+    uploader or an admin. Nobody can grant a role above their own
     or change a member who outranks them, and the last owner can't be
     removed or demoted.
   - Routes: GET/POST .../members, DELETE .../members/{account},

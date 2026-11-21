@@ -116,16 +116,27 @@ func TestMembershipGuard(t *testing.T) {
 	if err := g.CheckWrite(ctx, "w", owner, nil); err != nil {
 		t.Fatalf("owner write: %v", err)
 	}
-	// Viewer: read allowed, write denied.
+	// Viewer: read and write allowed (Viewers publish their key-agreement
+	// key, read state and attachments), but not a key rotation.
 	if err := g.CheckRead(ctx, "w", viewer, nil); err != nil {
 		t.Fatalf("viewer read should be allowed: %v", err)
 	}
-	if err := g.CheckWrite(ctx, "w", viewer, nil); err == nil {
-		t.Fatal("viewer write must be denied")
+	if err := g.CheckWrite(ctx, "w", viewer, nil); err != nil {
+		t.Fatalf("viewer write should be allowed: %v", err)
+	}
+	rot := httptest.NewRequest("POST", "/v1/workspaces/w/keyring", nil)
+	if err := g.CheckWrite(ctx, "w", viewer, rot); err == nil {
+		t.Fatal("viewer key rotation must be denied")
+	}
+	if err := g.CheckWrite(ctx, "w", owner, rot); err != nil {
+		t.Fatalf("owner key rotation: %v", err)
 	}
 	// Non-member: denied.
 	if err := g.CheckRead(ctx, "w", stranger, nil); err == nil {
 		t.Fatal("non-member read must be denied")
+	}
+	if err := g.CheckWrite(ctx, "w", stranger, nil); err == nil {
+		t.Fatal("non-member write must be denied")
 	}
 	// Claimed workspace + no identity: denied.
 	if err := g.CheckWrite(ctx, "w", nil, nil); err == nil {
@@ -234,3 +245,61 @@ func TestMembershipOnOpenRelayViaIdentityKey(t *testing.T) {
 }
 
 func hexEncode(b []byte) string { return hex.EncodeToString(b) }
+
+// A Viewer on a claimed room can post envelopes, presence, candidates and
+// blobs (and delete its own blob), but not a key rotation or a roster change.
+// Before v0.3.2 every one of these writes answered 403, so a Viewer could
+// never publish its key-agreement key and never received a rotation.
+func TestViewerWritesOnClaimedRoom(t *testing.T) {
+	ts, sk := membershipServer(t)
+	ws := ts.URL + "/v1/workspaces/wsV"
+	owner := issueToken(sk, TokenClaims{Sub: "github:1"})
+	viewer := issueToken(sk, TokenClaims{Sub: "github:2"})
+	stranger := issueToken(sk, TokenClaims{Sub: "github:99"})
+	if code, _ := req(t, "POST", ws+"/members/claim", owner, map[string]string{"login": "alice"}); code != http.StatusOK {
+		t.Fatalf("claim want 200, got %d", code)
+	}
+	if code, _ := req(t, "POST", ws+"/members", owner, map[string]string{"account": "github:2", "login": "carol", "role": "viewer"}); code != http.StatusOK {
+		t.Fatalf("add viewer want 200, got %d", code)
+	}
+
+	env := map[string]any{"version": 1, "nonce": "n", "ciphertext": "c", "kid": "k"}
+	if code, body := req(t, "POST", ws+"/envelopes", viewer, env); code != http.StatusOK {
+		t.Fatalf("viewer envelope want 200, got %d: %s", code, body)
+	}
+	slot := map[string]any{"device_id": "human:dev-v", "data": map[string]string{"sealed": "x"}}
+	if code, body := req(t, "POST", ws+"/presence", viewer, slot); code != http.StatusOK {
+		t.Fatalf("viewer presence want 200, got %d: %s", code, body)
+	}
+	if code, body := req(t, "POST", ws+"/candidates", viewer, slot); code != http.StatusOK {
+		t.Fatalf("viewer candidates want 200, got %d: %s", code, body)
+	}
+	resp, body := blobHTTP(t, "POST", ws+"/blobs", viewer, []byte("sealed bytes"))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("viewer blob upload want 201, got %d: %s", resp.StatusCode, body)
+	}
+	var br struct{ ID string }
+	json.Unmarshal(body, &br)
+	if resp, body := blobHTTP(t, "DELETE", ws+"/blobs/"+br.ID, viewer, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("viewer deleting its own blob want 204, got %d: %s", resp.StatusCode, body)
+	}
+
+	// What stays as it was: a Viewer can't rotate the key or manage the roster,
+	// and a non-member can't write at all.
+	rot := map[string]any{"version": 2, "prev_version": 1, "sealed": map[string]string{"d": "b"}}
+	if code, _ := req(t, "POST", ws+"/keyring", viewer, rot); code != http.StatusForbidden {
+		t.Fatalf("viewer key rotation want 403, got %d", code)
+	}
+	if code, body := req(t, "POST", ws+"/keyring", owner, rot); code != http.StatusOK {
+		t.Fatalf("owner key rotation want 200, got %d: %s", code, body)
+	}
+	if code, _ := req(t, "POST", ws+"/members", viewer, map[string]string{"account": "github:3", "role": "viewer"}); code != http.StatusForbidden {
+		t.Fatalf("viewer roster change want 403, got %d", code)
+	}
+	if code, _ := req(t, "POST", ws+"/invites", viewer, map[string]any{"role": "viewer"}); code != http.StatusForbidden {
+		t.Fatalf("viewer invite want 403, got %d", code)
+	}
+	if code, _ := req(t, "POST", ws+"/envelopes", stranger, env); code != http.StatusForbidden {
+		t.Fatalf("non-member envelope want 403, got %d", code)
+	}
+}

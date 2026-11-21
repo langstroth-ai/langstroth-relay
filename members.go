@@ -153,8 +153,25 @@ func (s *memoryStore) MemberRole(_ context.Context, workspace, account string) (
 // workspace until it is explicitly claimed.
 type membershipGuard struct{ store Store }
 
-func (g membershipGuard) CheckWrite(ctx context.Context, workspace string, claims *TokenClaims, _ *http.Request) error {
-	return g.check(ctx, workspace, claims, rankContributor)
+// CheckWrite lets any member, Viewer included, write envelopes, presence,
+// candidates and blobs. Ligus Viewers legitimately author envelopes (their
+// key-agreement key, read state, attachments); a Viewer refused here could
+// never publish its key-agreement key, so it would never receive a key
+// rotation. The client's authorization fold still decides what a Viewer may
+// author; the content-blind relay can't tell those events apart. Key
+// rotations (POST .../keyring) keep the Contributor floor: Viewers never
+// rotate the workspace key. Blob deletes stay limited to the uploader or an
+// Admin (deleteBlob).
+func (g membershipGuard) CheckWrite(ctx context.Context, workspace string, claims *TokenClaims, r *http.Request) error {
+	return g.check(ctx, workspace, claims, writeFloor(r))
+}
+
+// writeFloor is the lowest roster role that may make the write r.
+func writeFloor(r *http.Request) int {
+	if r != nil && r.Method == http.MethodPost && strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/keyring") {
+		return rankContributor
+	}
+	return rankViewer
 }
 
 func (g membershipGuard) CheckRead(ctx context.Context, workspace string, claims *TokenClaims, _ *http.Request) error {

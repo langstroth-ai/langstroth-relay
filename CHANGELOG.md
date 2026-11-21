@@ -2,6 +2,21 @@
 
 ## v0.3.2 (unreleased)
 
+`/v1` and `hrt1` request and response formats are unchanged (byte-identical
+to v0.3.1); what changed is who roster mode authorizes and the command line.
+
+### Fixed
+
+- **Roster mode no longer refuses a Viewer's writes.** With
+  `LANGSTROTH_RELAY_MEMBERSHIP=1`, a claimed room required Contributor to post
+  envelopes, presence, candidates and blobs. Ligus Viewers legitimately write
+  envelopes (their key-agreement key, read state, attachments), so on a
+  claimed room a Viewer could never publish its key-agreement key and never
+  received a key rotation. Any member, Viewer included, may now make those
+  writes. Unchanged: key rotations (`POST .../keyring`) still need
+  Contributor, roster and invite management still needs Admin, a blob delete
+  still needs its uploader or an Admin, and a non-member is refused as before.
+
 ### Added
 
 - **The binary documents itself.** `langstroth-relay help` covers every
