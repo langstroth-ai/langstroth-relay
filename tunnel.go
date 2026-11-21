@@ -21,7 +21,7 @@ import (
 )
 
 // The relay side of hive-tunnel/1: phone ↔ home host remote access through the
-// relay (docs/reference.md "Relay tunnel"; spec: hive repo docs/relay-tunnel.md).
+// relay (docs/reference.md "Relay tunnel"; spec: ligus repo docs/relay-tunnel.md).
 //
 //	GET /v1/tunnel/info              discovery (plain HTTPS)
 //	GET /v1/tunnel/host              host control WebSocket (challenge-signed)

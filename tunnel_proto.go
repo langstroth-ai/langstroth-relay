@@ -15,7 +15,7 @@ import (
 
 // hive-tunnel/1 wire primitives: identifiers, domain separation, the hpc1 phone
 // credential and the relay close codes. See docs/reference.md "Relay tunnel" and the
-// protocol spec (hive repo, docs/relay-tunnel.md). Nothing in this file touches
+// protocol spec (ligus repo, docs/relay-tunnel.md). Nothing in this file touches
 // end-to-end content: the relay verifies who may connect and forwards bytes.
 
 const (
