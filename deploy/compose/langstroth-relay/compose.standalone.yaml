@@ -20,7 +20,7 @@ services:
     network_mode: none
 
   relay:
-    image: ghcr.io/langstroth-ai/langstroth-relay:0.3.1
+    image: ghcr.io/langstroth-ai/langstroth-relay:0.3.2
     depends_on:
       data-owner:
         condition: service_completed_successfully

@@ -72,7 +72,7 @@ of the release image:
 git clone https://github.com/langstroth-ai/langstroth-relay && cd langstroth-relay
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o langstroth-relay ./cmd/langstroth-relay
 # or copy it out of the image:
-docker create --name lr ghcr.io/langstroth-ai/langstroth-relay:0.3.1
+docker create --name lr ghcr.io/langstroth-ai/langstroth-relay:0.3.2
 docker cp lr:/usr/local/bin/langstroth-relay . && docker rm lr
 ```
 
@@ -108,7 +108,7 @@ kubectl label namespace langstroth-relay pod-security.kubernetes.io/enforce=rest
 kubectl -n langstroth-relay create secret generic relay-db \
   --from-literal=DATABASE_URL='postgres://relay:<password>@db.example.internal:5432/relay?sslmode=verify-full'
 helm install langstroth-relay oci://ghcr.io/langstroth-ai/charts/langstroth-relay \
-  --version 0.3.1 -n langstroth-relay \
+  --version 0.3.2 -n langstroth-relay \
   --set database.mode=external --set database.external.existingSecret=relay-db \
   --set 'database.external.cidrs={10.0.0.5/32}'
 helm test langstroth-relay -n langstroth-relay

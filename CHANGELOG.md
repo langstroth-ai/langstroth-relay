@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.2 (unreleased)
+## v0.3.2
 
 `/v1` and `hrt1` request and response formats are unchanged (byte-identical
 to v0.3.1); what changed is who roster mode authorizes and the command line.
@@ -72,6 +72,10 @@ to v0.3.1); what changed is who roster mode authorizes and the command line.
   release tag no longer deploys anything. To run the relay on Fly.io or any
   other platform, use the release image as described in `docs/deploy.md`
   ("Running on a PaaS").
+
+### Versions
+
+- Image `ghcr.io/langstroth-ai/langstroth-relay:0.3.2`; Helm charts `langstroth-relay` 0.3.2 and `langstroth-auth` 0.1.2 (app version 0.3.2). The Docker Compose files pin the same image.
 
 ## v0.3.1
 
