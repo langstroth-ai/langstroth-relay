@@ -2,8 +2,8 @@ apiVersion: v2
 name: langstroth-relay
 description: Content-blind, end-to-end-encrypted sync relay for Ligus, with the tunnel split onto its own single-replica Deployment.
 type: application
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.3.1
+appVersion: "0.3.1"
 home: https://github.com/langstroth-ai/langstroth-relay
 sources:
   - https://github.com/langstroth-ai/langstroth-relay

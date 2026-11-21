@@ -17,6 +17,7 @@ A fix release. `/v1` and `hrt1` are unchanged (byte-identical to v0.3.0).
 
 ### Changed
 
+- Helm charts: `langstroth-relay` 0.3.1 and `langstroth-auth` 0.1.1 (app version 0.3.1).
 - Package comments name the relay Langstroth and point at the ligus
   repository for the tunnel spec.
 
