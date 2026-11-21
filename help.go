@@ -94,7 +94,7 @@ func textTopic(s string) func(io.Writer) { return func(w io.Writer) { fmt.Fprint
 
 var helpTopics = map[string]helpTopic{
 	"config":          {"every environment variable, its default and meaning", writeConfigHelp},
-	"deploy":          {"one-shot deploys: Docker, Helm (OCI chart), Fly.io, systemd", textTopic(deployHelp)},
+	"deploy":          {"one-shot deploys: Docker Compose, systemd, Helm (OCI chart), a PaaS", textTopic(deployHelp)},
 	"membership":      {"roster mode (LANGSTROTH_RELAY_MEMBERSHIP)", textTopic(membershipHelp)},
 	"tunnel":          {"the phone tunnel between the Ligus iPhone app and ligus serve", textTopic(tunnelHelp)},
 	"push":            {"push notifications to your own iPhone app build (APNs)", textTopic(pushHelp)},
@@ -187,31 +187,60 @@ for example 800MiB on a 1 GB machine).
 
 const deployHelp = `Deploy: one-shot sequences
 
-Each sequence ends with a health check that prints "ok". Replace <version>
+Every sequence ends with a health check that prints "ok". Replace <version>
 with a release, for example 0.3.2 (images and charts are tagged without the
-leading v). Clients need https: Fly terminates TLS for you; elsewhere put a
-reverse proxy or an ingress with TLS in front, for example Caddy:
-  relay.example.com { reverse_proxy localhost:8443 }
-and set LANGSTROTH_RELAY_TRUSTED_PROXIES to the proxy's address so rate limits
-see real clients. After deploying, give the relay's https URL to whoever
-creates a Ligus workspace; it travels inside every invite.
+leading v). Three rules hold everywhere:
+  - One instance per URL: pairing codes, live push and rate limits live in
+    the process. Replace the relay rather than rolling it.
+  - HTTPS in front: clients require https. The relay serves plain HTTP; put
+    a TLS reverse proxy, an ingress or the platform's edge in front, and set
+    LANGSTROTH_RELAY_TRUSTED_PROXIES to the proxy's address so rate limits
+    see real clients. Caddy example:
+      relay.example.com { reverse_proxy 127.0.0.1:8443 }
+  - Health check: GET /v1/health answers 200 "ok" (503 when the store is
+    down).
+After deploying, give the relay's https URL to whoever creates a Ligus
+workspace; it travels inside every invite.
 
-Docker
-  The published image is distroless: no shell, runs as UID 65532. Make the
-  data volume writable by that user once, then run:
+Docker Compose (one Linux host; Compose v2.24 or later)
+  Files: deploy/compose/langstroth-relay/ in a checkout. compose.yaml runs the
+  relay with Postgres; compose.standalone.yaml runs the relay alone with a
+  snapshot on a volume. Both publish 127.0.0.1:8443 for a proxy on the host,
+  and "--profile tls" adds Caddy for RELAY_DOMAIN (set in .env).
 
-    docker volume create langstroth-relay-data
-    docker run --rm -v langstroth-relay-data:/data alpine:3 chown 65532:65532 /data
-    docker run -d --name langstroth-relay --restart unless-stopped \
-      -p 8443:8443 -v langstroth-relay-data:/data \
-      -e LANGSTROTH_RELAY_DATA_DIR=/data \
-      ghcr.io/langstroth-ai/langstroth-relay:<version>
-    curl -fsS http://localhost:8443/v1/health
-    docker exec langstroth-relay /usr/local/bin/langstroth-relay check
+    git clone https://github.com/langstroth-ai/langstroth-relay
+    cd langstroth-relay/deploy/compose/langstroth-relay
+    cp .env.example .env && chmod 600 .env
+    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env
+    docker compose up -d                # or: docker compose --profile tls up -d
+    curl -fsS http://127.0.0.1:8443/v1/health
 
-  Postgres instead of the volume: -e DATABASE_URL=postgres://... (or mount the
-  URL as a file and set DATABASE_URL_FILE). From a checkout, "docker build -t
-  langstroth-relay ." builds an Alpine image that defaults to /data itself.
+  Standalone: "docker compose -f compose.standalone.yaml up -d". The image is
+  distroless (no shell, UID 65532), so check from the host, or run
+  "docker compose exec relay /usr/local/bin/langstroth-relay check".
+
+systemd (a Linux host without containers)
+  Files: deploy/systemd/langstroth-relay.service (hardened, DynamicUser) and
+  deploy/systemd/langstroth-relay.env (the settings, installed as
+  /etc/langstroth-relay/env). From a checkout, with Go 1.27 or newer:
+
+    git clone https://github.com/langstroth-ai/langstroth-relay && cd langstroth-relay
+    git checkout v<version>
+    CGO_ENABLED=0 go build -trimpath -o langstroth-relay ./cmd/langstroth-relay
+    sudo install -m 0755 langstroth-relay /usr/local/bin/langstroth-relay
+    sudo install -d -m 0750 /etc/langstroth-relay
+    sudo install -m 0640 deploy/systemd/langstroth-relay.env /etc/langstroth-relay/env
+    sudo install -m 0644 deploy/systemd/langstroth-relay.service /etc/systemd/system/
+    sudo systemctl daemon-reload && sudo systemctl enable --now langstroth-relay
+    curl -fsS http://127.0.0.1:8443/v1/health
+
+  Without Go, copy the binary out of the image instead of building it:
+    docker create --name lr ghcr.io/langstroth-ai/langstroth-relay:<version>
+    docker cp lr:/usr/local/bin/langstroth-relay . && docker rm lr
+  It listens on 127.0.0.1:8443; put a TLS proxy in front. Without
+  DATABASE_URL in the env file, state lives in /var/lib/langstroth-relay.
+  Logs: "journalctl -u langstroth-relay". A checkout's deploy/agent/local.sh
+  runs the same binary on loopback without systemd.
 
 Helm (Kubernetes, the published OCI chart)
     helm install langstroth-relay \
@@ -219,7 +248,7 @@ Helm (Kubernetes, the published OCI chart)
       -n langstroth-relay --create-namespace --wait
     helm test langstroth-relay -n langstroth-relay
     kubectl -n langstroth-relay port-forward svc/langstroth-relay 8443:8443 &
-    curl -fsS http://localhost:8443/v1/health
+    curl -fsS http://127.0.0.1:8443/v1/health
 
   That is one pod on the memory store (state is lost when the pod restarts).
   For a team: --set database.mode=bundled, cnpg or external (Postgres; the
@@ -231,53 +260,20 @@ Helm (Kubernetes, the published OCI chart)
   For coding agents, the checkout's deploy/agent/*.sh scripts (see AGENTS.md)
   run preflight, secrets, install and verify non-interactively with --json.
 
-Fly.io (one machine with a volume; Fly terminates TLS)
-    git clone https://github.com/langstroth-ai/langstroth-relay
-    cd langstroth-relay
-    fly apps create <app>
-    fly volumes create hive_data --size 1 --region <region> -a <app> --yes
-    fly deploy . --config deploy/fly.toml -a <app> --primary-region <region> --ha=false
-    curl -fsS https://<app>.fly.dev/v1/health
-
-  --ha=false keeps one machine: the relay is single-replica by design. The
-  volume name hive_data is what deploy/fly.toml mounts. Secrets: "fly secrets
-  set -a <app> LANGSTROTH_RELAY_METRICS_TOKEN=...". For Postgres set
-  DATABASE_URL as a secret and LANGSTROTH_RELAY_REQUIRE_DB=1.
-
-systemd (a plain binary on a Linux host; Go 1.27 or newer to build it)
-    go install github.com/langstroth-ai/langstroth-relay/cmd/langstroth-relay@v<version>
-    sudo install -m 0755 "$(go env GOPATH)/bin/langstroth-relay" /usr/local/bin/
-    sudo tee /etc/systemd/system/langstroth-relay.service >/dev/null <<'EOF'
-    [Unit]
-    Description=Langstroth relay
-    Wants=network-online.target
-    After=network-online.target
-
-    [Service]
-    ExecStart=/usr/local/bin/langstroth-relay
-    DynamicUser=yes
-    StateDirectory=langstroth-relay
-    Environment=LANGSTROTH_RELAY_DATA_DIR=/var/lib/langstroth-relay
-    Environment=LANGSTROTH_RELAY_ADDR=127.0.0.1:8443
-    # Secrets as files, one per setting (file name = setting name):
-    # LoadCredential=LANGSTROTH_RELAY_METRICS_TOKEN:/etc/langstroth-relay/metrics-token
-    # Environment=LANGSTROTH_RELAY_SECRETS_DIR=%d
-    Restart=on-failure
-    NoNewPrivileges=yes
-    ProtectSystem=strict
-    ProtectHome=yes
-    PrivateTmp=yes
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now langstroth-relay
-    curl -fsS http://127.0.0.1:8443/v1/health
-
-  It listens on loopback; put a TLS reverse proxy in front. Logs:
-  "journalctl -u langstroth-relay". A checkout's deploy/agent/local.sh runs
-  the same binary on loopback without systemd.
+On a PaaS (any platform that runs a container image)
+  - Image: ghcr.io/langstroth-ai/langstroth-relay:<version>, pinned. It runs
+    as UID 65532, so a mounted volume must be writable by that user.
+  - Port: $PORT when the platform sets it, else LANGSTROTH_RELAY_ADDR, else
+    0.0.0.0:8443.
+  - Settings: environment variables ("langstroth-relay help config"); secrets
+    as the platform's secrets, or as files (X_FILE).
+  - Storage: the platform's Postgres in DATABASE_URL with
+    LANGSTROTH_RELAY_REQUIRE_DB=1, or a volume with LANGSTROTH_RELAY_DATA_DIR
+    pointing at it.
+  - Health check: HTTP GET /v1/health.
+  - Exactly one instance, always on (no scale-to-zero: tunnels and event
+    streams are long-lived). TLS is the platform's edge; set
+    LANGSTROTH_RELAY_TRUSTED_PROXIES to its proxy range if it documents one.
 
 After any deploy
   langstroth-relay check --url https://relay.example.com   # health and tunnel
@@ -434,8 +430,9 @@ Start here:
 
 The relay exits at startup with "... names are no longer read: rename ..."
   A HIVE_RELAY_* or LIGUS_RELAY_* variable (or such a file in
-  LANGSTROTH_RELAY_SECRETS_DIR) is set. Rename it as the message says. On Fly:
-  "fly secrets list", then set the new name and unset the old one.
+  LANGSTROTH_RELAY_SECRETS_DIR) is set. Rename it as the message says: set
+  the new name wherever the relay's settings live (env file, Secret or the
+  platform's secrets), then unset the old one.
 
 "cannot read" or "is empty" for a _FILE or LANGSTROTH_RELAY_SECRETS_DIR
   The file is missing, unreadable by the relay's user (UID 65532 in the
@@ -502,16 +499,21 @@ With --url, also probes a running relay: GET URL/v1/health must answer 200,
 and GET URL/v1/tunnel/info reports whether the tunnel and push are on.
 
 Flags:
-  --json      print one JSON object on stdout:
+  --json      print one JSON object, on one line, on stdout. It has the
+              shape of the deploy/agent scripts' --json reports:
               {"tool":"langstroth-relay check","ok":bool,
-               "checks":[{"name","status","detail","fix"}]}
-              status is pass, warn, fail or skip; a failed check says what to
-              do in fix.
+               "checks":[{"name","status","detail","fix"}, ...]}
+              status is pass, warn, fail or skip; ok is false when any
+              check failed. fix is always present: what to do, or "" when
+              there is nothing to do (a failed check always has one).
+              Errors go to stderr; a usage error prints no JSON.
   --url URL   base URL of a running relay, for example https://relay.example.com
   -h, --help  this text
 
-Exit codes: 0 no check failed (warnings allowed); 1 a check failed; 2 usage
-error.
+Exit codes (the deploy/agent scripts' codes; check never uses their 3 or 4):
+  0  no check failed (warnings allowed); ok is true
+  1  a check failed; ok is false and that check's fix says what to do
+  2  usage error (unknown flag, --url without a value)
 
 Examples:
   langstroth-relay check

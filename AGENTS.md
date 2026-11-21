@@ -11,8 +11,8 @@ and `.claude/skills/relay-run-local` (plain Markdown; any agent can follow them)
 The binary documents itself: `langstroth-relay help` (commands, exit codes,
 refuse-to-start rules), `langstroth-relay help <topic>` (`config`, `deploy`,
 `membership`, `tunnel`, `push`, `backup`, `troubleshooting`) and
-`langstroth-relay check --json [--url URL]` (exit 0 ok, 1 a check failed,
-2 usage).
+`langstroth-relay check --json [--url URL]` (the tooling contract's JSON
+below, with no context keys; exit 0 ok, 1 a check failed, 2 usage).
 
 ## Pick a deployment
 

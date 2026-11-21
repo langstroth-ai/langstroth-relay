@@ -13,13 +13,19 @@ import (
 
 // `langstroth-relay check`: the startup checks Main runs, plus a few
 // warnings, without serving. With --url it also probes a running relay.
-// The JSON shape matches the deploy/agent scripts' contract.
+//
+// --json prints the deploy/agent scripts' report shape (deploy/agent/lib.sh,
+// check and checks_json): one object on one line, {"tool","ok","checks"},
+// each check {"name","status","detail","fix"} with "fix" always present
+// ("" when there is nothing to do). The scripts add context keys of their
+// own (namespace, release, ...); check has none. TestCheckJSONMatchesDeployAgent
+// keeps the two in step.
 
 type checkResult struct {
 	Name   string `json:"name"`
 	Status string `json:"status"` // pass | warn | fail | skip
 	Detail string `json:"detail"`
-	Fix    string `json:"fix,omitempty"`
+	Fix    string `json:"fix"`
 }
 
 type checkReport struct {
@@ -52,9 +58,7 @@ func cmdCheck(args []string, w io.Writer) error {
 	}
 	rep := runChecks(os.Environ(), url)
 	if asJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(rep); err != nil {
+		if err := json.NewEncoder(w).Encode(rep); err != nil {
 			return err
 		}
 	} else {
@@ -220,7 +224,7 @@ func probeRelay(base string, add func(name, status, detail, fix string)) {
 
 	resp, err = checkHTTPClient.Get(base + "/v1/tunnel/info")
 	if err != nil {
-		add("tunnel-info", "fail", err.Error(), "")
+		add("tunnel-info", "fail", err.Error(), "is the relay running and the URL right?")
 		return
 	}
 	defer resp.Body.Close()

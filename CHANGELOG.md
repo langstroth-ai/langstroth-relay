@@ -23,8 +23,8 @@ to v0.3.1); what changed is who roster mode authorizes and the command line.
   command, flag, exit code and the refuse-to-start rules (including the
   `HIVE_RELAY_*` and `LIGUS_RELAY_*` names), and `langstroth-relay help
   <topic>` adds `config` (every `LANGSTROTH_RELAY_*` variable with its default
-  and meaning), `deploy` (one-shot Docker, Helm OCI chart, Fly.io and systemd
-  sequences), `membership`, `tunnel`, `push`, `backup` and `troubleshooting`.
+  and meaning), `deploy` (one-shot Docker Compose, systemd and Helm OCI chart
+  sequences, and what a PaaS needs; no provider-specific commands), `membership`, `tunnel`, `push`, `backup` and `troubleshooting`.
   `<command> --help` works for every command. Tests keep the variable list in
   step with the code: every variable the code reads must be listed, every
   listed one must be read, and numeric defaults must match.
@@ -32,8 +32,10 @@ to v0.3.1); what changed is who roster mode authorizes and the command line.
   without serving (old names, secret files, access gate, tenancy, removed
   settings, routes, push, storage, metrics token) and, with `--url`, probes a
   running relay's `/v1/health` and `/v1/tunnel/info`. `--json` prints one
-  object in the `deploy/agent` shape (`{"tool","ok","checks":[...]}`). Exit 0
-  when nothing failed, 1 when a check failed.
+  object on one line in the `deploy/agent` scripts' shape
+  (`{"tool","ok","checks":[{"name","status","detail","fix"}]}`, `fix` always
+  present), and a test keeps the keys equal to the scripts'. Exit 0 when
+  nothing failed, 1 when a check failed, 2 on a usage error.
 
 ### Changed
 

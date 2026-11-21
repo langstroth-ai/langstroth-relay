@@ -222,9 +222,16 @@ func TestHelpTopics(t *testing.T) {
 		}
 	}
 	deploy := helpText(t, "deploy")
-	for _, want := range []string{"docker run", "oci://ghcr.io/langstroth-ai/charts/langstroth-relay", "fly deploy", "--ha=false", "systemctl enable --now", "/v1/health"} {
+	for _, want := range []string{"deploy/compose/langstroth-relay", "docker compose up -d", "deploy/systemd/langstroth-relay.service", "systemctl enable --now", "oci://ghcr.io/langstroth-ai/charts/langstroth-relay", "On a PaaS", "/v1/health"} {
 		if !strings.Contains(deploy, want) {
 			t.Errorf("help deploy lacks %q", want)
+		}
+	}
+	// Provider-neutral: no platform's own CLI (the Fly deployment moved to
+	// a private ops repository).
+	for _, bad := range []string{"fly ", "fly.toml", "Fly.io", "flyctl"} {
+		if strings.Contains(deploy, bad) {
+			t.Errorf("help deploy names a provider: %q", bad)
 		}
 	}
 	if !strings.Contains(helpText(t, "membership"), "attested") {
