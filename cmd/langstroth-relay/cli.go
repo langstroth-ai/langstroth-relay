@@ -22,27 +22,6 @@ import (
 // private key off the relay host entirely — only the public key ships to it as
 // LANGSTROTH_RELAY_TOKEN_PUBKEY.
 
-func printUsage() {
-	fmt.Fprint(os.Stderr, `langstroth-relay — self-hostable rendezvous + forwarding relay
-
-Run the server (default):   langstroth-relay
-Generate an issuer keypair: langstroth-relay keygen
-Mint an access token:       langstroth-relay issue --key <priv-hex> --sub <id> \
-                              [--plan team] [--exp-days 365] [--max-members 50] \
-                              [--turn] [--cap remove_member --cap rotate_key]
-                              [--workspace <id> ...]  (scope; see LANGSTROTH_RELAY_WORKSPACE_SCOPE)
-                              [--tenant <id>]         (tid; see LANGSTROTH_RELAY_TENANTS)
-Bootstrap a remote agent:   langstroth-relay bootstrap-agent --key <priv-hex> \
-                              --relay <url> --room <room> --ws-key <passphrase> \
-                              --sub github:<agent-id> --admin-sub github:<owner-id> \
-                              [--role contributor] [--label agent] [--exp-days 365]
-                            → prints one copy-paste line the dev runs on the box.
-
-Set the relay's LANGSTROTH_RELAY_TOKEN_PUBKEY to the keygen public key; keep the
-private key with your issuer backend only.
-`)
-}
-
 // cmdKeygen prints a fresh Ed25519 issuer keypair (32-byte seed as hex, matching
 // the format `issue --key` and LANGSTROTH_RELAY_TOKEN_PUBKEY expect).
 func cmdKeygen() error {
@@ -101,16 +80,16 @@ func cmdIssue(args []string) error {
 		case "--tenant":
 			claims.Tid = next()
 		default:
-			return fmt.Errorf("unknown flag %s (try `langstroth-relay help`)", args[i])
+			return relay.UsageErrorf("unknown flag %s (try `langstroth-relay help %s`)", args[i], "issue")
 		}
 	}
 
 	priv, ok := relay.ParseSigningKey(keyHex)
 	if !ok {
-		return fmt.Errorf("--key must be a 64-char hex Ed25519 seed (from `keygen`)")
+		return relay.UsageErrorf("--key must be a 64-char hex Ed25519 seed (from `keygen`)")
 	}
 	if strings.TrimSpace(claims.Sub) == "" {
-		return fmt.Errorf("--sub <account-or-org-id> is required")
+		return relay.UsageErrorf("--sub <account-or-org-id> is required")
 	}
 	if expDays >= 0 {
 		claims.Exp = uint64(time.Now().Unix()) + uint64(expDays)*86_400
@@ -157,15 +136,15 @@ func cmdBootstrapAgent(args []string) error {
 		case "--exp-days":
 			expDays, _ = strconv.ParseInt(next(), 10, 64)
 		default:
-			return fmt.Errorf("unknown flag %s (try `langstroth-relay help`)", args[i])
+			return relay.UsageErrorf("unknown flag %s (try `langstroth-relay help %s`)", args[i], "bootstrap-agent")
 		}
 	}
 	priv, ok := relay.ParseSigningKey(keyHex)
 	if !ok {
-		return fmt.Errorf("--key must be a 64-char hex Ed25519 seed (from `keygen`)")
+		return relay.UsageErrorf("--key must be a 64-char hex Ed25519 seed (from `keygen`)")
 	}
 	if relayURL == "" || room == "" || sub == "" {
-		return fmt.Errorf("--relay, --room, and --sub are required")
+		return relay.UsageErrorf("--relay, --room, and --sub are required")
 	}
 	if label == "" {
 		label = strings.NewReplacer(":", "-", "/", "-").Replace(sub)

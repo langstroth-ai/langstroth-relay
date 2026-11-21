@@ -235,6 +235,7 @@ func runPrune(what string, fn func() (int64, error)) {
 
 // daysEnv reads a non-negative day count from env, else the default (0 disables).
 func daysEnv(name string, def int) time.Duration {
+	observeDefault(name, float64(def))
 	d := def
 	if v := getenv(name); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
