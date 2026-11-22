@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`langstroth-relay check --json` prints a `ligus.checks.v1` report**, the
+  shape every Ligus check command shares (`ligus doctor --json` too):
+  `schema`, `tool` (now `langstroth-relay`), `command` (`check`), `ok`,
+  `exitCode`, `checks[]` and `next[]` (commands to run next). Each check has
+  `id` (the stable key) and `title`, and a passed check says `ok` instead of
+  `pass`. For one release each check also keeps `name`, the same value as
+  `id`. The text form ends with a summary line (`2 warnings · next: ...`).
+  The `deploy/agent` scripts' checks gain `id` beside `name`.
+
 ## v0.3.2
 
 `/v1` and `hrt1` request and response formats are unchanged (byte-identical

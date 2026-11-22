@@ -11,8 +11,12 @@ and `.claude/skills/relay-run-local` (plain Markdown; any agent can follow them)
 The binary documents itself: `langstroth-relay help` (commands, exit codes,
 refuse-to-start rules), `langstroth-relay help <topic>` (`config`, `deploy`,
 `membership`, `tunnel`, `push`, `backup`, `troubleshooting`) and
-`langstroth-relay check --json [--url URL]` (the tooling contract's JSON
-below, with no context keys; exit 0 ok, 1 a check failed, 2 usage).
+`langstroth-relay check --json [--url URL]` (a `ligus.checks.v1` report, the
+shape `ligus doctor --json` prints too: `schema`, `tool`, `command`, `ok`,
+`exitCode`, `checks[]` of `{id, title, status, detail, fix}` with `status`
+`ok`, `warn`, `fail` or `skip`, and `next[]`; each check also carries `name`,
+the same value as `id`, for one release; exit 0 ok, 1 a check failed, 2
+usage).
 
 ## Pick a deployment
 
@@ -40,8 +44,9 @@ Not sure? Ask the human. Default to `local.sh` for one person and
 - Idempotent: rerunning leaves the same state (existing Secrets are never
   changed; `install` is `helm upgrade --install`).
 - `--json` prints exactly one JSON object on stdout:
-  `{"tool":..., "ok":bool, ..., "checks":[{"name","status","detail","fix"}]}`
-  with `status` one of `pass`, `warn`, `fail`, `skip`. Logs go to stderr.
+  `{"tool":..., "ok":bool, ..., "checks":[{"id","name","status","detail","fix"}]}`
+  with `status` one of `pass`, `warn`, `fail`, `skip` (`id` and `name` hold
+  the same value; `id` is the `ligus.checks.v1` key). Logs go to stderr.
   A failed check always says what to do next in `fix`.
 - Exit codes: `0` ok, `1` a check or step failed (read `fix`), `2` usage
   error, `3` a tool is missing or the cluster is unreachable, `4` **a human

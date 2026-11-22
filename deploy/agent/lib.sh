@@ -34,13 +34,14 @@ json_escape() {
 }
 
 # Check results: check NAME STATUS DETAIL [FIX]. STATUS is pass, warn, fail
-# or skip. Rendered by checks_json.
+# or skip. Rendered by checks_json: each check has "id" (the ligus.checks.v1
+# key) and "name" (the same value; the key these scripts always printed).
 CHECKS=()
 FAILED=0 # read by the scripts that source this file
 check() {
   local name=$1 status=$2 detail=$3 fix=${4-}
   if [ "$status" = fail ]; then FAILED=1; fi
-  CHECKS+=("{\"name\":$(json_escape "$name"),\"status\":$(json_escape "$status"),\"detail\":$(json_escape "$detail"),\"fix\":$(json_escape "$fix")}")
+  CHECKS+=("{\"id\":$(json_escape "$name"),\"name\":$(json_escape "$name"),\"status\":$(json_escape "$status"),\"detail\":$(json_escape "$detail"),\"fix\":$(json_escape "$fix")}")
   if [ "$JSON" = 0 ]; then
     if [ -n "$fix" ] && [ "$status" != pass ]; then
       log "[$status] $name: $detail -> $fix"

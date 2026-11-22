@@ -276,14 +276,14 @@ func TestCheckJSON(t *testing.T) {
 	if err := json.Unmarshal(b.Bytes(), &rep); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, b.String())
 	}
-	if !rep.OK || rep.Tool != "langstroth-relay check" {
+	if !rep.OK || rep.Tool != "langstroth-relay" || rep.Schema != "ligus.checks.v1" || rep.Command != "check" {
 		t.Fatalf("report: %+v", rep)
 	}
 	byName := map[string]checkResult{}
 	for _, c := range rep.Checks {
-		byName[c.Name] = c
+		byName[c.ID] = c
 	}
-	if c := byName["health"]; c.Status != "pass" {
+	if c := byName["health"]; c.Status != "ok" {
 		t.Errorf("health: %+v", c)
 	}
 	if c := byName["tunnel-info"]; c.Status != "skip" {
@@ -292,7 +292,7 @@ func TestCheckJSON(t *testing.T) {
 	if c := byName["access"]; c.Status != "warn" {
 		t.Errorf("access on an open relay: %+v", c)
 	}
-	if c := byName["store"]; c.Status != "pass" || !strings.Contains(c.Detail, dir) {
+	if c := byName["store"]; c.Status != "ok" || !strings.Contains(c.Detail, dir) {
 		t.Errorf("store: %+v", c)
 	}
 }
@@ -313,9 +313,9 @@ func TestCheckFailsOnOldNamesAndRequireDB(t *testing.T) {
 	fails := map[string]string{}
 	for _, c := range rep.Checks {
 		if c.Status == "fail" {
-			fails[c.Name] = c.Detail
+			fails[c.ID] = c.Detail
 			if c.Fix == "" {
-				t.Errorf("failed check %s has no fix", c.Name)
+				t.Errorf("failed check %s has no fix", c.ID)
 			}
 		}
 	}
