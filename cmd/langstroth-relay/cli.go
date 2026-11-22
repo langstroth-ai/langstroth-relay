@@ -80,7 +80,7 @@ func cmdIssue(args []string) error {
 		case "--tenant":
 			claims.Tid = next()
 		default:
-			return relay.UsageErrorf("unknown flag %s (try `langstroth-relay help %s`)", args[i], "issue")
+			return relay.UsageErrorf("unknown flag %s", args[i])
 		}
 	}
 
@@ -136,7 +136,7 @@ func cmdBootstrapAgent(args []string) error {
 		case "--exp-days":
 			expDays, _ = strconv.ParseInt(next(), 10, 64)
 		default:
-			return relay.UsageErrorf("unknown flag %s (try `langstroth-relay help %s`)", args[i], "bootstrap-agent")
+			return relay.UsageErrorf("unknown flag %s", args[i])
 		}
 	}
 	priv, ok := relay.ParseSigningKey(keyHex)

@@ -31,5 +31,14 @@ func Help(args []string, w io.Writer) error { return cmdHelp(args, w) }
 // WantsHelp reports whether a command's arguments ask for its help.
 func WantsHelp(args []string) bool { return wantsHelp(args) }
 
+// ReportError writes err in the shared error shape (stderr text; with
+// asJSON also a ligus.error.v1 document on stdout) and returns the exit code.
+func ReportError(stderr, stdout io.Writer, err error, cmd string, asJSON bool) int {
+	return reportError(stderr, stdout, err, cmd, asJSON)
+}
+
+// WantsJSON reports whether a subcommand's arguments ask for JSON output.
+func WantsJSON(args []string) bool { return wantsJSON(args) }
+
 // Check runs `langstroth-relay check [--json] [--url URL]`, writing to w.
 func Check(args []string, w io.Writer) error { return cmdCheck(args, w) }

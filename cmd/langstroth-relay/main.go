@@ -11,8 +11,6 @@
 package main
 
 import (
-	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -27,16 +25,16 @@ func main() {
 	if len(args) > 0 {
 		switch args[0] {
 		case "help", "--help", "-h":
-			exitWith(relay.Help(args[1:], os.Stdout))
+			exitWith("help", args[1:], relay.Help(args[1:], os.Stdout))
 		}
 		cmd, ok := commands[args[0]]
 		if !ok {
-			exitWith(relay.UsageErrorf("unknown command %q (the server takes no arguments; try `langstroth-relay help`)", args[0]))
+			exitWith("", nil, relay.UsageErrorf("unknown command %q (the server takes no arguments)", args[0]))
 		}
 		if relay.WantsHelp(args[1:]) {
-			exitWith(relay.Help([]string{args[0]}, os.Stdout))
+			exitWith(args[0], args[1:], relay.Help([]string{args[0]}, os.Stdout))
 		}
-		exitWith(cmd(args[1:]))
+		exitWith(args[0], args[1:], cmd(args[1:]))
 	}
 	relay.Serve()
 }
@@ -54,18 +52,10 @@ var commands = map[string]func(args []string) error{
 	"check":           func(args []string) error { return relay.Check(args, os.Stdout) },
 }
 
-// exitWith ends a subcommand: 0 on success, 2 for a usage error, else 1.
-func exitWith(err error) {
-	switch {
-	case err == nil:
-		os.Exit(relay.ExitOK)
-	case errors.Is(err, relay.ErrChecksFailed):
-		os.Exit(relay.ExitFailed) // the report already said why
-	case errors.Is(err, relay.ErrUsage):
-		fmt.Fprintf(os.Stderr, "langstroth-relay: %v\n", err)
-		os.Exit(relay.ExitUsage)
-	default:
-		fmt.Fprintf(os.Stderr, "langstroth-relay: %v\n", err)
-		os.Exit(relay.ExitFailed)
-	}
+// exitWith ends a subcommand: 0 on success, 2 for a usage error, else 1
+// (`langstroth-relay help` lists the exit codes). Errors print as
+// "langstroth-relay: <what>" with indented why: and fix: lines; with --json
+// a ligus.error.v1 document goes to stdout too.
+func exitWith(cmd string, args []string, err error) {
+	os.Exit(relay.ReportError(os.Stderr, os.Stdout, err, cmd, relay.WantsJSON(args)))
 }

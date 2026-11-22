@@ -81,7 +81,7 @@ func cmdCheck(args []string, w io.Writer) error {
 		case strings.HasPrefix(a, "--url="):
 			url = strings.TrimPrefix(a, "--url=")
 		default:
-			return usageErrorf("check: unknown flag %s (try `langstroth-relay check --help`)", a)
+			return usageErrorf("check: unknown flag %s", a)
 		}
 	}
 	rep := runChecks(os.Environ(), url)
