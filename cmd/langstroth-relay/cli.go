@@ -44,6 +44,7 @@ func cmdIssue(args []string) error {
 		claims        = relay.TokenClaims{Caps: []string{}}
 		expDays int64 = -1
 	)
+	args = relay.SplitFlagValues(args)
 	for i := 0; i < len(args); i++ {
 		next := func() string {
 			if i+1 < len(args) {
@@ -108,6 +109,7 @@ func cmdBootstrapAgent(args []string) error {
 	var keyHex, relayURL, room, wsKey, sub, adminSub, label string
 	role := "contributor"
 	var expDays int64 = 365
+	args = relay.SplitFlagValues(args)
 	for i := 0; i < len(args); i++ {
 		next := func() string {
 			if i+1 < len(args) {

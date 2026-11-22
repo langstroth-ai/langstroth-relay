@@ -68,18 +68,30 @@ var checkHTTPClient = &http.Client{Timeout: 10 * time.Second}
 func cmdCheck(args []string, w io.Writer) error {
 	var asJSON bool
 	var url string
+	args = splitFlagValues(args)
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--json":
 			asJSON = true
+		case a == "-o" || a == "--output":
+			if i+1 >= len(args) {
+				return usageErrorf("%s needs json or text", a)
+			}
+			i++
+			switch args[i] {
+			case "json":
+				asJSON = true
+			case "text":
+				asJSON = false
+			default:
+				return usageErrorf("%s must be json or text, not %q", a, args[i])
+			}
 		case a == "--url":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
 				return usageErrorf("--url needs a value")
 			}
 			i++
 			url = args[i]
-		case strings.HasPrefix(a, "--url="):
-			url = strings.TrimPrefix(a, "--url=")
 		default:
 			return usageErrorf("check: unknown flag %s", a)
 		}

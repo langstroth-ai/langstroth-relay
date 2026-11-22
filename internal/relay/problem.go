@@ -89,3 +89,18 @@ func wantsJSON(args []string) bool {
 	}
 	return false
 }
+
+func splitFlagValues(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i, a := range args {
+		if a == "--" {
+			return append(out, args[i:]...)
+		}
+		if k, v, ok := strings.Cut(a, "="); ok && strings.HasPrefix(k, "--") && len(k) > 2 {
+			out = append(out, k, v)
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
