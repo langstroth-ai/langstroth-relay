@@ -13,13 +13,29 @@ import (
 // so nobody needs the docs site to deploy it. settings_test.go checks that
 // the config topic lists every variable the code reads.
 
-// Exit codes of every subcommand.
+// Exit codes: one table for every Ligus tool (ligus, the deploy scripts,
+// this relay; `ligus help exit-codes`). This binary uses 0, 1 and 2.
 const (
 	exitOK      = 0
 	exitFailed  = 1 // a check failed, or the server could not start
 	exitUsage   = 2 // unknown command, flag or topic
 	usageFooter = "Run `langstroth-relay help <topic>` for more. Topics: "
 )
+
+// exitCodesText is the shared table, in every command's help.
+const exitCodesText = `Exit codes (one table for every Ligus tool; this binary uses 0, 1 and 2):
+  0  done (warnings allowed)
+  1  failed: a check failed or the server could not start (read fix)
+  2  usage error: unknown command, flag or topic, or a missing value
+  3  a precondition you can fix is missing (a tool, a file, a sign-in)
+  4  a person must decide or act; stop and ask
+  5  not found
+  6  refused by workspace rules (a role, lockdown, agent access)
+  7  offline, unreachable, or timed out; retry with backoff
+Errors print as "langstroth-relay: <what>" with indented why: and fix: lines;
+with --json a {"schema":"ligus.error.v1",...,"error":{"code","message",
+"why","fix"}} document also goes to stdout.
+`
 
 // errUsage marks a command-line mistake (exit 2, not 1).
 var errUsage = errors.New("usage")
@@ -77,9 +93,7 @@ The relay refuses to start (exit 1, the reason on stderr) when:
 ` + "`langstroth-relay check`" + ` runs the same checks without serving (it doesn't
 contact Postgres).
 
-Exit codes: 0 ok; 1 failed (a check failed, the server could not start);
-2 usage error (unknown command, flag or topic).
-
+` + exitCodesText + `
 Endpoints: GET / (status page), GET /v1/health ("ok", or 503 when the store is
 unreachable), GET /metrics (Prometheus; set LANGSTROTH_RELAY_METRICS_TOKEN).
 `
@@ -101,6 +115,7 @@ var helpTopics = map[string]helpTopic{
 	"backup":          {"what to back up and how to restore", textTopic(backupHelp)},
 	"troubleshooting": {"common failures and their fixes", textTopic(troubleshootingHelp)},
 	"check":           {"the check command", textTopic(checkHelp)},
+	"exit-codes":      {"the exit codes every Ligus tool shares, and the error shape", textTopic(exitCodesText)},
 	"keygen":          {"the keygen command", textTopic(keygenHelp)},
 	"issue":           {"the issue command", textTopic(issueHelp)},
 	"bootstrap-agent": {"the bootstrap-agent command", textTopic(bootstrapAgentHelp)},
@@ -518,10 +533,10 @@ Flags:
   --url URL   base URL of a running relay, for example https://relay.example.com
   -h, --help  this text
 
-Exit codes (the deploy/agent scripts' codes; check never uses their 3 or 4):
-  0  no check failed (warnings allowed); ok is true
-  1  a check failed; ok is false and that check's fix says what to do
-  2  usage error (unknown flag, --url without a value)
+Exit codes: 0 no check failed (warnings allowed; ok is true); 1 a check
+failed (ok is false and that check's fix says what to do); 2 usage error
+(unknown flag, --url without a value; with --json a ligus.error.v1
+document). The full table: langstroth-relay help exit-codes.
 
 Examples:
   langstroth-relay check
@@ -542,6 +557,9 @@ LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT until every client has a new token.
 
 Example:
   langstroth-relay keygen > issuer.txt && chmod 600 issuer.txt
+
+Exit codes: 0 printed; 2 usage error (keygen takes no arguments). The full
+table: langstroth-relay help exit-codes.
 `
 
 const issueHelp = `langstroth-relay issue --key HEX --sub ID [flags]
@@ -569,6 +587,9 @@ Examples:
   langstroth-relay issue --key "$ISSUER_KEY" --sub alice --exp-days 365
   langstroth-relay issue --key "$ISSUER_KEY" --sub ci-bot \
     --workspace 0f3c... --exp-days 30
+
+Exit codes: 0 printed; 2 usage error (an unknown flag, no --sub, a --key
+that isn't a 64-char hex seed). The full table: langstroth-relay help exit-codes.
 `
 
 const bootstrapAgentHelp = `langstroth-relay bootstrap-agent --key HEX --relay URL --room ID --sub ID [flags]
@@ -596,4 +617,8 @@ The command goes to stdout, notes to stderr. Example:
   langstroth-relay bootstrap-agent --key "$ISSUER_KEY" \
     --relay https://relay.example.com --room 0f3c... \
     --sub github:my-agent --admin-sub github:me
+
+Exit codes: 0 printed (a failed roster enrollment is a note on stderr); 2
+usage error (an unknown flag, a missing --key, --relay, --room or --sub). The
+full table: langstroth-relay help exit-codes.
 `

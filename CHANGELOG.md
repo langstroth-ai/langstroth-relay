@@ -12,6 +12,14 @@
   `pass`. For one release each check also keeps `name`, the same value as
   `id`. The text form ends with a summary line (`2 warnings · next: ...`).
   The `deploy/agent` scripts' checks gain `id` beside `name`.
+- **Errors share one shape with the other Ligus tools:**
+  `langstroth-relay: <what>` with an indented `fix:` line (a usage error
+  names the command's help), and with `--json` a `ligus.error.v1` document on
+  stdout (`{"schema","tool","command","exitCode","error":{"code","message",
+  "why","fix"}}`). Exit codes are unchanged (0, 1, 2); `langstroth-relay help
+  exit-codes` prints the table every Ligus tool shares (3 a fixable
+  precondition, 4 a person must decide, 5 not found, 6 refused by workspace
+  rules, 7 offline or timed out).
 
 ## v0.3.2
 
