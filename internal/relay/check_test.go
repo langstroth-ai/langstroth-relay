@@ -13,9 +13,10 @@ import (
 	"testing"
 )
 
-// The deploy/agent scripts and `langstroth-relay check --json` share one
-// report contract. These tests read the contract out of the scripts, run one
-// of them, and require check's JSON to have exactly the same keys.
+// `langstroth-relay check --json` prints a ligus.checks.v1 report, and the
+// deploy/agent scripts' reports share its core keys. These tests read the
+// scripts' contract out of the scripts, run one of them, and require check's
+// JSON to carry every key the scripts do, plus the ligus.checks.v1 ones.
 
 // repoRoot is the directory holding go.mod (the package may move under it).
 func repoRoot(t *testing.T) string {
@@ -120,8 +121,21 @@ func TestCheckJSONMatchesDeployAgent(t *testing.T) {
 	if got, want := keySet(top), "checks,ok,tool"; got != want {
 		t.Fatalf("deploy/agent report keys = %s, want %s (update check.go and its help with the scripts)", got, want)
 	}
-	if got, want := keySet(item), "detail,fix,name,status"; got != want {
+	if got, want := keySet(item), "detail,fix,id,name,status"; got != want {
 		t.Fatalf("deploy/agent check keys = %s, want %s (update check.go and its help with the scripts)", got, want)
+	}
+	// check's own keys: ligus.checks.v1, plus name for one release.
+	const wantTop = "checks,command,exitCode,next,ok,schema,tool"
+	const wantItem = "detail,fix,id,name,status,title"
+	for _, k := range top {
+		if !strings.Contains(","+wantTop+",", ","+k+",") {
+			t.Fatalf("the scripts' report key %q is missing from check --json", k)
+		}
+	}
+	for _, k := range item {
+		if !strings.Contains(","+wantItem+",", ","+k+",") {
+			t.Fatalf("the scripts' check key %q is missing from check --json", k)
+		}
 	}
 
 	// A real script report: local.sh status on an empty data dir fails one
@@ -173,8 +187,22 @@ func TestCheckJSONMatchesDeployAgent(t *testing.T) {
 			t.Errorf("check --json printed %d lines, want one object on one line", n)
 		}
 		rTop, rChecks := decodeReport(t, b.Bytes())
-		if got := keySet(sortedKeys(rTop)); got != keySet(top) {
-			t.Errorf("check --json keys %s, scripts' %s", got, keySet(top))
+		if got := keySet(sortedKeys(rTop)); got != wantTop {
+			t.Errorf("check --json keys %s, want %s", got, wantTop)
+		}
+		if string(rTop["schema"]) != `"ligus.checks.v1"` || string(rTop["tool"]) != `"langstroth-relay"` || string(rTop["command"]) != `"check"` {
+			t.Errorf("schema, tool, command: %s %s %s", rTop["schema"], rTop["tool"], rTop["command"])
+		}
+		wantExit := "0"
+		if failing {
+			wantExit = "1"
+		}
+		if string(rTop["exitCode"]) != wantExit {
+			t.Errorf("failing=%v: exitCode %s, want %s", failing, rTop["exitCode"], wantExit)
+		}
+		var next []string
+		if err := json.Unmarshal(rTop["next"], &next); err != nil || (failing && len(next) == 0) {
+			t.Errorf("failing=%v: next %s (a failed run names the next step)", failing, rTop["next"])
 		}
 		wantOK := "true"
 		if failing {
@@ -184,9 +212,45 @@ func TestCheckJSONMatchesDeployAgent(t *testing.T) {
 			t.Errorf("failing=%v: ok is %s, want %s", failing, rTop["ok"], wantOK)
 		}
 		for _, c := range rChecks {
-			if got := keySet(sortedKeys(c)); got != scriptItem {
-				t.Errorf("check %s keys %s, scripts' %s", c["name"], got, scriptItem)
+			if got := keySet(sortedKeys(c)); got != wantItem {
+				t.Errorf("check %s keys %s, want %s", c["id"], got, wantItem)
+			}
+			if string(c["id"]) != string(c["name"]) {
+				t.Errorf("check id %s and name %s differ", c["id"], c["name"])
+			}
+			var st string
+			_ = json.Unmarshal(c["status"], &st)
+			if !strings.Contains(",ok,warn,fail,skip,", ","+st+",") {
+				t.Errorf("check %s status %q is not ok, warn, fail or skip", c["id"], st)
 			}
 		}
+	}
+}
+
+// The text form: a header, one line per check, a fix line under anything
+// that isn't ok, and the summary with the next step.
+func TestCheckTextForm(t *testing.T) {
+	clearSettings(t)
+	t.Setenv("LANGSTROTH_RELAY_DATA_DIR", t.TempDir())
+	t.Setenv("LANGSTROTH_RELAY_REQUIRE_DB", "1")
+	var b bytes.Buffer
+	if err := cmdCheck(nil, &b); !errors.Is(err, errChecksFailed) {
+		t.Fatalf("cmdCheck: %v", err)
+	}
+	out := b.String()
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if lines[0] != "langstroth-relay check: this environment's settings" {
+		t.Errorf("header %q", lines[0])
+	}
+	if !strings.Contains(out, "\nfail  store             LANGSTROTH_RELAY_REQUIRE_DB is set") ||
+		!strings.Contains(out, "\n      fix: set DATABASE_URL") {
+		t.Errorf("the failed store check and its fix:\n%s", out)
+	}
+	if !strings.Contains(out, "\nok    old names ") {
+		t.Errorf("a passed check says ok:\n%s", out)
+	}
+	last := lines[len(lines)-1]
+	if !strings.HasPrefix(last, "1 failure, 2 warnings · next: langstroth-relay help troubleshooting") {
+		t.Errorf("summary %q", last)
 	}
 }

@@ -14,24 +14,52 @@ import (
 // `langstroth-relay check`: the startup checks Main runs, plus a few
 // warnings, without serving. With --url it also probes a running relay.
 //
-// --json prints the deploy/agent scripts' report shape (deploy/agent/lib.sh,
-// check and checks_json): one object on one line, {"tool","ok","checks"},
-// each check {"name","status","detail","fix"} with "fix" always present
-// ("" when there is nothing to do). The scripts add context keys of their
-// own (namespace, release, ...); check has none. TestCheckJSONMatchesDeployAgent
-// keeps the two in step.
+// --json prints one ligus.checks.v1 report on one line, the shape every
+// Ligus check command prints (ligus doctor --json; the ligus deploy
+// scripts' ligus.agent-deploy.v1 is a profile of it):
+// {"schema","tool","command","ok","exitCode","checks","next"}, each check
+// {"id","title","status","detail","fix"} with status ok, warn, fail or skip.
+// For one release each check also carries "name" (the same value as "id"),
+// the key 0.3.2 printed. The deploy/agent scripts' reports carry the same
+// keys they always did plus "id"; TestCheckJSONMatchesDeployAgent keeps
+// check a superset of them.
+
+// checksSchema is the schema string of check's JSON report.
+const checksSchema = "ligus.checks.v1"
 
 type checkResult struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // pass | warn | fail | skip
+	ID     string `json:"id"`
+	Name   string `json:"name"` // the same as ID; kept for one release
+	Title  string `json:"title"`
+	Status string `json:"status"` // ok | warn | fail | skip
 	Detail string `json:"detail"`
 	Fix    string `json:"fix"`
 }
 
 type checkReport struct {
-	Tool   string        `json:"tool"`
-	OK     bool          `json:"ok"`
-	Checks []checkResult `json:"checks"`
+	Schema   string        `json:"schema"`
+	Tool     string        `json:"tool"`
+	Command  string        `json:"command"`
+	OK       bool          `json:"ok"`
+	ExitCode int           `json:"exitCode"`
+	Checks   []checkResult `json:"checks"`
+	Next     []string      `json:"next"`
+}
+
+// checkTitles are the text form's labels.
+var checkTitles = map[string]string{
+	"old-names":    "old names",
+	"secret-files": "secret files",
+	"access":       "access gate",
+	"tenancy":      "tenancy",
+	"removed":      "removed settings",
+	"routes":       "routes",
+	"push":         "push",
+	"store":        "store",
+	"metrics":      "metrics",
+	"listen":       "listen",
+	"health":       "health",
+	"tunnel-info":  "tunnel",
 }
 
 // checkHTTPClient is the client --url probes use (replaced in tests).
@@ -62,17 +90,7 @@ func cmdCheck(args []string, w io.Writer) error {
 			return err
 		}
 	} else {
-		for _, c := range rep.Checks {
-			fmt.Fprintf(w, "%-4s  %-14s %s\n", c.Status, c.Name, c.Detail)
-			if c.Fix != "" {
-				fmt.Fprintf(w, "      %-14s fix: %s\n", "", c.Fix)
-			}
-		}
-		if rep.OK {
-			fmt.Fprintln(w, "ok")
-		} else {
-			fmt.Fprintln(w, "FAILED")
-		}
+		writeCheckText(w, rep, url)
 	}
 	if !rep.OK {
 		return errChecksFailed
@@ -80,21 +98,66 @@ func cmdCheck(args []string, w io.Writer) error {
 	return nil
 }
 
+// writeCheckText prints the text form: a header, one line per check, an
+// indented fix line under anything not ok, then a summary.
+func writeCheckText(w io.Writer, rep checkReport, url string) {
+	if url != "" {
+		fmt.Fprintf(w, "langstroth-relay check: this environment's settings, and the relay at %s\n", url)
+	} else {
+		fmt.Fprintln(w, "langstroth-relay check: this environment's settings")
+	}
+	counts := map[string]int{}
+	for _, c := range rep.Checks {
+		counts[c.Status]++
+		fmt.Fprintf(w, "%-5s %-17s %s\n", c.Status, c.Title, c.Detail)
+		if c.Fix != "" && c.Status != "ok" {
+			fmt.Fprintf(w, "      fix: %s\n", c.Fix)
+		}
+	}
+	plural := func(n int, one, many string) string {
+		if n == 1 {
+			return fmt.Sprintf("%d %s", n, one)
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	var head string
+	switch f, wn := counts["fail"], counts["warn"]; {
+	case f == 0 && wn == 0:
+		head = "all checks passed"
+	case f == 0:
+		head = plural(wn, "warning", "warnings")
+	case wn == 0:
+		head = plural(f, "failure", "failures")
+	default:
+		head = plural(f, "failure", "failures") + ", " + plural(wn, "warning", "warnings")
+	}
+	next := "nothing to do"
+	if len(rep.Next) > 0 {
+		next = strings.Join(rep.Next, " ; ")
+	}
+	fmt.Fprintf(w, "%s · next: %s\n", head, next)
+}
+
 var errChecksFailed = fmt.Errorf("one or more checks failed")
 
 func runChecks(environ []string, url string) checkReport {
-	rep := checkReport{Tool: "langstroth-relay check", OK: true}
+	rep := checkReport{Schema: checksSchema, Tool: "langstroth-relay", Command: "check", OK: true, Next: []string{}}
 	add := func(name, status, detail, fix string) {
 		if status == "fail" {
 			rep.OK = false
+			rep.ExitCode = exitFailed
 		}
-		rep.Checks = append(rep.Checks, checkResult{name, status, detail, fix})
+		title := checkTitles[name]
+		if title == "" {
+			title = name
+		}
+		rep.Checks = append(rep.Checks, checkResult{ID: name, Name: name, Title: title, Status: status, Detail: detail, Fix: fix})
 	}
 	fromErr := func(name string, err error, okDetail, fix string) {
 		if err != nil {
 			add(name, "fail", err.Error(), fix)
 		} else {
-			add(name, "pass", okDetail, "")
+			add(name, "ok", okDetail, "")
 		}
 	}
 
@@ -109,9 +172,9 @@ func runChecks(environ []string, url string) checkReport {
 	} else {
 		switch entitlementFromEnv().kind {
 		case entSigned:
-			add("access", "pass", "signed tokens required (LANGSTROTH_RELAY_TOKEN_PUBKEY), workspace scope "+workspaceScopeFromEnv(), "")
+			add("access", "ok", "signed tokens required (LANGSTROTH_RELAY_TOKEN_PUBKEY), workspace scope "+workspaceScopeFromEnv(), "")
 		case entTokens:
-			add("access", "pass", "static token allowlist (LANGSTROTH_RELAY_ACCESS_TOKENS)", "")
+			add("access", "ok", "static token allowlist (LANGSTROTH_RELAY_ACCESS_TOKENS)", "")
 		default:
 			add("access", "warn", "open: any client may use the relay",
 				"before sharing a public URL, set LANGSTROTH_RELAY_TOKEN_PUBKEY (see `langstroth-relay help keygen`)")
@@ -134,7 +197,7 @@ func runChecks(environ []string, url string) checkReport {
 		if r == "" {
 			r = "all"
 		}
-		add("routes", "pass", "routes "+r+", tunnel "+tunnel, "")
+		add("routes", "ok", "routes "+r+", tunnel "+tunnel, "")
 	}
 	if err := apnsWithoutTunnelError(getenv); err != nil {
 		add("push", "fail", err.Error(), "remove the APNs settings here, or turn the tunnel on")
@@ -145,7 +208,7 @@ func runChecks(environ []string, url string) checkReport {
 	} else if s == nil {
 		add("push", "skip", "APNs not configured; hosts fall back to ntfy if they have it", "")
 	} else {
-		add("push", "pass", "APNs push to "+strings.Join(s.Topics, ", ")+" ("+s.Env+")", "")
+		add("push", "ok", "APNs push to "+strings.Join(s.Topics, ", ")+" ("+s.Env+")", "")
 	}
 
 	// Storage (no connection is made).
@@ -156,13 +219,13 @@ func runChecks(environ []string, url string) checkReport {
 		add("store", "fail", "LANGSTROTH_RELAY_REQUIRE_DB is set but DATABASE_URL is empty",
 			"set DATABASE_URL (or DATABASE_URL_FILE), or unset LANGSTROTH_RELAY_REQUIRE_DB")
 	case dsn != "":
-		add("store", "pass", "Postgres (DATABASE_URL set; not contacted by check)", "")
+		add("store", "ok", "Postgres (DATABASE_URL set; not contacted by check)", "")
 	case dir != "":
 		if err := dirWritable(dir); err != nil {
 			add("store", "fail", "memory plus snapshot in "+dir+": "+err.Error(),
 				"create the directory and make it writable by the relay's user")
 		} else {
-			add("store", "pass", "memory plus snapshot in "+filepath.Join(dir, snapshotFile), "")
+			add("store", "ok", "memory plus snapshot in "+filepath.Join(dir, snapshotFile), "")
 		}
 	default:
 		add("store", "warn", "memory only: everything is lost on restart",
@@ -172,14 +235,30 @@ func runChecks(environ []string, url string) checkReport {
 	if strings.TrimSpace(getenv("LANGSTROTH_RELAY_METRICS_TOKEN")) == "" {
 		add("metrics", "warn", "/metrics is public", "set LANGSTROTH_RELAY_METRICS_TOKEN on a relay others can reach")
 	} else {
-		add("metrics", "pass", "/metrics needs the bearer token", "")
+		add("metrics", "ok", "/metrics needs the bearer token", "")
 	}
-	add("listen", "pass", resolveAddr(), "")
+	add("listen", "ok", resolveAddr(), "")
 
 	if url != "" {
 		probeRelay(strings.TrimRight(url, "/"), add)
 	}
+	// Commands to run next: the troubleshooting guide, or close the open gate.
+	switch {
+	case !rep.OK:
+		rep.Next = append(rep.Next, "langstroth-relay help troubleshooting")
+	case hasCheck(rep, "access", "warn"):
+		rep.Next = append(rep.Next, "langstroth-relay keygen")
+	}
 	return rep
+}
+
+func hasCheck(rep checkReport, id, status string) bool {
+	for _, c := range rep.Checks {
+		if c.ID == id && c.Status == status {
+			return true
+		}
+	}
+	return false
 }
 
 func tenancyDetail() string {
@@ -219,7 +298,7 @@ func probeRelay(base string, add func(name, status, detail, fix string)) {
 		add("health", "fail", fmt.Sprintf("GET /v1/health: %d %s", resp.StatusCode, strings.TrimSpace(string(body))),
 			"503 means the store is unreachable: check DATABASE_URL and the database")
 	} else {
-		add("health", "pass", "GET /v1/health: 200 "+strings.TrimSpace(string(body)), "")
+		add("health", "ok", "GET /v1/health: 200 "+strings.TrimSpace(string(body)), "")
 	}
 
 	resp, err = checkHTTPClient.Get(base + "/v1/tunnel/info")
@@ -240,7 +319,7 @@ func probeRelay(base string, add func(name, status, detail, fix string)) {
 			add("tunnel-info", "warn", "GET /v1/tunnel/info: unreadable answer: "+err.Error(), "")
 			return
 		}
-		add("tunnel-info", "pass", fmt.Sprintf("tunnel on, versions %v, push %t", info.Versions, info.Push), "")
+		add("tunnel-info", "ok", fmt.Sprintf("tunnel on, versions %v, push %t", info.Versions, info.Push), "")
 	default:
 		add("tunnel-info", "warn", fmt.Sprintf("GET /v1/tunnel/info: %d", resp.StatusCode), "")
 	}

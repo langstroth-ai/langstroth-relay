@@ -498,15 +498,23 @@ token and the listen address. It does not connect to Postgres.
 With --url, also probes a running relay: GET URL/v1/health must answer 200,
 and GET URL/v1/tunnel/info reports whether the tunnel and push are on.
 
+The text form: a header, one line per check (status, title, what was found),
+an indented "fix:" line under anything not ok, and a summary such as
+"2 warnings · next: langstroth-relay keygen".
+
 Flags:
-  --json      print one JSON object, on one line, on stdout. It has the
-              shape of the deploy/agent scripts' --json reports:
-              {"tool":"langstroth-relay check","ok":bool,
-               "checks":[{"name","status","detail","fix"}, ...]}
-              status is pass, warn, fail or skip; ok is false when any
-              check failed. fix is always present: what to do, or "" when
-              there is nothing to do (a failed check always has one).
-              Errors go to stderr; a usage error prints no JSON.
+  --json      print one ligus.checks.v1 report, on one line, on stdout
+              (the shape ligus doctor --json prints too):
+              {"schema":"ligus.checks.v1","tool":"langstroth-relay",
+               "command":"check","ok":bool,"exitCode":0|1,
+               "checks":[{"id","name","title","status","detail","fix"}, ...],
+               "next":["langstroth-relay help troubleshooting"]}
+              status is ok, warn, fail or skip; ok is false when any check
+              failed. id is the stable key; name holds the same value for
+              one release (0.3.2 printed name and pass). fix is always
+              present: what to do, or "" when there is nothing to do (a
+              failed check always has one). next lists commands to run
+              next. Errors go to stderr; a usage error prints no JSON.
   --url URL   base URL of a running relay, for example https://relay.example.com
   -h, --help  this text
 
