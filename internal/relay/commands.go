@@ -42,3 +42,7 @@ func WantsJSON(args []string) bool { return wantsJSON(args) }
 
 // Check runs `langstroth-relay check [--json] [--url URL]`, writing to w.
 func Check(args []string, w io.Writer) error { return cmdCheck(args, w) }
+
+// SplitFlagValues turns --flag=value into --flag value (before a "--"), so
+// every command takes both spellings.
+func SplitFlagValues(args []string) []string { return splitFlagValues(args) }

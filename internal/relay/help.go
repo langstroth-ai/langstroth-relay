@@ -44,34 +44,42 @@ func usageErrorf(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{errUsage}, args...)...)
 }
 
-const usageText = `langstroth-relay: the Langstroth sync relay for Ligus (Ligus is short for
-ligustica). It stores and forwards end-to-end encrypted envelopes; it never
-holds a workspace key or sees plaintext.
+var usageText = `NAME
+  langstroth-relay - the Langstroth sync relay for Ligus (Ligus is short for
+  ligustica). It stores and forwards end-to-end encrypted envelopes; it never
+  holds a workspace key or sees plaintext.
 
-Usage:
+  Endpoints: GET / (status page), GET /v1/health ("ok", or 503 when the store
+  is unreachable), GET /metrics (Prometheus; set LANGSTROTH_RELAY_METRICS_TOKEN).
+
+USAGE
   langstroth-relay                    run the server (configured by environment)
-  langstroth-relay check [--json] [--url URL]
-                                      check this environment's settings without
-                                      serving; with --url also probe a running relay
-  langstroth-relay keygen             print a new Ed25519 token-issuer keypair
-  langstroth-relay issue --key HEX --sub ID [flags]
-                                      mint a signed hrt1 access token
-  langstroth-relay bootstrap-agent --key HEX --relay URL --room ID --sub ID [flags]
-                                      print one command that enrolls a headless agent
-  langstroth-relay help [topic]       this text, or a topic below
+  langstroth-relay <command> [flags]
+  langstroth-relay help [topic] | help --json
   langstroth-relay <command> --help   help for one command
 
-Configuration is environment variables only, named LANGSTROTH_RELAY_* (plus
-PORT and DATABASE_URL). Any of them can come from a file instead: <NAME>_FILE,
-or $LANGSTROTH_RELAY_SECRETS_DIR/<NAME>. ` + "`langstroth-relay help config`" + ` lists
-every variable with its default.
+COMMANDS
+  check [--json] [--url URL]          check this environment's settings without
+                                      serving; with --url also probe a running relay
+  keygen                              print a new Ed25519 token-issuer keypair
+  issue --key HEX --sub ID [flags]    mint a signed hrt1 access token
+  bootstrap-agent --key HEX --relay URL --room ID --sub ID [flags]
+                                      print one command that enrolls a headless agent
+  help [topic]                        this text, or a topic below; --json: every
+                                      command and topic as one ligus.help.v1 document
 
-Quick start:
+EXAMPLES
   langstroth-relay                         # http on 0.0.0.0:8443, memory only
   curl -fsS http://localhost:8443/v1/health # prints ok
   LANGSTROTH_RELAY_DATA_DIR=./data langstroth-relay   # keep state across restarts
 
-The relay refuses to start (exit 1, the reason on stderr) when:
+ENVIRONMENT
+  Configuration is environment variables only, named LANGSTROTH_RELAY_* (plus
+  PORT and DATABASE_URL). Any of them can come from a file instead: <NAME>_FILE,
+  or $LANGSTROTH_RELAY_SECRETS_DIR/<NAME>. ` + "`langstroth-relay help config`" + ` lists
+  every variable with its default.
+
+  The relay refuses to start (exit 1, the reason on stderr) when:
   - a HIVE_RELAY_* or LIGUS_RELAY_* variable is set, or a file with such a name
     is in LANGSTROTH_RELAY_SECRETS_DIR. These names from before the Langstroth
     rename are not read; the error names the LANGSTROTH_RELAY_* replacement,
@@ -90,13 +98,24 @@ The relay refuses to start (exit 1, the reason on stderr) when:
   - an APNs key, key id or team id is set while LANGSTROTH_RELAY_TUNNEL is off;
   - LANGSTROTH_RELAY_REQUIRE_DB is on without DATABASE_URL, or Postgres can't
     be reached or migrated.
-` + "`langstroth-relay check`" + ` runs the same checks without serving (it doesn't
-contact Postgres).
+  ` + "`langstroth-relay check`" + ` runs the same checks without serving (it doesn't
+  contact Postgres).
 
-` + exitCodesText + `
-Endpoints: GET / (status page), GET /v1/health ("ok", or 503 when the store is
-unreachable), GET /metrics (Prometheus; set LANGSTROTH_RELAY_METRICS_TOKEN).
+EXIT CODES
+` + indent(exitCodesText) + `
+SEE ALSO
+  langstroth-relay help deploy, help troubleshooting, help exit-codes
+  ligus doctor and ligus help checks (a Ligus device's checks, which name
+  langstroth-relay check when the relay is the problem)
 `
+
+func indent(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = "  " + l
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
 
 // helpTopic is one `langstroth-relay help <name>` page.
 type helpTopic struct {
@@ -106,6 +125,10 @@ type helpTopic struct {
 
 func textTopic(s string) func(io.Writer) { return func(w io.Writer) { fmt.Fprint(w, s) } }
 
+func commandTopic(name string) func(io.Writer) {
+	return func(w io.Writer) { findCommandHelp(name).write(w) }
+}
+
 var helpTopics = map[string]helpTopic{
 	"config":          {"every environment variable, its default and meaning", writeConfigHelp},
 	"deploy":          {"one-shot deploys: Docker Compose, systemd, Helm (OCI chart), a PaaS", textTopic(deployHelp)},
@@ -114,11 +137,11 @@ var helpTopics = map[string]helpTopic{
 	"push":            {"push notifications to your own iPhone app build (APNs)", textTopic(pushHelp)},
 	"backup":          {"what to back up and how to restore", textTopic(backupHelp)},
 	"troubleshooting": {"common failures and their fixes", textTopic(troubleshootingHelp)},
-	"check":           {"the check command", textTopic(checkHelp)},
+	"check":           {"the check command", commandTopic("check")},
 	"exit-codes":      {"the exit codes every Ligus tool shares, and the error shape", textTopic(exitCodesText)},
-	"keygen":          {"the keygen command", textTopic(keygenHelp)},
-	"issue":           {"the issue command", textTopic(issueHelp)},
-	"bootstrap-agent": {"the bootstrap-agent command", textTopic(bootstrapAgentHelp)},
+	"keygen":          {"the keygen command", commandTopic("keygen")},
+	"issue":           {"the issue command", commandTopic("issue")},
+	"bootstrap-agent": {"the bootstrap-agent command", commandTopic("bootstrap-agent")},
 }
 
 func topicNames() []string {
@@ -142,6 +165,9 @@ func writeUsage(w io.Writer) {
 // cmdHelp prints the top-level help or one topic. An unknown topic is a
 // usage error.
 func cmdHelp(args []string, w io.Writer) error {
+	if len(args) == 1 && (args[0] == "--json" || args[0] == "-o=json") || len(args) == 2 && args[0] == "-o" && args[1] == "json" {
+		return writeHelpJSON(w)
+	}
 	if len(args) == 0 {
 		writeUsage(w)
 		return nil
@@ -501,124 +527,4 @@ No push notifications
 
 Clients refuse the URL
   Clients require https. Terminate TLS in front of the relay.
-`
-
-const checkHelp = `langstroth-relay check [--json] [--url URL]
-
-Runs the startup checks against this process's environment without serving:
-old HIVE_RELAY_*/LIGUS_RELAY_* names, secret files, the access gate,
-tenancy, removed settings, routes and the tunnel, push, storage, the metrics
-token and the listen address. It does not connect to Postgres.
-
-With --url, also probes a running relay: GET URL/v1/health must answer 200,
-and GET URL/v1/tunnel/info reports whether the tunnel and push are on.
-
-The text form: a header, one line per check (status, title, what was found),
-an indented "fix:" line under anything not ok, and a summary such as
-"2 warnings · next: langstroth-relay keygen".
-
-Flags:
-  --json      print one ligus.checks.v1 report, on one line, on stdout
-              (the shape ligus doctor --json prints too):
-              {"schema":"ligus.checks.v1","tool":"langstroth-relay",
-               "command":"check","ok":bool,"exitCode":0|1,
-               "checks":[{"id","name","title","status","detail","fix"}, ...],
-               "next":["langstroth-relay help troubleshooting"]}
-              status is ok, warn, fail or skip; ok is false when any check
-              failed. id is the stable key; name holds the same value for
-              one release (0.3.2 printed name and pass). fix is always
-              present: what to do, or "" when there is nothing to do (a
-              failed check always has one). next lists commands to run
-              next. Errors go to stderr; a usage error prints no JSON.
-  --url URL   base URL of a running relay, for example https://relay.example.com
-  -h, --help  this text
-
-Exit codes: 0 no check failed (warnings allowed; ok is true); 1 a check
-failed (ok is false and that check's fix says what to do); 2 usage error
-(unknown flag, --url without a value; with --json a ligus.error.v1
-document). The full table: langstroth-relay help exit-codes.
-
-Examples:
-  langstroth-relay check
-  LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay check --json
-  langstroth-relay check --url https://relay.example.com
-`
-
-const keygenHelp = `langstroth-relay keygen
-
-Prints a fresh Ed25519 token-issuer keypair as hex:
-  private_key=...   keep it where you issue tokens, never on the relay
-  public_key=...    set it as LANGSTROTH_RELAY_TOKEN_PUBKEY on the relay
-
-The relay only verifies tokens. With the public key set, every /v1 request
-needs a token minted with "langstroth-relay issue --key <private_key>".
-During an issuer key change, put the new public key in
-LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT until every client has a new token.
-
-Example:
-  langstroth-relay keygen > issuer.txt && chmod 600 issuer.txt
-
-Exit codes: 0 printed; 2 usage error (keygen takes no arguments). The full
-table: langstroth-relay help exit-codes.
-`
-
-const issueHelp = `langstroth-relay issue --key HEX --sub ID [flags]
-
-Mints a signed hrt1 access token and prints it on stdout. Run it where the
-issuer private key lives, not on the relay.
-
-Flags:
-  --key HEX            issuer private key (64 hex chars, from keygen); required
-  --sub ID             subject: the account or device id; required. Membership
-                       rosters key on it.
-  --exp-days N         expire after N days (default: never)
-  --workspace ID       confine the token to this workspace id (repeat; * = any).
-                       Enforced with LANGSTROTH_RELAY_WORKSPACE_SCOPE=claims or strict.
-  --tenant ID          tenant id (tid claim), checked against
-                       LANGSTROTH_RELAY_TENANTS or the tenancy config
-  --plan NAME          plan claim (free text, for example team)
-  --max-members N      max-members claim
-  --retention-days N   retention-days claim
-  --turn               turn claim
-  --cap NAME           capability claim (repeat), for example remove_member
-  -h, --help           this text
-
-Examples:
-  langstroth-relay issue --key "$ISSUER_KEY" --sub alice --exp-days 365
-  langstroth-relay issue --key "$ISSUER_KEY" --sub ci-bot \
-    --workspace 0f3c... --exp-days 30
-
-Exit codes: 0 printed; 2 usage error (an unknown flag, no --sub, a --key
-that isn't a 64-char hex seed). The full table: langstroth-relay help exit-codes.
-`
-
-const bootstrapAgentHelp = `langstroth-relay bootstrap-agent --key HEX --relay URL --room ID --sub ID [flags]
-
-Prints one command to run on a remote box so a headless Ligus agent joins a
-workspace: it installs ligus, enrolls with a minted token and a connection
-invite, and starts "ligus worker". The issuer key stays here; only the
-agent's token leaves.
-
-Flags:
-  --key HEX          issuer private key (from keygen); required
-  --relay URL        the relay's base URL; required
-  --room ID          the workspace (room) id; required
-  --sub ID           the agent's subject, for example github:<agent-id>; required
-  --ws-key PASS      workspace passphrase to put in the invite
-  --admin-sub ID     an owner or admin of the workspace: with it the agent is
-                     added to the roster (membership on) using a one-hour
-                     token for that admin
-  --role ROLE        roster role (default contributor)
-  --label NAME       worker label (default: the sub with : and / as -)
-  --exp-days N       agent token lifetime in days (default 365)
-  -h, --help         this text
-
-The command goes to stdout, notes to stderr. Example:
-  langstroth-relay bootstrap-agent --key "$ISSUER_KEY" \
-    --relay https://relay.example.com --room 0f3c... \
-    --sub github:my-agent --admin-sub github:me
-
-Exit codes: 0 printed (a failed roster enrollment is a note on stderr); 2
-usage error (an unknown flag, a missing --key, --relay, --room or --sub). The
-full table: langstroth-relay help exit-codes.
 `

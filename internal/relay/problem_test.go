@@ -64,7 +64,7 @@ func TestWantsJSON(t *testing.T) {
 func TestEveryHelpHasExitCodes(t *testing.T) {
 	for _, name := range []string{"check", "keygen", "issue", "bootstrap-agent", "exit-codes"} {
 		h := helpText(t, name)
-		if !strings.Contains(h, "Exit codes") {
+		if !strings.Contains(h, "Exit codes") && !strings.Contains(h, "EXIT CODES") {
 			t.Errorf("help %s has no exit codes", name)
 		}
 	}
@@ -74,5 +74,28 @@ func TestEveryHelpHasExitCodes(t *testing.T) {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("top-level help lacks %q", want)
 		}
+	}
+}
+
+func TestSplitFlagValues(t *testing.T) {
+	got := strings.Join(splitFlagValues([]string{"--url=https://r.example/x=1", "--json", "-o=json", "--", "--a=b"}), " ")
+	if want := "--url https://r.example/x=1 --json -o=json -- --a=b"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCheckOutputFlag(t *testing.T) {
+	clearSettings(t)
+	t.Setenv("LANGSTROTH_RELAY_DATA_DIR", t.TempDir())
+	var b bytes.Buffer
+	if err := cmdCheck([]string{"-o", "json"}, &b); err != nil || !strings.HasPrefix(b.String(), `{"schema":"ligus.checks.v1"`) {
+		t.Errorf("-o json: %v %q", err, b.String())
+	}
+	b.Reset()
+	if err := cmdCheck([]string{"--output=text"}, &b); err != nil || !strings.HasPrefix(b.String(), "langstroth-relay check:") {
+		t.Errorf("--output=text: %v %q", err, b.String())
+	}
+	if err := cmdCheck([]string{"-o", "yaml"}, &b); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("-o yaml: %v", err)
 	}
 }

@@ -20,6 +20,14 @@
   exit-codes` prints the table every Ligus tool shares (3 a fixable
   precondition, 4 a person must decide, 5 not found, 6 refused by workspace
   rules, 7 offline or timed out).
+- **One help layout.** `langstroth-relay help` and every `<command> --help`
+  use the section order every Ligus tool shares (NAME, USAGE, COMMANDS or
+  FLAGS, EXAMPLES, ENVIRONMENT, EXIT CODES, SEE ALSO), and point to the
+  matching Ligus commands (`ligus doctor`, `ligus help checks`).
+  `langstroth-relay help --json` prints every command (usage, flags,
+  examples, exit codes) and topic as one `ligus.help.v1` document.
+- Every flag takes `--flag=value` as well as `--flag value`, and `check`
+  takes `-o json|text` (`-o json` is `--json`).
 
 ## v0.3.2
 
