@@ -65,6 +65,8 @@ COMMANDS
   issue --key HEX --sub ID [flags]    mint a signed hrt1 access token
   bootstrap-agent --key HEX --relay URL --room ID --sub ID [flags]
                                       print one command that enrolls a headless agent
+  restore [--from NAME|PATH] [--json] with the relay stopped, make a backup the
+                                      data dir's relay-state.json (help backup)
   help [topic]                        this text, or a topic below; --json: every
                                       command and topic as one ligus.help.v1 document
 
@@ -97,7 +99,10 @@ ENVIRONMENT
     tunnel off;
   - an APNs key, key id or team id is set while LANGSTROTH_RELAY_TUNNEL is off;
   - LANGSTROTH_RELAY_REQUIRE_DB is on without DATABASE_URL, or Postgres can't
-    be reached or migrated.
+    be reached or migrated;
+  - a LANGSTROTH_RELAY_BACKUP* setting doesn't parse, or relay-state.json is
+    missing or unreadable and there are backups but none passes its checks
+    (help backup).
   ` + "`langstroth-relay check`" + ` runs the same checks without serving (it doesn't
   contact Postgres).
 
@@ -142,6 +147,7 @@ var helpTopics = map[string]helpTopic{
 	"keygen":          {"the keygen command", commandTopic("keygen")},
 	"issue":           {"the issue command", commandTopic("issue")},
 	"bootstrap-agent": {"the bootstrap-agent command", commandTopic("bootstrap-agent")},
+	"restore":         {"the restore command", commandTopic("restore")},
 }
 
 func topicNames() []string {
@@ -436,16 +442,74 @@ state, tunnel host registrations and push tokens. Devices keep full copies
 of their workspaces and push again to an empty relay, but rosters, tunnel
 registrations and push tokens live only here.
 
-Memory store with LANGSTROTH_RELAY_DATA_DIR
+Memory store with LANGSTROTH_RELAY_DATA_DIR: built-in backups (on by default)
   The state is one file, $LANGSTROTH_RELAY_DATA_DIR/relay-state.json,
   rewritten atomically (temp file plus rename) every 5 s and on shutdown.
-  Back up: copy that file (safe while running), for example
-    cp /data/relay-state.json /backup/relay-state-$(date -u +%Y%m%dT%H%M%SZ).json
-  Restore: stop the relay, put the file back as relay-state.json, start it.
-  An unreadable snapshot is logged and the relay starts empty, so keep the
-  copies.
+  Every hour (LANGSTROTH_RELAY_BACKUP_INTERVAL) and on shutdown the relay
+  copies it, gzipped, to
+    $LANGSTROTH_RELAY_DATA_DIR/backups/relay-backup-<UTC time>.json.gz
+  (LANGSTROTH_RELAY_BACKUP_DIR to put them elsewhere; directory mode 0700,
+  files 0600) and keeps the newest 24 (LANGSTROTH_RELAY_BACKUP_KEEP). A state
+  that is empty, or the same as the newest backup, is not backed up again, so
+  a wiped or idle relay never rotates good backups away. When the newest
+  backup is older than the interval at startup, the first one comes a minute
+  after start. Backups are ordered by the UTC time in their name; one named
+  more than 10 minutes in the future (a wrong clock) is never restored or
+  rotated, and check warns about it.
 
-Postgres (DATABASE_URL)
+  At startup, when relay-state.json is missing or unreadable, the relay
+  restores the newest backup that passes its checks and logs "restored state
+  from backup". An unreadable relay-state.json is first moved aside to
+  relay-state.json.unreadable-<time>, never deleted. A relay-state.json that
+  reads is never replaced. When there are backups but none passes its
+  checks, the relay refuses to start (starting empty would leave every
+  roster unclaimed); fix the files, restore one by hand, or set
+  LANGSTROTH_RELAY_BACKUP_RESTORE=off to start empty. With no backups at all
+  it starts empty. LANGSTROTH_RELAY_BACKUP=off turns backups off.
+
+  A restore goes back in time: everything since that backup is undone,
+  including removed members, revoked tunnel hosts and phones, deleted
+  tokens and used invites. After a restore, check rosters and repeat any
+  removal or revocation made since the backup's time (the log names it).
+
+  Restore an older backup by hand:
+    1. Stop the relay. (restore refuses while relay-state.json changed in
+       the last 15 s; it can't tell a relay whose flushes are failing, so
+       make sure the process is gone.)
+    2. ls $LANGSTROTH_RELAY_DATA_DIR/backups
+    3. LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay restore --from relay-backup-20261124T030000Z.json.gz
+       (no --from: the newest). The current relay-state.json moves to
+       relay-state.json.before-restore-<time>.
+    4. Start the relay.
+  A backup is a gzipped relay-state.json, so gunzip -c also works.
+
+  To start over on purpose, stop the relay and remove relay-state.json and
+  the backup directory (or set LANGSTROTH_RELAY_BACKUP_RESTORE=off).
+
+  What a restore checks: the file is a regular file (not a symlink) with an
+  exact backup name, owned by the relay's user and not writable by group or
+  others, in a directory others can't write; it decompresses to at most 4 GiB
+  (4 x LANGSTROTH_RELAY_MAX_STORE_BYTES + 256 MiB when that is set); and it
+  parses as a relay snapshot. A backup is as trusted as relay-state.json:
+  whoever can write either controls the relay's rosters, so keep both on
+  storage only the relay's user can write.
+
+  Limits:
+  - Backups sit on the same volume as the data unless
+    LANGSTROTH_RELAY_BACKUP_DIR points elsewhere: they survive a damaged or
+    deleted relay-state.json, not the loss of the volume. Copy the backup
+    directory off the host (restic, rclone, a volume snapshot) for that.
+  - Attachment bytes (blobs/) are not in a backup. The snapshot lists each
+    blob with its SHA-256; at load any whose bytes are missing or differ are
+    dropped. Copy blobs/ alongside if attachments matter.
+  - A backup is at most one flush (5 s) behind the live state, plus the
+    interval: changes after the last backup are lost on a restore.
+  - Disk: up to LANGSTROTH_RELAY_BACKUP_KEEP compressed copies of the state.
+  - Backups hold what relay-state.json holds (token and invite-code hashes,
+    push tokens, rosters; never a workspace key or plaintext). Treat them
+    as secret.
+
+Postgres (DATABASE_URL): not covered by the built-in backups
   Back up the database, not the pods: a managed database's point-in-time
   recovery, CloudNativePG with WAL archiving (Helm database.mode=cnpg), or
     pg_dump --format=custom --file=relay.dump "$DATABASE_URL"
@@ -461,6 +525,9 @@ up; everything is lost on restart.
 Keep backups apart from the APNs key: together they are a push channel to
 every registered phone. The token issuer's private key (from keygen) is not
 on the relay; back it up wherever you issue tokens.
+
+Check: langstroth-relay check (the "backup" line: how many backups, the
+newest, the settings; fail when the directory is unsafe).
 `
 
 const troubleshootingHelp = `Troubleshooting
@@ -509,6 +576,14 @@ Every client gets 401
 
 GET /v1/health answers 503
   The store is unreachable (Postgres down, wrong URL or credentials).
+
+"no backup could be restored" at startup
+  relay-state.json is missing or unreadable and every backup failed a check
+  (the message says which: owner, mode, size, not a snapshot, named in the
+  future). Fix the files (owned by the relay's user, chmod 600, the
+  directory not writable by others), or restore one by hand with
+  "langstroth-relay restore --from PATH", or set
+  LANGSTROTH_RELAY_BACKUP_RESTORE=off to start empty.
 
 State is gone after a restart
   Neither DATABASE_URL nor LANGSTROTH_RELAY_DATA_DIR is set (memory only), or

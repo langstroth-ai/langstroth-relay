@@ -62,7 +62,7 @@ func TestWantsJSON(t *testing.T) {
 
 // Every command's help names its exit codes and the shared table.
 func TestEveryHelpHasExitCodes(t *testing.T) {
-	for _, name := range []string{"check", "keygen", "issue", "bootstrap-agent", "exit-codes"} {
+	for _, name := range []string{"check", "keygen", "issue", "bootstrap-agent", "restore", "exit-codes"} {
 		h := helpText(t, name)
 		if !strings.Contains(h, "Exit codes") && !strings.Contains(h, "EXIT CODES") {
 			t.Errorf("help %s has no exit codes", name)

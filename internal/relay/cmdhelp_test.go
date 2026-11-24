@@ -58,7 +58,7 @@ func TestHelpJSON(t *testing.T) {
 		if err := json.Unmarshal(b.Bytes(), &doc); err != nil {
 			t.Fatalf("help %v: %v", args, err)
 		}
-		if doc.Schema != "ligus.help.v1" || len(doc.Commands) != 4 || len(doc.Topics) < 7 {
+		if doc.Schema != "ligus.help.v1" || len(doc.Commands) != 5 || len(doc.Topics) < 7 {
 			t.Errorf("help %v: %+v", args, doc)
 		}
 		for _, tp := range doc.Topics {

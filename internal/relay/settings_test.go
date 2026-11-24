@@ -167,6 +167,7 @@ func TestHelpConfigDefaultsMatchCode(t *testing.T) {
 	contactConfigFromEnv()
 	contactLimitersFromEnv()
 	listCapFromEnv()
+	_, _ = backupConfigFromEnv()
 	daysEnv("LANGSTROTH_RELAY_INBOX_RETENTION_DAYS", defaultInboxMaxAgeDays)
 	daysEnv("LANGSTROTH_RELAY_FRIEND_REQ_RETENTION_DAYS", defaultFriendReqMaxAgeDays)
 	lim := defaultTunnelLimits()
@@ -213,7 +214,7 @@ func TestHelpTopics(t *testing.T) {
 			t.Errorf("top-level help lacks %q", want)
 		}
 	}
-	for _, name := range []string{"config", "deploy", "membership", "tunnel", "push", "backup", "troubleshooting", "check", "keygen", "issue", "bootstrap-agent"} {
+	for _, name := range []string{"config", "deploy", "membership", "tunnel", "push", "backup", "troubleshooting", "check", "keygen", "issue", "bootstrap-agent", "restore"} {
 		if !strings.Contains(top, "  "+name+" ") {
 			t.Errorf("top-level help doesn't list topic %s", name)
 		}

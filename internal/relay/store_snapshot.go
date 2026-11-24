@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -264,7 +265,15 @@ func (s *memoryStore) toSnapshot() snapshot {
 	contacts := s.memContacts.toContactSnap()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.toSnapshotLocked(contacts)
+}
 
+// toSnapshotLocked builds the snapshot. Caller holds s.mu (read). Maps and
+// rows that writers change in place (rosters, device candidates and
+// presence, directory device keys) are copied, so the snapshot can be
+// encoded after unlocking without racing them; envelope, keyring and inbox
+// slices are append-only and are shared.
+func (s *memoryStore) toSnapshotLocked(contacts map[string]contactSnap) snapshot {
 	snap := snapshot{
 		Workspaces:  map[string]wsSnap{},
 		Directory:   map[string]dirSnap{},
@@ -288,8 +297,8 @@ func (s *memoryStore) toSnapshot() snapshot {
 	for id, w := range s.workspaces {
 		ws := wsSnap{
 			Envelopes: w.envelopes, EnvAt: w.envAt, EnvKey: w.envKey, NextSeq: w.nextSeq,
-			Candidates: w.candidates, Presence: w.presence, Keyring: w.keyring,
-			Members: w.members,
+			Candidates: maps.Clone(w.candidates), Presence: maps.Clone(w.presence), Keyring: w.keyring,
+			Members: cloneMembers(w.members),
 			Room:    &roomSnap{Live: w.live, Tenant: w.tenant, Creator: w.creator, LastWrite: w.lastWrite},
 		}
 		if len(w.invites) > 0 {
@@ -301,7 +310,7 @@ func (s *memoryStore) toSnapshot() snapshot {
 		snap.Workspaces[id] = ws
 	}
 	for k, d := range s.directory {
-		snap.Directory[k] = dirSnap{GitHubID: d.GitHubID, Login: d.Login, Name: d.Name, Devices: d.Devices}
+		snap.Directory[k] = dirSnap{GitHubID: d.GitHubID, Login: d.Login, Name: d.Name, Devices: maps.Clone(d.Devices)}
 	}
 	for k, a := range s.accounts {
 		devs := map[string]devSnap{}
@@ -323,6 +332,22 @@ func (s *memoryStore) toSnapshot() snapshot {
 		snap.FriendEdges = append(snap.FriendEdges, pair)
 	}
 	return snap
+}
+
+// cloneMembers copies a roster and its rows (UpsertMember edits rows in place).
+func cloneMembers(m map[string]*MemberRow) map[string]*MemberRow {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]*MemberRow, len(m))
+	for k, r := range m {
+		if r != nil {
+			c := *r
+			r = &c
+		}
+		out[k] = r
+	}
+	return out
 }
 
 // flushSnapshot atomically writes the current state to the snapshot file

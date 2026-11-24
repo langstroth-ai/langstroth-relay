@@ -3,11 +3,13 @@ package relay
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -42,6 +44,26 @@ func Serve() {
 	fatalIf(evictionConfigError())
 	fatalIf(routesConfigError(getenv))
 	fatalIf(apnsWithoutTunnelError(getenv))
+	fatalIf(backupConfigError())
+
+	// Built-in backups of the memory store (backup.go). Before the store
+	// loads: an unreadable snapshot is moved aside and a missing one is
+	// restored from the newest good backup.
+	bkCfg, _ := backupConfigFromEnv()
+	var backups *backupRunner
+	if bkCfg.applies() {
+		if err := prepareDataDir(bkCfg); err != nil {
+			os.Exit(reportError(os.Stderr, io.Discard, err, "", false))
+		}
+		if bkCfg.enabled {
+			backups = newBackupRunner(bkCfg)
+			slog.Info("backups on", "dir", bkCfg.dir, "interval", bkCfg.interval.String(), "keep", bkCfg.keep, "restore_on_boot", bkCfg.restore)
+		} else {
+			slog.Warn("backups off (LANGSTROTH_RELAY_BACKUP=off)")
+		}
+	} else if getenv("DATABASE_URL") != "" && strings.TrimSpace(getenv("LANGSTROTH_RELAY_BACKUP")) != "" {
+		slog.Warn("LANGSTROTH_RELAY_BACKUP has no effect with DATABASE_URL: back up Postgres with its own tooling (langstroth-relay help backup)")
+	}
 
 	store, err := buildStore(context.Background())
 	fatalIf(err)
@@ -58,6 +80,9 @@ func Serve() {
 	stopFlush := make(chan struct{})
 	if store.PersistenceEnabled() {
 		go flushLoop(store, stopFlush)
+	}
+	if backups != nil && store.PersistenceEnabled() {
+		go backups.run(stopFlush)
 	}
 
 	// Bound envelope growth on backends that don't prune inline (Postgres). The
@@ -119,6 +144,13 @@ func Serve() {
 	// Final flush on the way out so a planned redeploy never loses state.
 	if err := store.Flush(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "langstroth-relay: final flush failed: %v\n", err)
+	}
+	// Then one more backup of what was just flushed, so a planned redeploy
+	// leaves a backup of the state it stopped with.
+	if backups != nil && store.PersistenceEnabled() {
+		if _, err := backups.backupOnce(); err != nil {
+			slog.Error("shutdown backup failed", "dir", bkCfg.dir, "error", err)
+		}
 	}
 }
 

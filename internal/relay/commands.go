@@ -46,3 +46,6 @@ func Check(args []string, w io.Writer) error { return cmdCheck(args, w) }
 // SplitFlagValues turns --flag=value into --flag value (before a "--"), so
 // every command takes both spellings.
 func SplitFlagValues(args []string) []string { return splitFlagValues(args) }
+
+// Restore runs `langstroth-relay restore [--from NAME|PATH] [--json]`.
+func Restore(args []string, w io.Writer) error { return cmdRestore(args, w) }

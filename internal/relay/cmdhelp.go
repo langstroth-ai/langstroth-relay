@@ -37,8 +37,8 @@ var commandHelps = []commandHelp{
 		Usage:   []string{"langstroth-relay check [--json | -o json|text] [--url URL]"},
 		Description: `Runs the startup checks against this process's environment without serving:
 old HIVE_RELAY_*/LIGUS_RELAY_* names, secret files, the access gate,
-tenancy, removed settings, routes and the tunnel, push, storage, the metrics
-token and the listen address. It does not connect to Postgres.
+tenancy, removed settings, routes and the tunnel, push, storage, backups,
+the metrics token and the listen address. It does not connect to Postgres.
 
 With --url, also probes a running relay: GET URL/v1/health must answer 200,
 and GET URL/v1/tunnel/info reports whether the tunnel and push are on.
@@ -150,6 +150,52 @@ agent's token leaves. The command goes to stdout, notes to stderr.`,
 			"2  usage error: an unknown flag, a missing --key, --relay, --room or --sub",
 		},
 		SeeAlso: []string{"ligus help worker", "ligus help box", "langstroth-relay help membership"},
+	},
+	{
+		Name:    "restore",
+		Summary: "with the relay stopped, make a backup the data dir's relay-state.json",
+		Usage:   []string{"langstroth-relay restore [--from NAME|PATH] [--json | -o json|text]"},
+		Description: `Restores the memory store (LANGSTROTH_RELAY_DATA_DIR) from one of its
+built-in backups. Stop the relay first: restore refuses while
+relay-state.json changed in the last 15 s (a running relay rewrites it every
+5 s and would overwrite the restore on shutdown).
+
+Without --from it takes the newest backup in LANGSTROTH_RELAY_BACKUP_DIR
+(default <data dir>/backups). --from takes a backup's file name (looked up
+in that directory; only relay-backup-YYYYMMDDTHHMMSSZ.json.gz names) or a
+path to a backup copied in from elsewhere.
+
+Before anything changes, the backup must be a regular file (not a symlink)
+owned by this user and not writable by group or others, decompress within
+the size bound and parse as a relay snapshot. The current relay-state.json
+is moved aside to relay-state.json.before-restore-<time>, never deleted;
+the new one is written mode 0600.
+
+--json prints one ligus.checks.v1 report (command "restore") on success;
+a failure prints the error shape (with --json a ligus.error.v1 document).
+Postgres relays use the database's own tooling (help backup).`,
+		Flags: []flagHelp{
+			{"--from NAME|PATH", "a backup file name in the backup directory, or a path (default: the newest backup)"},
+			{"--json", "print one ligus.checks.v1 report on stdout"},
+			{"-o, --output FORMAT", "json (the same as --json) or text (the default)"},
+			helpFlag,
+		},
+		Examples: []string{
+			"LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay restore",
+			"LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay restore --from relay-backup-20261124T030000Z.json.gz --json",
+		},
+		Env: []string{
+			"LANGSTROTH_RELAY_DATA_DIR   the data directory to restore into (required)",
+			"LANGSTROTH_RELAY_BACKUP_DIR where the backups are (default <data dir>/backups)",
+			"LANGSTROTH_RELAY_MAX_STORE_BYTES  bounds a backup's decompressed size (4x plus 256 MiB; default 4 GiB)",
+			"DATABASE_URL                set: refused (Postgres is not covered)",
+		},
+		Exit: []string{
+			"0  restored",
+			"1  refused: the relay looks like it is running, no backup, the backup failed a check, DATABASE_URL is set, a setting doesn't parse",
+			"2  usage error: an unknown flag, a --from that is neither a backup name nor a path, LANGSTROTH_RELAY_DATA_DIR unset",
+		},
+		SeeAlso: []string{"langstroth-relay help backup", "langstroth-relay help config (Backups)", "langstroth-relay check"},
 	},
 }
 

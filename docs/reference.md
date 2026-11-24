@@ -25,6 +25,11 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `DATABASE_URL` | empty | shared **Postgres** store → horizontal scaling / HA (no data migration) |
 | `LANGSTROTH_RELAY_DATA_DIR` | empty | in-memory store + JSON snapshot here (single instance). Ignored if `DATABASE_URL` is set |
 | `LANGSTROTH_RELAY_REQUIRE_DB` | off | `1`: refuse to start without `DATABASE_URL` instead of falling back to memory |
+| `LANGSTROTH_RELAY_BACKUP` | `on` | Memory store with a data dir: copy `relay-state.json`, gzipped, into the backup directory every interval and on shutdown. No effect with `DATABASE_URL`. A value other than on/off stops the relay. See [Built-in backups](#built-in-backups-memory-store) |
+| `LANGSTROTH_RELAY_BACKUP_DIR` | `<data dir>/backups` | Where backups go (created mode `0700`); refused when it is a symlink or writable by others |
+| `LANGSTROTH_RELAY_BACKUP_INTERVAL` | `1h` | Go duration, at least `1m`. An unchanged or empty state is skipped |
+| `LANGSTROTH_RELAY_BACKUP_KEEP` | `24` | Backups kept (1 to 10000); older ones are deleted |
+| `LANGSTROTH_RELAY_BACKUP_RESTORE` | `on` | At startup, restore the newest good backup when `relay-state.json` is missing or unreadable; `off` starts empty |
 | `LANGSTROTH_RELAY_TOKEN_PUBKEY` | empty | Ed25519 public key → require **signed** access tokens. A key that doesn't parse denies every token |
 | `LANGSTROTH_RELAY_ACCESS_TOKENS` | empty | comma-separated static allowlist (coarse gate) |
 | `LANGSTROTH_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
@@ -155,7 +160,8 @@ empty: an unreadable file would otherwise read as unset, and an unset
 ## Persistence & scaling
 
 - **Single instance:** mount a volume at `/data` and set `LANGSTROTH_RELAY_DATA_DIR=/data`
-  (JSON snapshot store; survives restarts). Nothing to back up but that volume.
+  (JSON snapshot store; survives restarts). The relay keeps rotated backups
+  of the snapshot on that volume ([Built-in backups](#built-in-backups-memory-store)).
 - **Multiple instances:** set `DATABASE_URL` to a shared Postgres — it takes
   precedence over the snapshot dir, so every instance shares stored state (no
   migration). Short pairing codes, SSE fan-out and rate limits stay per
@@ -165,6 +171,44 @@ empty: an unreadable file would otherwise read as unset, and an unset
   (managed), `cnpg` (a CloudNativePG cluster in the release namespace, HA and
   PITR) or `bundled` (one hardened pod with TLS and nightly dumps, no HA).
   See `deploy/helm/langstroth-relay/README.md`, "Database".
+
+### Built-in backups (memory store)
+
+With `LANGSTROTH_RELAY_DATA_DIR` set (and no `DATABASE_URL`), the relay copies
+its last written snapshot every hour and on shutdown to
+`<data dir>/backups/relay-backup-<UTC time>.json.gz` (gzipped
+`relay-state.json`, mode `0600`, directory `0700`) and keeps the newest 24. A
+state that is empty, or unchanged since the newest backup, is skipped, so a
+wiped or idle relay never rotates good backups away.
+
+At startup an unreadable `relay-state.json` is moved aside to
+`relay-state.json.unreadable-<time>`; when there is then no snapshot, the
+newest backup that passes its checks becomes `relay-state.json` and the log
+says `restored state from backup`. A snapshot that reads is never replaced.
+When there are backups but none passes its checks, the relay refuses to
+start rather than serve an empty store (every roster unclaimed); with no
+backups at all it starts empty. A restore undoes everything since that
+backup, including removed members, revoked tunnel hosts and deleted tokens:
+repeat those after a restore. A backup named more than 10 minutes in the
+future (a wrong clock) is never restored or rotated away.
+To restore an older backup, stop the relay and run
+`langstroth-relay restore --from relay-backup-<time>.json.gz` (no `--from`:
+the newest); the current snapshot moves to
+`relay-state.json.before-restore-<time>`. `langstroth-relay check` reports
+the backups on its `backup` line.
+
+A restore reads only a regular file (not a symlink) with an exact backup
+name, owned by the relay's user and not writable by group or others, from a
+directory others can't write; it bounds the decompressed size (4 GiB, or
+4 x `LANGSTROTH_RELAY_MAX_STORE_BYTES` + 256 MiB) and parses the result as a
+snapshot before changing anything.
+
+Limits: backups share the data volume unless `LANGSTROTH_RELAY_BACKUP_DIR`
+points elsewhere, so copy that directory off the host to survive losing the
+volume. Attachment bytes (`blobs/`) are not included; on load, blobs whose
+bytes are missing or don't match their SHA-256 are dropped. Postgres relays
+use the database's own backups. `langstroth-relay help backup` has the
+details.
 
 ### Envelope retention
 
