@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- **Built-in backups for the memory store** (`LANGSTROTH_RELAY_DATA_DIR`), on
+  by default: every hour and on shutdown the relay copies `relay-state.json`,
+  gzipped and owner-only, to `<data dir>/backups/` and keeps the newest 24.
+  An empty or unchanged state is not backed up again. At startup a
+  `relay-state.json` that is missing or unreadable is restored from the
+  newest backup that passes its checks (regular file, owned by the relay's
+  user, not group- or world-writable, bounded size, parses as a snapshot); an
+  unreadable one is moved aside instead of being overwritten.
+  `langstroth-relay restore [--from NAME|PATH] [--json]` restores a chosen
+  backup with the relay stopped, and `check` gains a `backup` line. Settings:
+  `LANGSTROTH_RELAY_BACKUP`, `_BACKUP_DIR`, `_BACKUP_INTERVAL`, `_BACKUP_KEEP`,
+  `_BACKUP_RESTORE`; a value that doesn't parse stops the relay. Postgres is
+  not covered (use the database's own backups). See `langstroth-relay help
+  backup`.
+
+### Fixed
+
+- Writing the memory store's snapshot no longer races with clients: it was
+  encoded after releasing the store lock while sharing maps with the live
+  state (rosters, device candidates and presence), which could crash the
+  relay with a concurrent map read and write.
+
 ### Changed
 
 - **`langstroth-relay check --json` prints a `ligus.checks.v1` report**, the

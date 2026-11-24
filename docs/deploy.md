@@ -191,12 +191,26 @@ membership and contact state.
   available), or a dump:
   `docker compose exec -T db pg_dump -U relay -Fc relay > relay-$(date +%F).dump`.
   Restore into an empty database with `pg_restore` before starting the relay.
-- **Snapshot store:** copy the data directory (`relay-state.json` and
-  `blobs/`). The relay writes both atomically (temp file and rename), so a
-  copy taken while it runs is consistent per file; stop it first for a copy
-  of both at one instant.
-- The database holds push tokens and pairing state: keep its backups apart
-  from an APNs key.
+- **Snapshot store:** built in and on by default. Every hour
+  (`LANGSTROTH_RELAY_BACKUP_INTERVAL`) and on shutdown the relay copies
+  `relay-state.json`, gzipped and owner-only, to
+  `<data dir>/backups/relay-backup-<UTC time>.json.gz`, keeping the newest 24
+  (`LANGSTROTH_RELAY_BACKUP_KEEP`). When `relay-state.json` is missing or
+  unreadable at startup, the relay restores the newest good backup (an
+  unreadable file is moved aside, never deleted).
+  To go back to an older one: stop the relay, then
+  `LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay restore --from relay-backup-<time>.json.gz`,
+  then start it. `langstroth-relay check` shows the newest backup.
+  The backups are on the data volume: to survive losing the host, copy
+  `backups/` elsewhere (restic, rclone, a volume snapshot) or set
+  `LANGSTROTH_RELAY_BACKUP_DIR` to another volume. Attachments (`blobs/`)
+  are not in the backups; copy that directory too if they matter. The
+  relay writes every file atomically (temp file and rename), so a copy
+  taken while it runs is consistent per file.
+- The database (and every snapshot backup) holds push tokens and pairing
+  state: keep backups apart from an APNs key, readable only by you.
+- `langstroth-relay help backup` covers both stores, the restore checks and
+  the limits.
 
 ## Upgrades
 

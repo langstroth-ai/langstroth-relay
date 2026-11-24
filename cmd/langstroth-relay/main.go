@@ -7,6 +7,7 @@
 // Generate an issuer keypair: langstroth-relay keygen
 // Mint an access token:       langstroth-relay issue --key <priv-hex> --sub <id> [...]
 // Check a configuration:      langstroth-relay check [--json] [--url URL]
+// Restore a backup:           langstroth-relay restore [--from NAME|PATH] [--json]
 // Everything else:            langstroth-relay help [topic]
 package main
 
@@ -50,6 +51,7 @@ var commands = map[string]func(args []string) error{
 	"issue":           cmdIssue,
 	"bootstrap-agent": cmdBootstrapAgent,
 	"check":           func(args []string) error { return relay.Check(args, os.Stdout) },
+	"restore":         func(args []string) error { return relay.Restore(args, os.Stdout) },
 }
 
 // exitWith ends a subcommand: 0 on success, 2 for a usage error, else 1

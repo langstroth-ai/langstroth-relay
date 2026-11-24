@@ -56,6 +56,7 @@ var checkTitles = map[string]string{
 	"routes":       "routes",
 	"push":         "push",
 	"store":        "store",
+	"backup":       "backup",
 	"metrics":      "metrics",
 	"listen":       "listen",
 	"health":       "health",
@@ -243,6 +244,8 @@ func runChecks(environ []string, url string) checkReport {
 		add("store", "warn", "memory only: everything is lost on restart",
 			"set LANGSTROTH_RELAY_DATA_DIR or DATABASE_URL to keep state")
 	}
+
+	backupCheck(add)
 
 	if strings.TrimSpace(getenv("LANGSTROTH_RELAY_METRICS_TOKEN")) == "" {
 		add("metrics", "warn", "/metrics is public", "set LANGSTROTH_RELAY_METRICS_TOKEN on a relay others can reach")

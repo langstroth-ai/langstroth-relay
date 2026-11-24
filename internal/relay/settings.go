@@ -32,6 +32,13 @@ var relaySettingGroups = []settingGroup{
 		{"LANGSTROTH_RELAY_REQUIRE_DB", "off", "1/true/yes/on: refuse to start without DATABASE_URL instead of falling back to the memory store."},
 		{"LANGSTROTH_RELAY_SECRETS_DIR", "unset", "Directory of one file per setting (file name = variable name). A setting unset in the environment is read from <NAME>_FILE, else from this directory."},
 	}},
+	{"Backups (memory store with LANGSTROTH_RELAY_DATA_DIR; see `langstroth-relay help backup`)", []relaySetting{
+		{"LANGSTROTH_RELAY_BACKUP", "on", "on/off: copy relay-state.json into the backup directory every LANGSTROTH_RELAY_BACKUP_INTERVAL and on shutdown, gzipped, mode 0600. No effect with DATABASE_URL (use the database's own backups). Any other value stops the relay."},
+		{"LANGSTROTH_RELAY_BACKUP_DIR", "<data dir>/backups", "Where backups go (created mode 0700). Refused when it is a symlink or writable by others."},
+		{"LANGSTROTH_RELAY_BACKUP_INTERVAL", "1h", "How often to take a backup, a Go duration of at least 1m (30m, 1h, 24h). An unchanged or empty state is skipped."},
+		{"LANGSTROTH_RELAY_BACKUP_KEEP", "24", "Backups kept; older ones are deleted (1 to 10000)."},
+		{"LANGSTROTH_RELAY_BACKUP_RESTORE", "on", "on/off: at startup, when relay-state.json is missing or unreadable, restore the newest backup that passes its checks (an unreadable file is moved aside, never deleted). off: start empty."},
+	}},
 	{"Access", []relaySetting{
 		{"LANGSTROTH_RELAY_TOKEN_PUBKEY", "unset (open relay)", "Ed25519 issuer public key (64 hex chars or base64, from `langstroth-relay keygen`). Set: every /v1 request needs a signed hrt1 token. A key that does not parse stops the relay."},
 		{"LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT", "unset", "A second issuer key accepted while the issuer rotates its key. Needs LANGSTROTH_RELAY_TOKEN_PUBKEY."},

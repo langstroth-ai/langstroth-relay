@@ -108,6 +108,7 @@ The ones most deployments touch:
 | `DATABASE_URL` | empty | shared Postgres store |
 | `LANGSTROTH_RELAY_DATA_DIR` | empty | memory store with a JSON snapshot here |
 | `LANGSTROTH_RELAY_REQUIRE_DB` | off | `1`: refuse to start without `DATABASE_URL` |
+| `LANGSTROTH_RELAY_BACKUP` | `on` | memory store: hourly, rotated backups of the snapshot in `<data dir>/backups`, restored at startup when the snapshot is missing or unreadable ([docs/deploy.md](docs/deploy.md#backups)) |
 | `LANGSTROTH_RELAY_TOKEN_PUBKEY` | empty | require signed `hrt1` access tokens from this Ed25519 issuer |
 | `LANGSTROTH_RELAY_ACCESS_TOKENS` | empty | static bearer-token allowlist |
 | `LANGSTROTH_RELAY_WORKSPACE_SCOPE` | `off` | `claims` or `strict`: confine signed tokens to their workspaces |

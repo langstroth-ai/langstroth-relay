@@ -264,7 +264,23 @@ func (s *memoryStore) toSnapshot() snapshot {
 	contacts := s.memContacts.toContactSnap()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.toSnapshotLocked(contacts)
+}
 
+// marshalSnapshot is the snapshot as JSON. It encodes while still holding
+// the read lock: the snapshot shares maps and slices with the live store
+// (members, candidates, presence, device keys), and encoding them after
+// unlocking raced with writers (a concurrent map read and write).
+func (s *memoryStore) marshalSnapshot() ([]byte, error) {
+	contacts := s.memContacts.toContactSnap()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return json.Marshal(s.toSnapshotLocked(contacts))
+}
+
+// toSnapshotLocked builds the snapshot. Caller holds s.mu (read); the
+// result shares maps with the store, so encode it before unlocking.
+func (s *memoryStore) toSnapshotLocked(contacts map[string]contactSnap) snapshot {
 	snap := snapshot{
 		Workspaces:  map[string]wsSnap{},
 		Directory:   map[string]dirSnap{},
@@ -339,7 +355,7 @@ func (s *memoryStore) flushSnapshot() error {
 			return err
 		}
 	}
-	bytes, err := json.Marshal(s.toSnapshot())
+	bytes, err := s.marshalSnapshot()
 	if err != nil {
 		return err
 	}
