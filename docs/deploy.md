@@ -197,7 +197,10 @@ membership and contact state.
   `<data dir>/backups/relay-backup-<UTC time>.json.gz`, keeping the newest 24
   (`LANGSTROTH_RELAY_BACKUP_KEEP`). When `relay-state.json` is missing or
   unreadable at startup, the relay restores the newest good backup (an
-  unreadable file is moved aside, never deleted).
+  unreadable file is moved aside, never deleted), and refuses to start when
+  backups exist but none passes its checks. A restore undoes everything
+  since that backup, including removed members and revocations: repeat
+  them afterwards.
   To go back to an older one: stop the relay, then
   `LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay restore --from relay-backup-<time>.json.gz`,
   then start it. `langstroth-relay check` shows the newest backup.

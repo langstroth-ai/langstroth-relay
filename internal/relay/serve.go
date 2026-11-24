@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -51,7 +52,9 @@ func Serve() {
 	bkCfg, _ := backupConfigFromEnv()
 	var backups *backupRunner
 	if bkCfg.applies() {
-		prepareDataDir(bkCfg)
+		if err := prepareDataDir(bkCfg); err != nil {
+			os.Exit(reportError(os.Stderr, io.Discard, err, "", false))
+		}
 		if bkCfg.enabled {
 			backups = newBackupRunner(bkCfg)
 			slog.Info("backups on", "dir", bkCfg.dir, "interval", bkCfg.interval.String(), "keep", bkCfg.keep, "restore_on_boot", bkCfg.restore)

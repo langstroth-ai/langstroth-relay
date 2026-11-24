@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -224,6 +225,26 @@ type backupEntry struct {
 	Taken time.Time
 }
 
+// futureSlack: a backup named more than this ahead of the clock was taken
+// with a wrong clock (or renamed). It would sort as the newest forever, so
+// restore skips it and rotation leaves it alone.
+const futureSlack = 10 * time.Minute
+
+// future reports whether b's name is ahead of now by more than futureSlack.
+func (b backupEntry) future(now time.Time) bool { return b.Taken.After(now.Add(futureSlack)) }
+
+// usable is list without the future-named backups (oldest first).
+func usable(list []backupEntry, now time.Time) (ok, future []backupEntry) {
+	for _, b := range list {
+		if b.future(now) {
+			future = append(future, b)
+		} else {
+			ok = append(ok, b)
+		}
+	}
+	return ok, future
+}
+
 // listBackups returns the backups in dir, oldest first. Only exact backup
 // names that are regular files count; anything else is left alone.
 func listBackups(dir string) ([]backupEntry, error) {
@@ -272,22 +293,34 @@ func gzipBytes(raw []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// readBackup opens a backup (after checkBackupFile), decompresses at most
-// limit bytes and checks the result is a relay snapshot. It returns the raw
-// JSON, ready to become relay-state.json.
-func readBackup(path string, limit int64) ([]byte, error) {
-	if _, err := checkBackupFile(path); err != nil {
+// openBackup opens a backup after checkBackupFile, without following a
+// symlink, and makes sure the file opened is the file checked.
+func openBackup(path string) (*os.File, error) {
+	lfi, err := checkBackupFile(path)
+	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(path)
+	f, err := openNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err != nil || !os.SameFile(lfi, fi) || !fi.Mode().IsRegular() || !ownedByMe(fi) || fi.Mode().Perm()&0o022 != 0 {
+		f.Close()
+		return nil, fmt.Errorf("%w: %s changed while being opened", errUnsafe, path)
+	}
+	return f, nil
+}
+
+// readBackup opens a backup (openBackup), decompresses at most limit bytes
+// and checks the result is a relay snapshot. It returns the raw JSON, ready
+// to become relay-state.json.
+func readBackup(path string, limit int64) ([]byte, error) {
+	f, err := openBackup(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	// The file checked above must be the file opened (no swap in between).
-	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || !ownedByMe(fi) || fi.Mode().Perm()&0o022 != 0 {
-		return nil, fmt.Errorf("%w: %s changed while being opened", errUnsafe, path)
-	}
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, fmt.Errorf("%s is not a gzip file: %w", filepath.Base(path), err)
@@ -306,24 +339,48 @@ func readBackup(path string, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-// parseSnapshot checks raw is a relay snapshot. Its errors never quote the
-// content (a snapshot holds token hashes and push tokens).
+// hashBackup is the SHA-256 of a backup's decompressed JSON, streamed (no
+// copy of the state in memory) and bounded like a restore.
+func hashBackup(path string, limit int64) ([sha256.Size]byte, error) {
+	var sum [sha256.Size]byte
+	f, err := openBackup(path)
+	if err != nil {
+		return sum, err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return sum, err
+	}
+	defer gz.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(gz, limit+1))
+	if err != nil {
+		return sum, err
+	}
+	if n > limit {
+		return sum, errors.New("too large")
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
+}
+
+// parseSnapshot checks raw is a relay snapshot, with the same call the store
+// loader uses (so anything it accepts, the loader accepts). Its errors never
+// quote the content or a map key (a snapshot holds token hashes, push tokens
+// and account ids).
 func parseSnapshot(raw []byte) (snapshot, error) {
 	var snap snapshot
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	if err := dec.Decode(&snap); err != nil {
+	if err := json.Unmarshal(raw, &snap); err != nil {
 		var se *json.SyntaxError
 		if errors.As(err, &se) {
 			return snap, fmt.Errorf("not a relay snapshot (invalid JSON at byte %d)", se.Offset)
 		}
 		var te *json.UnmarshalTypeError
 		if errors.As(err, &te) {
-			return snap, fmt.Errorf("not a relay snapshot (field %q has the wrong type)", te.Field)
+			return snap, fmt.Errorf("not a relay snapshot (a value has the wrong type at byte %d)", te.Offset)
 		}
 		return snap, errors.New("not a relay snapshot")
-	}
-	if dec.More() {
-		return snap, errors.New("not a relay snapshot (trailing data)")
 	}
 	return snap, nil
 }
@@ -366,18 +423,17 @@ func writeFileAtomic(dir, name string, data []byte) error {
 	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
 		return err
 	}
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		d.Close()
-	}
+	syncDir(dir)
 	return nil
 }
 
 // ── Taking backups ───────────────────────────────────────────────────────────
 
-// backupRunner takes backups of one data dir.
+// backupRunner takes backups of one data dir. backupOnce is serialized (the
+// ticker and the shutdown backup can overlap on a large state).
 type backupRunner struct {
 	cfg      backupConfig
+	mu       sync.Mutex
 	lastHash [sha256.Size]byte // of the newest backup's JSON; zero = unknown
 	now      func() time.Time
 }
@@ -386,72 +442,186 @@ func newBackupRunner(cfg backupConfig) *backupRunner {
 	return &backupRunner{cfg: cfg, now: time.Now}
 }
 
+// smallSnapshot: a snapshot at most this big is parsed to see whether it is
+// empty; an empty one is about 200 bytes, so a bigger one never is.
+const smallSnapshot = 64 << 10
+
 // backupOnce copies relay-state.json into a new backup and rotates. It skips
 // an empty state (a wiped relay must not rotate good backups away) and a
 // state identical to the newest backup (an idle relay adds nothing). It
-// returns the new backup's name, or "" when it skipped.
+// returns the new backup's name, or "" when it skipped. It streams: memory
+// use doesn't grow with the state.
 func (r *backupRunner) backupOnce() (string, error) {
-	raw, err := os.ReadFile(filepath.Join(r.cfg.dataDir, snapshotFile))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	f, err := os.Open(filepath.Join(r.cfg.dataDir, snapshotFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil // nothing flushed yet
 	}
 	if err != nil {
 		return "", err
 	}
-	snap, err := parseSnapshot(raw)
+	defer f.Close()
+	fi, err := f.Stat()
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", snapshotFile, err)
+		return "", err
 	}
-	if snapshotEmpty(snap) {
-		return "", nil
+	if fi.Size() <= smallSnapshot {
+		raw, err := io.ReadAll(f)
+		if err != nil {
+			return "", err
+		}
+		snap, err := parseSnapshot(raw)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", snapshotFile, err)
+		}
+		if snapshotEmpty(snap) {
+			return "", nil
+		}
 	}
 	if err := ensureBackupDir(r.cfg.dir); err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(raw)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	var sum [sha256.Size]byte
+	copy(sum[:], h.Sum(nil))
 	if r.lastHash == ([sha256.Size]byte{}) {
 		r.lastHash = r.newestHash()
 	}
 	if sum == r.lastHash {
 		return "", nil
 	}
-	data, err := gzipBytes(raw)
-	if err != nil {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
 	name := backupName(r.now())
-	if err := writeFileAtomic(r.cfg.dir, name, data); err != nil {
+	n, err := writeGzipAtomic(r.cfg.dir, name, f)
+	if err != nil {
 		return "", err
 	}
 	r.lastHash = sum
-	if err := rotateBackups(r.cfg.dir, r.cfg.keep); err != nil {
+	if err := rotateBackups(r.cfg.dir, r.cfg.keep, name, r.now()); err != nil {
 		slog.Warn("backup rotation failed", "dir", r.cfg.dir, "error", err)
 	}
-	slog.Info("backup written", "dir", r.cfg.dir, "name", name, "bytes", len(data))
+	cleanStaleTemps(r.cfg.dir, r.now())
+	slog.Info("backup written", "dir", r.cfg.dir, "name", name, "bytes", n)
 	return name, nil
 }
 
-// newestHash is the SHA-256 of the newest backup's JSON, or zero.
+// writeGzipAtomic compresses src into dir/name (mode 0600) through a fresh
+// temp file and a rename, and returns the compressed size.
+func writeGzipAtomic(dir, name string, src io.Reader) (int64, error) {
+	f, err := os.CreateTemp(dir, ".tmp-"+name+"-*")
+	if err != nil {
+		return 0, err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // no-op after the rename
+	fail := func(err error) (int64, error) { f.Close(); return 0, err }
+	if err := f.Chmod(0o600); err != nil {
+		return fail(err)
+	}
+	gz := gzip.NewWriter(f)
+	if _, err := io.Copy(gz, src); err != nil {
+		return fail(err)
+	}
+	if err := gz.Close(); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
+		return 0, err
+	}
+	syncDir(dir)
+	return fi.Size(), nil
+}
+
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+}
+
+// cleanStaleTemps removes backup temp files a killed relay left behind.
+func cleanStaleTemps(dir string, now time.Time) {
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), ".tmp-"+backupFilePrefix) || !e.Type().IsRegular() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && now.Sub(fi.ModTime()) > time.Hour {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// newestHash is the SHA-256 of the newest usable backup's JSON, or zero.
 func (r *backupRunner) newestHash() [sha256.Size]byte {
 	list, err := listBackups(r.cfg.dir)
-	if err != nil || len(list) == 0 {
-		return [sha256.Size]byte{}
-	}
-	raw, err := readBackup(filepath.Join(r.cfg.dir, list[len(list)-1].Name), restoreLimit())
 	if err != nil {
 		return [sha256.Size]byte{}
 	}
-	return sha256.Sum256(raw)
+	list, _ = usable(list, r.now())
+	if len(list) == 0 {
+		return [sha256.Size]byte{}
+	}
+	sum, err := hashBackup(filepath.Join(r.cfg.dir, list[len(list)-1].Name), restoreLimit())
+	if err != nil {
+		return [sha256.Size]byte{}
+	}
+	return sum
+}
+
+// newestAge is how old the newest usable backup is (-1: none).
+func (r *backupRunner) newestAge() time.Duration {
+	list, err := listBackups(r.cfg.dir)
+	if err != nil {
+		return -1
+	}
+	list, _ = usable(list, r.now())
+	if len(list) == 0 {
+		return -1
+	}
+	return r.now().Sub(list[len(list)-1].Taken)
 }
 
 // rotateBackups keeps the newest keep backups and deletes older ones. Only
-// files with an exact backup name are ever deleted.
-func rotateBackups(dir string, keep int) error {
+// files with an exact backup name are ever deleted, never justWrote (a clock
+// that stepped back would otherwise delete the backup it just took), and
+// never a future-named one (logged instead: it needs a person to look).
+func rotateBackups(dir string, keep int, justWrote string, now time.Time) error {
 	list, err := listBackups(dir)
-	if err != nil || keep < 1 || len(list) <= keep {
+	if err != nil || keep < 1 {
 		return err
 	}
+	list, future := usable(list, now)
+	for _, b := range future {
+		slog.Warn("backup is named in the future; restore skips it and rotation keeps it", "dir", dir, "name", b.Name,
+			"fix", "check the clock, then move the file out of the backup directory")
+	}
+	if len(list) <= keep {
+		return nil
+	}
 	for _, b := range list[:len(list)-keep] {
+		if b.Name == justWrote {
+			continue
+		}
 		if err := os.Remove(filepath.Join(dir, b.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -459,20 +629,30 @@ func rotateBackups(dir string, keep int) error {
 	return nil
 }
 
+// firstBackupDelay: after a start, the first backup comes this soon when the
+// newest one is already older than the interval (a relay restarted more
+// often than the interval would otherwise only back up at clean shutdowns).
+const firstBackupDelay = time.Minute
+
 // run takes a backup every interval until stop closes. Failures are logged;
 // they never stop the relay. The shutdown backup is the caller's (after the
 // final flush).
 func (r *backupRunner) run(stop <-chan struct{}) {
-	tick := time.NewTicker(r.cfg.interval)
-	defer tick.Stop()
+	first := r.cfg.interval
+	if age := r.newestAge(); age < 0 || age >= r.cfg.interval {
+		first = min(firstBackupDelay, r.cfg.interval)
+	}
+	timer := time.NewTimer(first)
+	defer timer.Stop()
 	for {
 		select {
 		case <-stop:
 			return
-		case <-tick.C:
+		case <-timer.C:
 			if _, err := r.backupOnce(); err != nil {
 				slog.Error("backup failed", "dir", r.cfg.dir, "error", err)
 			}
+			timer.Reset(r.cfg.interval)
 		}
 	}
 }
@@ -484,53 +664,72 @@ func (r *backupRunner) run(stop <-chan struct{}) {
 // flush); then, if there is no snapshot and restore is on, the newest backup
 // that passes every check becomes relay-state.json. It never replaces a
 // snapshot that parses.
-func prepareDataDir(cfg backupConfig) {
+//
+// It returns an error (the relay refuses to start) when there are backups
+// but none passes its checks: starting empty would leave every roster
+// unclaimed, and new backups would rotate the good ones away.
+func prepareDataDir(cfg backupConfig) error {
 	path := filepath.Join(cfg.dataDir, snapshotFile)
 	raw, err := os.ReadFile(path)
 	switch {
 	case err == nil:
-		if _, perr := parseSnapshot(raw); perr == nil {
-			return // a good snapshot: nothing to do
-		} else {
-			aside := path + ".unreadable-" + time.Now().UTC().Format(backupTimeLayout)
-			if rerr := os.Rename(path, aside); rerr != nil {
-				slog.Error("snapshot is unreadable and could not be moved aside", "path", path, "error", rerr)
-				return
-			}
-			slog.Error("snapshot is unreadable; moved it aside", "path", path, "moved_to", aside, "error", perr.Error())
+		perr := func() error { _, e := parseSnapshot(raw); return e }()
+		raw = nil
+		if perr == nil {
+			return nil // a good snapshot: nothing to do
 		}
+		aside := path + ".unreadable-" + time.Now().UTC().Format(backupTimeLayout)
+		if rerr := os.Rename(path, aside); rerr != nil {
+			slog.Error("snapshot is unreadable and could not be moved aside", "path", path, "error", rerr)
+			return nil
+		}
+		slog.Error("snapshot is unreadable; moved it aside", "path", path, "moved_to", aside, "error", perr.Error())
 	case errors.Is(err, fs.ErrNotExist):
 	default:
-		return // can't read it (permissions): the store reports that
+		return nil // can't read it (permissions): the store reports that
 	}
 	if !cfg.enabled || !cfg.restore {
-		return
+		return nil
 	}
-	name, err := restoreNewest(cfg)
-	switch {
-	case err != nil:
-		slog.Error("no backup could be restored; starting empty", "dir", cfg.dir, "error", err)
-	case name != "":
-		slog.Warn("restored state from backup", "dir", cfg.dir, "name", name,
-			"note", "relay-state.json was missing or unreadable; set LANGSTROTH_RELAY_BACKUP_RESTORE=off to start empty instead")
+	b, err := restoreNewest(cfg, time.Now())
+	if err != nil {
+		return &problem{Code: "restore", Message: "relay-state.json is missing or unreadable and no backup could be restored: " + err.Error(),
+			Why: "starting empty would leave every workspace roster unclaimed",
+			Fix: "fix the backups' owner or mode (owned by the relay's user, chmod 600; the directory not writable by others), " +
+				"or restore one by hand (langstroth-relay restore --from PATH), or set LANGSTROTH_RELAY_BACKUP_RESTORE=off to start empty",
+			exit: exitFailed}
 	}
+	if b.Name != "" {
+		slog.Warn("restored state from backup", "dir", cfg.dir, "name", b.Name, "age", time.Since(b.Taken).Round(time.Second).String(),
+			"note", "relay-state.json was missing or unreadable; changes since this backup (including revocations and removed members) are undone: check them",
+			"off", "LANGSTROTH_RELAY_BACKUP_RESTORE=off starts empty instead")
+	}
+	return nil
 }
 
 // restoreNewest writes the newest usable backup to relay-state.json, trying
-// older ones when the newest fails a check. It returns the backup's name, or
-// "" when there are none.
-func restoreNewest(cfg backupConfig) (string, error) {
+// older ones when the newest fails a check. It returns the backup, or a zero
+// entry when there are none. Backups named in the future are skipped.
+func restoreNewest(cfg backupConfig, now time.Time) (backupEntry, error) {
 	if _, err := os.Lstat(cfg.dir); errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	if err := checkBackupDir(cfg.dir); err != nil {
-		return "", err
+		return backupEntry{}, nil
 	}
 	list, err := listBackups(cfg.dir)
 	if err != nil {
-		return "", err
+		return backupEntry{}, err
 	}
+	if len(list) == 0 {
+		return backupEntry{}, nil
+	}
+	if err := checkBackupDir(cfg.dir); err != nil {
+		return backupEntry{}, err
+	}
+	list, future := usable(list, now)
 	var errs []error
+	for _, b := range future {
+		slog.Warn("skipping backup named in the future", "name", b.Name)
+		errs = append(errs, fmt.Errorf("%s is named in the future (check the clock)", b.Name))
+	}
 	for i := len(list) - 1; i >= 0; i-- {
 		raw, err := readBackup(filepath.Join(cfg.dir, list[i].Name), restoreLimit())
 		if err != nil {
@@ -539,14 +738,11 @@ func restoreNewest(cfg backupConfig) (string, error) {
 			continue
 		}
 		if err := installSnapshot(cfg.dataDir, raw); err != nil {
-			return "", err
+			return backupEntry{}, err
 		}
-		return list[i].Name, nil
+		return list[i], nil
 	}
-	if len(errs) > 0 {
-		return "", fmt.Errorf("every backup failed a check: %w", errors.Join(errs...))
-	}
-	return "", nil
+	return backupEntry{}, fmt.Errorf("every backup failed a check: %w", errors.Join(errs...))
 }
 
 // installSnapshot makes raw the data dir's relay-state.json (mode 0600).
@@ -644,6 +840,11 @@ func cmdRestore(args []string, w io.Writer) error {
 			return &problem{Code: "not_found", Message: "no backups in " + cfg.dir,
 				Fix: "check LANGSTROTH_RELAY_BACKUP_DIR, or pass --from PATH", exit: exitFailed}
 		}
+		list, _ = usable(list, time.Now())
+		if len(list) == 0 {
+			return &problem{Code: "not_found", Message: "every backup in " + cfg.dir + " is named in the future",
+				Fix: "check the clock; pass the one you want with --from", exit: exitFailed}
+		}
 		path = filepath.Join(cfg.dir, list[len(list)-1].Name)
 	case backupNameRe.MatchString(from):
 		path = filepath.Join(cfg.dir, from)
@@ -738,6 +939,12 @@ func backupCheck(add func(name, status, detail, fix string)) {
 	every := fmt.Sprintf("every %s, keeping %d, in %s", cfg.interval, cfg.keep, cfg.dir)
 	if len(list) == 0 {
 		add("backup", "ok", "no backups yet; "+every, "")
+		return
+	}
+	list, future := usable(list, time.Now())
+	if len(future) > 0 {
+		add("backup", "warn", fmt.Sprintf("%d backups are named in the future (newest %s); restore skips them and rotation keeps them", len(future), future[len(future)-1].Name),
+			"check the clock, then move those files out of "+cfg.dir)
 		return
 	}
 	newest := list[len(list)-1]

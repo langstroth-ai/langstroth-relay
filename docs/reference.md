@@ -185,6 +185,12 @@ At startup an unreadable `relay-state.json` is moved aside to
 `relay-state.json.unreadable-<time>`; when there is then no snapshot, the
 newest backup that passes its checks becomes `relay-state.json` and the log
 says `restored state from backup`. A snapshot that reads is never replaced.
+When there are backups but none passes its checks, the relay refuses to
+start rather than serve an empty store (every roster unclaimed); with no
+backups at all it starts empty. A restore undoes everything since that
+backup, including removed members, revoked tunnel hosts and deleted tokens:
+repeat those after a restore. A backup named more than 10 minutes in the
+future (a wrong clock) is never restored or rotated away.
 To restore an older backup, stop the relay and run
 `langstroth-relay restore --from relay-backup-<time>.json.gz` (no `--from`:
 the newest); the current snapshot moves to

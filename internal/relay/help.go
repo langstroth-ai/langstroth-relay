@@ -99,7 +99,10 @@ ENVIRONMENT
     tunnel off;
   - an APNs key, key id or team id is set while LANGSTROTH_RELAY_TUNNEL is off;
   - LANGSTROTH_RELAY_REQUIRE_DB is on without DATABASE_URL, or Postgres can't
-    be reached or migrated.
+    be reached or migrated;
+  - a LANGSTROTH_RELAY_BACKUP* setting doesn't parse, or relay-state.json is
+    missing or unreadable and there are backups but none passes its checks
+    (help backup).
   ` + "`langstroth-relay check`" + ` runs the same checks without serving (it doesn't
   contact Postgres).
 
@@ -448,17 +451,31 @@ Memory store with LANGSTROTH_RELAY_DATA_DIR: built-in backups (on by default)
   (LANGSTROTH_RELAY_BACKUP_DIR to put them elsewhere; directory mode 0700,
   files 0600) and keeps the newest 24 (LANGSTROTH_RELAY_BACKUP_KEEP). A state
   that is empty, or the same as the newest backup, is not backed up again, so
-  a wiped or idle relay never rotates good backups away.
+  a wiped or idle relay never rotates good backups away. When the newest
+  backup is older than the interval at startup, the first one comes a minute
+  after start. Backups are ordered by the UTC time in their name; one named
+  more than 10 minutes in the future (a wrong clock) is never restored or
+  rotated, and check warns about it.
 
   At startup, when relay-state.json is missing or unreadable, the relay
   restores the newest backup that passes its checks and logs "restored state
   from backup". An unreadable relay-state.json is first moved aside to
   relay-state.json.unreadable-<time>, never deleted. A relay-state.json that
-  reads is never replaced. LANGSTROTH_RELAY_BACKUP_RESTORE=off starts empty
-  instead; LANGSTROTH_RELAY_BACKUP=off turns backups off.
+  reads is never replaced. When there are backups but none passes its
+  checks, the relay refuses to start (starting empty would leave every
+  roster unclaimed); fix the files, restore one by hand, or set
+  LANGSTROTH_RELAY_BACKUP_RESTORE=off to start empty. With no backups at all
+  it starts empty. LANGSTROTH_RELAY_BACKUP=off turns backups off.
+
+  A restore goes back in time: everything since that backup is undone,
+  including removed members, revoked tunnel hosts and phones, deleted
+  tokens and used invites. After a restore, check rosters and repeat any
+  removal or revocation made since the backup's time (the log names it).
 
   Restore an older backup by hand:
-    1. Stop the relay.
+    1. Stop the relay. (restore refuses while relay-state.json changed in
+       the last 15 s; it can't tell a relay whose flushes are failing, so
+       make sure the process is gone.)
     2. ls $LANGSTROTH_RELAY_DATA_DIR/backups
     3. LANGSTROTH_RELAY_DATA_DIR=/data langstroth-relay restore --from relay-backup-20261124T030000Z.json.gz
        (no --from: the newest). The current relay-state.json moves to
@@ -559,6 +576,14 @@ Every client gets 401
 
 GET /v1/health answers 503
   The store is unreachable (Postgres down, wrong URL or credentials).
+
+"no backup could be restored" at startup
+  relay-state.json is missing or unreadable and every backup failed a check
+  (the message says which: owner, mode, size, not a snapshot, named in the
+  future). Fix the files (owned by the relay's user, chmod 600, the
+  directory not writable by others), or restore one by hand with
+  "langstroth-relay restore --from PATH", or set
+  LANGSTROTH_RELAY_BACKUP_RESTORE=off to start empty.
 
 State is gone after a restart
   Neither DATABASE_URL nor LANGSTROTH_RELAY_DATA_DIR is set (memory only), or

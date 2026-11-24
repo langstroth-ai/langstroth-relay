@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -215,7 +216,9 @@ func TestRestoreOnBoot(t *testing.T) {
 			case "empty-file":
 				os.WriteFile(state, nil, 0o600)
 			}
-			prepareDataDir(cfg)
+			if err := prepareDataDir(cfg); err != nil {
+				t.Fatal(err)
+			}
 			s := newMemoryStoreWithPersistence(dataDir)
 			envs, err := s.EnvelopesAfter(bg, "ws-restore", 0)
 			if err != nil || len(envs) != 1 {
@@ -246,14 +249,18 @@ func TestRestoreOnBootNeverClobbersAndCanBeOff(t *testing.T) {
 	os.Remove(state)
 	seededStore(t, dataDir, "ws-new") // a newer, readable state
 	before, _ := os.ReadFile(state)
-	prepareDataDir(cfg)
+	if err := prepareDataDir(cfg); err != nil {
+		t.Fatal(err)
+	}
 	if after, _ := os.ReadFile(state); !bytes.Equal(before, after) {
 		t.Fatal("a readable snapshot was replaced")
 	}
 
 	os.Remove(state)
 	cfg.restore = false
-	prepareDataDir(cfg)
+	if err := prepareDataDir(cfg); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("restore off still restored")
 	}
@@ -298,9 +305,9 @@ func TestRestoreRefusesTamperedBackups(t *testing.T) {
 	}
 
 	os.Remove(filepath.Join(dataDir, snapshotFile))
-	name, err := restoreNewest(cfg)
-	if err != nil || name != good {
-		t.Fatalf("restored %q (%v), want the good backup %q", name, err, good)
+	b, err := restoreNewest(cfg, time.Now())
+	if name := b.Name; err != nil || name != good {
+		t.Fatalf("restored %q (%v), want the good backup %q", b.Name, err, good)
 	}
 	s := newMemoryStoreWithPersistence(dataDir)
 	if envs, _ := s.EnvelopesAfter(bg, "ws-good", 0); len(envs) != 1 {
@@ -310,11 +317,11 @@ func TestRestoreRefusesTamperedBackups(t *testing.T) {
 		t.Error("a tampered backup was restored")
 	}
 
-	// With only bad backups: nothing restored, an error, the relay starts empty.
+	// With only bad backups: nothing restored, an error (the relay refuses to start).
 	os.Remove(filepath.Join(cfg.dir, good))
 	os.Remove(filepath.Join(dataDir, snapshotFile))
-	if name, err := restoreNewest(cfg); err == nil || name != "" {
-		t.Fatalf("only bad backups: %q %v", name, err)
+	if b, err := restoreNewest(cfg, time.Now()); err == nil || b.Name != "" {
+		t.Fatalf("only bad backups: %q %v", b.Name, err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, snapshotFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Error("something was installed from a bad backup")
@@ -339,14 +346,16 @@ func gzipBomb(t *testing.T, n int64) []byte {
 func TestBackupDirSafety(t *testing.T) {
 	dataDir, cfg := backupEnv(t)
 	seededStore(t, dataDir, "ws")
-	if err := os.MkdirAll(cfg.dir, 0o700); err != nil {
+	if n, err := newBackupRunner(cfg).backupOnce(); err != nil || n == "" {
 		t.Fatal(err)
 	}
 	os.Chmod(cfg.dir, 0o777)
+	os.Remove(filepath.Join(dataDir, snapshotFile))
+	seededStore(t, dataDir, "ws2")
 	if _, err := newBackupRunner(cfg).backupOnce(); !errors.Is(err, errUnsafe) {
 		t.Fatalf("world-writable dir: %v", err)
 	}
-	if _, err := restoreNewest(cfg); !errors.Is(err, errUnsafe) {
+	if _, err := restoreNewest(cfg, time.Now()); !errors.Is(err, errUnsafe) {
 		t.Fatalf("restore from a world-writable dir: %v", err)
 	}
 	backupCheck(func(id, status, detail, fix string) {
@@ -527,3 +536,144 @@ func TestFlushWhileWriting(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// A backup named in the future (a wrong clock, or a renamed old backup) is
+// never restored and never wins; a clock that steps back doesn't make
+// rotation delete the backup it just took.
+func TestBackupClockSafety(t *testing.T) {
+	dataDir, cfg := backupEnv(t)
+	cfg.keep = 1
+	s := seededStore(t, dataDir, "ws-old")
+	r := newBackupRunner(cfg)
+	r.now = func() time.Time { return time.Now().Add(5 * 365 * 24 * time.Hour) }
+	future, err := r.backupOnce()
+	if err != nil || future == "" {
+		t.Fatal(err)
+	}
+	s.AppendEnvelope(bg, "ws-new", json.RawMessage(`{"n":1}`), "")
+	s.Flush(bg)
+	r.now = time.Now
+	now, err := r.backupOnce()
+	if err != nil || now == "" {
+		t.Fatalf("backup after the clock stepped back: %q %v", now, err)
+	}
+	for _, n := range []string{future, now} {
+		if _, err := os.Stat(filepath.Join(cfg.dir, n)); err != nil {
+			t.Errorf("%s was rotated away", n)
+		}
+	}
+	os.Remove(filepath.Join(dataDir, snapshotFile))
+	if err := prepareDataDir(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if envs, _ := newMemoryStoreWithPersistence(dataDir).EnvelopesAfter(bg, "ws-new", 0); len(envs) != 1 {
+		t.Error("restore picked the future-named backup")
+	}
+	var c checkResult
+	backupCheck(func(id, status, detail, fix string) {
+		c = checkResult{ID: id, Status: status, Detail: detail, Fix: fix}
+	})
+	if c.Status != "warn" || !strings.Contains(c.Detail, "future") {
+		t.Errorf("check: %+v", c)
+	}
+}
+
+// Backups exist but none passes: the relay refuses to start rather than
+// serve an empty store (rosters unclaimed). restore off starts empty.
+func TestRestoreOnBootRefusesWhenEveryBackupFails(t *testing.T) {
+	dataDir, cfg := backupEnv(t)
+	seededStore(t, dataDir, "ws")
+	name, _ := newBackupRunner(cfg).backupOnce()
+	os.Chmod(filepath.Join(cfg.dir, name), 0o660)
+	os.Remove(filepath.Join(dataDir, snapshotFile))
+	err := prepareDataDir(cfg)
+	var p *problem
+	if !errors.As(err, &p) || p.Fix == "" || !strings.Contains(p.Fix, "LANGSTROTH_RELAY_BACKUP_RESTORE=off") {
+		t.Fatalf("want a refusal with a fix, got %v", err)
+	}
+	cfg.restore = false
+	if err := prepareDataDir(cfg); err != nil {
+		t.Errorf("restore off: %v", err)
+	}
+	// No backups at all: start empty, no error.
+	cfg.restore = true
+	os.Remove(filepath.Join(cfg.dir, name))
+	if err := prepareDataDir(cfg); err != nil {
+		t.Errorf("no backups: %v", err)
+	}
+}
+
+// Whatever parseSnapshot accepts, the store loader accepts: a snapshot with
+// trailing data is moved aside and restored, not loaded as empty.
+func TestParseSnapshotMatchesLoader(t *testing.T) {
+	dataDir, cfg := backupEnv(t)
+	seededStore(t, dataDir, "ws-trail")
+	newBackupRunner(cfg).backupOnce()
+	state := filepath.Join(dataDir, snapshotFile)
+	raw, _ := os.ReadFile(state)
+	os.WriteFile(state, append(raw, '}'), 0o600)
+	if err := prepareDataDir(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if envs, _ := newMemoryStoreWithPersistence(dataDir).EnvelopesAfter(bg, "ws-trail", 0); len(envs) != 1 {
+		t.Error("a snapshot with trailing data was kept and loaded as empty")
+	}
+	if aside, _ := filepath.Glob(state + ".unreadable-*"); len(aside) != 1 {
+		t.Errorf("not moved aside: %v", aside)
+	}
+	// Errors name no map key.
+	_, err := parseSnapshot([]byte(`{"tokens":{"tok-SECRET":{"hash":5}}}`))
+	if err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("parse error leaks a key: %v", err)
+	}
+}
+
+// The ticker's backup and the shutdown backup can overlap; they must not
+// race (run with -race) or write the same file twice.
+func TestConcurrentBackupOnce(t *testing.T) {
+	dataDir, cfg := backupEnv(t)
+	seededStore(t, dataDir, "ws")
+	r := newBackupRunner(cfg)
+	var wg sync.WaitGroup
+	names := make([]string, 4)
+	for i := range names {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); names[i], _ = r.backupOnce() }(i)
+	}
+	wg.Wait()
+	written := 0
+	for _, n := range names {
+		if n != "" {
+			written++
+		}
+	}
+	if written != 1 {
+		t.Errorf("%d backups of one state, want 1: %v", written, names)
+	}
+}
+
+// A large state is backed up without holding it in memory, and restores.
+func TestBackupLargeStateStreams(t *testing.T) {
+	dataDir, cfg := backupEnv(t)
+	s := seededStore(t, dataDir, "ws-big")
+	body := json.RawMessage(`{"c":"` + strings.Repeat("a", 64<<10) + `"}`)
+	for i := 0; i < 64; i++ {
+		s.AppendEnvelope(bg, "ws-big", body, "")
+	}
+	s.Flush(bg)
+	name, err := newBackupRunner(cfg).backupOnce()
+	if err != nil || name == "" {
+		t.Fatal(err)
+	}
+	want, _ := os.ReadFile(filepath.Join(dataDir, snapshotFile))
+	got, err := readBackup(filepath.Join(cfg.dir, name), maxRestoreBytes())
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("round trip: %v", err)
+	}
+	sum, err := hashBackup(filepath.Join(cfg.dir, name), maxRestoreBytes())
+	if err != nil || sum != sha256Sum(want) {
+		t.Errorf("hash: %v", err)
+	}
+}
+
+func sha256Sum(b []byte) [sha256.Size]byte { return sha256.Sum256(b) }

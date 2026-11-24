@@ -37,7 +37,7 @@ var relaySettingGroups = []settingGroup{
 		{"LANGSTROTH_RELAY_BACKUP_DIR", "<data dir>/backups", "Where backups go (created mode 0700). Refused when it is a symlink or writable by others."},
 		{"LANGSTROTH_RELAY_BACKUP_INTERVAL", "1h", "How often to take a backup, a Go duration of at least 1m (30m, 1h, 24h). An unchanged or empty state is skipped."},
 		{"LANGSTROTH_RELAY_BACKUP_KEEP", "24", "Backups kept; older ones are deleted (1 to 10000)."},
-		{"LANGSTROTH_RELAY_BACKUP_RESTORE", "on", "on/off: at startup, when relay-state.json is missing or unreadable, restore the newest backup that passes its checks (an unreadable file is moved aside, never deleted). off: start empty."},
+		{"LANGSTROTH_RELAY_BACKUP_RESTORE", "on", "on/off: at startup, when relay-state.json is missing or unreadable, restore the newest backup that passes its checks (an unreadable file is moved aside, never deleted); refuse to start when there are backups and none passes. off: start empty."},
 	}},
 	{"Access", []relaySetting{
 		{"LANGSTROTH_RELAY_TOKEN_PUBKEY", "unset (open relay)", "Ed25519 issuer public key (64 hex chars or base64, from `langstroth-relay keygen`). Set: every /v1 request needs a signed hrt1 token. A key that does not parse stops the relay."},

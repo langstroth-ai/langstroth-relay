@@ -11,7 +11,9 @@
   `relay-state.json` that is missing or unreadable is restored from the
   newest backup that passes its checks (regular file, owned by the relay's
   user, not group- or world-writable, bounded size, parses as a snapshot); an
-  unreadable one is moved aside instead of being overwritten.
+  unreadable one is moved aside instead of being overwritten. When backups
+  exist but none passes, the relay refuses to start instead of serving an
+  empty store.
   `langstroth-relay restore [--from NAME|PATH] [--json]` restores a chosen
   backup with the relay stopped, and `check` gains a `backup` line. Settings:
   `LANGSTROTH_RELAY_BACKUP`, `_BACKUP_DIR`, `_BACKUP_INTERVAL`, `_BACKUP_KEEP`,
@@ -22,9 +24,10 @@
 ### Fixed
 
 - Writing the memory store's snapshot no longer races with clients: it was
-  encoded after releasing the store lock while sharing maps with the live
-  state (rosters, device candidates and presence), which could crash the
-  relay with a concurrent map read and write.
+  encoded after releasing the store lock while sharing maps and roster rows
+  with the live state (rosters, device candidates and presence, directory
+  device keys), which could crash the relay with a concurrent map read and
+  write. Those are now copied under the lock and encoded after it.
 
 ### Changed
 
