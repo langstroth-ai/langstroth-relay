@@ -1,9 +1,35 @@
 # Langstroth Relay
 
-The sync relay for [Ligus](https://github.com/langstroth-ai/ligus), part of
-the [Langstroth](https://langstroth.ai) platform. Ligus is short for
-*ligustica*; the Ligus apps (desktop, CLI, phone, terminal) are the clients,
-and this relay is the small server they sync through.
+The small server Ligus devices sync through. It carries end-to-end
+encrypted events between a workspace's devices and never sees what is in
+them. Part of the [Langstroth](https://langstroth.ai) platform; the clients
+are the [Ligus](https://github.com/langstroth-ai/ligus) apps (Ligus is short
+for *ligustica*, the Italian honeybee).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/ligus-team-sync-dark.png">
+  <img alt="Ligus desktop, Settings, Team sync: Live, https://relay.example.org, room apiary, encrypted; the relay URL, an access token kept blank, organization sign-in and direct peers (demo data)" src="docs/images/ligus-team-sync-light.png" width="720">
+</picture>
+
+```sh
+docker run -d -p 8443:8443 -v langstroth-data:/data ghcr.io/langstroth-ai/langstroth-relay:0.3.2
+curl localhost:8443/v1/health   # ok
+```
+
+- **Content-blind.** Clients post sealed envelopes; the relay never holds a
+  workspace key and never sees plaintext, file names or forge tokens.
+- **One Go binary.** Memory with a JSON snapshot, or Postgres; Docker,
+  Compose, systemd or Helm. Clients need `https://` in front of it.
+- **Self-documenting.** `langstroth-relay help` lists every command and
+  setting; `langstroth-relay check --json` checks a configuration.
+
+[Self-host guide](https://docs.langstroth.ai/operate/networking/self-host/) ·
+[Deploy](docs/deploy.md) ·
+[Operating Langstroth](https://docs.langstroth.ai/operate/) ·
+[Ligus](https://github.com/langstroth-ai/ligus) ·
+[Discussions](https://github.com/langstroth-ai/ligus/discussions)
+
+## What it does
 
 - **End-to-end encrypted, content-blind.** Clients post sealed event
   envelopes per workspace and fetch everything after a cursor. The relay never
