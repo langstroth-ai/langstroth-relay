@@ -54,6 +54,7 @@ var checkTitles = map[string]string{
 	"tenancy":      "tenancy",
 	"removed":      "removed settings",
 	"routes":       "routes",
+	"mailboxes":    "mailboxes",
 	"push":         "push",
 	"store":        "store",
 	"backup":       "backup",
@@ -211,6 +212,13 @@ func runChecks(environ []string, url string) checkReport {
 			r = "all"
 		}
 		add("routes", "ok", "routes "+r+", tunnel "+tunnel, "")
+	}
+	if err := mailboxesConfigError(); err != nil {
+		add("mailboxes", "fail", err.Error(), "set LANGSTROTH_RELAY_MAILBOXES to on, off or token (token needs an access gate); see `langstroth-relay help mailboxes`")
+	} else if mode, _ := mailboxModeFromEnv(); mode == mailboxesOff {
+		add("mailboxes", "skip", "approval mailboxes off (/v1/mailboxes/* answers 404)", "")
+	} else {
+		add("mailboxes", "ok", "approval mailboxes "+mode, "")
 	}
 	if err := apnsWithoutTunnelError(getenv); err != nil {
 		add("push", "fail", err.Error(), "remove the APNs settings here, or turn the tunnel on")

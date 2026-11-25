@@ -161,6 +161,7 @@ All under `/v1`, JSON unless noted. Details: [docs/reference.md](docs/reference.
 | Membership | `.../members`, `.../members/claim`, `.../invites`, `.../join` (with `LANGSTROTH_RELAY_MEMBERSHIP=1`) |
 | Pairing | `POST /v1/pair`, `GET /v1/pair/{code}`: single-use short codes |
 | Contacts | `PUT`/`GET`/`DELETE /v1/contacts/{cid}`, `.../drop` |
+| Approval mailboxes | `GET`/`PUT /v1/mailboxes/{mailbox}`, `.../requests`, `.../requests/{rid}`, `.../requests/{rid}/msgs` (long poll): sealed join requests for code-match approval (`LANGSTROTH_RELAY_MAILBOXES`, on by default) |
 | Phone tunnel | `/v1/tunnel/info`, `host`, `accept`, `connect` (WebSocket, Noise end to end), `revoke` |
 | Tenancy | `GET /v1/tenant`, `GET /v1/tenant/rooms`, `DELETE /v1/tenant/rooms/{id}` |
 | Operations | `GET /` (status page), `GET /v1/health`, `GET /metrics` |

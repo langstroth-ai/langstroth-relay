@@ -39,6 +39,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
 | `LANGSTROTH_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
 | `LANGSTROTH_RELAY_CONTACTS` | on | `off`: unregister `/v1/contacts/*` (404, as on a v0.2 relay). See [Contacts](#contacts-v1contacts) |
+| `LANGSTROTH_RELAY_MAILBOXES` | on | `on`, `off` (every `/v1/mailboxes/*` route answers `404`) or `token` (a put also needs a valid access token; needs an access gate). Any other value, or `token` on a relay with no access gate, stops the relay. See [Approval mailboxes](#approval-mailboxes-v1mailboxes) |
 | `LANGSTROTH_RELAY_GITHUB_ROUTES` | off | **Deprecated, removed in v0.4.** `on`: register the GitHub social routes (directory, account, friends) for older clients; every response then carries a `Deprecation` header. `LANGSTROTH_RELAY_GITHUB_SOCIAL=1` is accepted too. See [GitHub social routes](#github-social-routes-deprecated-off-by-default) |
 | `LANGSTROTH_RELAY_FRIEND_CAP` | none | max accepted friends per account (GitHub routes only) |
 | `LANGSTROTH_RELAY_INVITE_REQUIRE_FRIEND` | off | `1`: `POST /v1/account/invites` only reaches existing friends (GitHub routes only) |
@@ -72,6 +73,11 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_CONTACT_DROP_MAX_BOX_BYTES` | `4194304` (4 MiB) | drop bytes per box; see eviction under Contacts |
 | `LANGSTROTH_RELAY_CONTACT_DROP_RETENTION_DAYS` | `30` | delete drops older than N days, hourly (`0` = off) |
 | `LANGSTROTH_RELAY_MAX_CONTACTS` | `100000` | memory store: live contact records (`507` past it; `0` = unbounded). Records and drops also count toward `LANGSTROTH_RELAY_MAX_STORE_BYTES` |
+| `LANGSTROTH_RELAY_MAX_MAILBOXES` | `10000` | approval mailboxes registered per process (`507` `mailboxes_full` past it; `0` = unbounded) |
+| `LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT` | `20` | approval mailboxes one client address may register (`429` `mailbox_register`; an IPv6 /48 gets 16 times as many; `0` = off) |
+| `LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT` | `1000` | tenancy: approval mailboxes one tenant may register (`429` `mailbox_register`; `0` = off) |
+| `LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT` | `8388608` (8 MiB) | blob bytes all the mailboxes registered from one client address (IPv4 address or IPv6 /48) may hold (`507` `mailbox_storage`; `0` = off); one mailbox holds at most 4 MiB |
+| `LANGSTROTH_RELAY_MAILBOX_MAX_BYTES` | `67108864` (64 MiB) | request and message blob bytes all live approval requests hold (`507` `mailbox_storage`; `0` = off) |
 | `LANGSTROTH_RELAY_MAX_CONTACT_BYTES` | `0` (off) | Postgres: record plus drop bytes across the relay (re-read every 10 s). New records and drops past it get `507` `contacts_full`; an existing record can still be refreshed. Without it, Postgres is bounded only by its disk and the rate limits |
 
 **Blobs** (encrypted attachments; see [blobs.md](blobs.md))
@@ -280,6 +286,12 @@ should switch on `error`, and treat an unknown code by its status.
 | 507 | `blob_room_bytes`, `blob_room_count`, `blob_writer_bytes`, `blob_writer_count` | the workspace's (or this uploader's) attachment quota | don't retry automatically: tell the user; it clears as attachments expire or are deleted. Messages are unaffected |
 | 507 | `blob_tenant_bytes`, `blob_tenant_count` | the tenant's attachment quota | as `tenant_bytes` |
 | 507 | `blob_total_bytes` | the relay's attachment storage is full | as `total_bytes` |
+| 429 | `mailbox_put_rate` | too many approval-mailbox puts from this client, its network or into this mailbox | wait `Retry-After`, then put again |
+| 429 | `mailbox_full` | the approval mailbox holds 64 live requests | wait `Retry-After` (until the oldest expires); meanwhile paste still works |
+| 429 | `too_many_messages` | the approval request holds 10 messages | the exchange is over; start a new request |
+| 429 | `mailbox_register` | this client registered its quota of approval mailboxes | don't retry automatically; it clears when one is forgotten |
+| 429 | `mailbox_polls` | too many mailbox long polls in progress (relay-wide or this client's) | wait `Retry-After`, then poll again |
+| 507 | `mailboxes_full`, `mailbox_storage` | the relay's approval-mailbox capacity is full | as `total_bytes` |
 
 A refused write stored nothing, so retrying it later is always safe; an
 envelope re-push keeps its idempotency key and gets its original seq.
@@ -460,6 +472,138 @@ record and drop into the box. Every route goes through the access gate.
 timing and sizes, and client addresses. It can withhold or replay an old
 record; clients reject a record older than the newest they've seen for that
 `cid`.
+
+## Approval mailboxes (`/v1/mailboxes/*`)
+
+The transport for Ligus code-match approval (Ligus 0.4): a new box, computer
+or phone asks to join a workspace by putting a sealed request into the
+workspace's approval mailbox; an Admin's device and the requester trade a
+few sealed messages under that request and compare a short code on both
+screens. The relay is content-blind here too: every blob is sealed
+client-side (`b64u(ephemeralPublic ‖ ciphertext)`), and the relay checks
+only signatures, hashes and limits. On by default
+(`LANGSTROTH_RELAY_MAILBOXES=off` → every route answers `404`, and Ligus
+falls back to pasting codes).
+
+Mailbox ids and request ids (`rid`) are 32 lowercase hex characters (16
+bytes); `b64u` is base64url without padding; times are Unix milliseconds.
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| `GET` | `/v1/mailboxes/{mailbox}` | none | | `200 {"mailbox","counter"}`, `404 mailbox_unknown` |
+| `PUT` | `/v1/mailboxes/{mailbox}` | self-certifying (below); on a gated relay also the access token | `{"authPub":"<b64u 32>","putCapHash":"<b64u 32>","counter":N,"sig":"<b64u 64>"}` | `201` new, `200` same registration or a reset to the next counter: `{"mailbox","counter"}`; `400 mailbox_mismatch`; `409 stale_counter` (with `counter`, the current one) |
+| `PUT` | `/v1/mailboxes/{mailbox}/requests/{rid}` | `X-Ligus-Put-Cap` (and a token with `token` mode) | `{"blob":"<b64u ≤ 8 KiB>","readKeyHash":"<b64u 32>"}` | `201 {"rid","putAt","expiresAt"}`; `403 bad_put_cap`, `404 mailbox_unknown`, `409 rid_exists`, `429 mailbox_put_rate`, `429 mailbox_full` |
+| `GET` | `/v1/mailboxes/{mailbox}/requests` | member | | `200 {"requests":[{"rid","blob","putAt","expiresAt","msgCount"}]}`, live ones only, oldest first |
+| `POST` | `/v1/mailboxes/{mailbox}/requests/{rid}/msgs` | member or requester | `{"blob":"<b64u ≤ 32 KiB>","to":"members"\|"requester"\|"approver"}` | `201 {"seq":N}`; `404 request_unknown` (unknown, expired or deleted); `409 duplicate_message` (the same blob is already on this rid); `429 too_many_messages` |
+| `GET` | `/v1/mailboxes/{mailbox}/requests/{rid}/msgs?after=N&wait=S` | member or requester | | `200 {"msgs":[{"seq","blob","to","from","at"}]}`, the messages after `N`; with `wait` the relay holds the request up to `min(S, 25)` s while there are none |
+| `DELETE` | `/v1/mailboxes/{mailbox}/requests/{rid}` | requester | | `204`; the request and its messages are gone |
+
+**Auth.**
+
+- **Register and reset** are self-certifying: the relay checks
+  `mailbox == hex(SHA256(authPub)[:16])` and an Ed25519 signature by
+  `authPub` over `"ligus-mailbox-register-v1\0" ‖ mailbox(16) ‖ putCapHash(32) ‖ u32le(counter)`.
+  Only a holder of the workspace key (from which members derive the mailbox
+  key) can claim or reset a mailbox, on any relay. A body whose `authPub`
+  doesn't hash to the mailbox id is `400 mailbox_mismatch`; a signature that
+  doesn't verify is `403 bad_signature`. Counter rules: a new mailbox →
+  `201`; the same counter and hash again → `200`; the next counter (the
+  registered one plus 1) → `200` and the old put cap stops working at once
+  (Reset address); anything else (lower, a jump past the next one, or the
+  same counter with another hash) → `409 stale_counter`, which carries the
+  current `counter` so a member can sign `counter + 1`. Only the next
+  counter is accepted so that no key holder can pin the counter at
+  2^32-1 and leave nothing for an honest reset.
+- **A member** sends `X-Ligus-Mailbox-Auth: <ts ms>.<b64u signature>`, an
+  Ed25519 signature by the registered `authPub` over
+  `"ligus-mailbox-member-v1\0" ‖ method ‖ 0x00 ‖ path ‖ 0x00 ‖ i64le(ts) ‖ SHA256(body)`,
+  where `path` has no query string and `body` is empty for `GET` and
+  `DELETE`. A `ts` more than 300 s from the relay's clock is refused. On a
+  token-gated relay a member also sends its usual `Authorization: Bearer`
+  access token (any valid token: mailboxes aren't bound to rooms).
+- **A requester** has no token. `X-Ligus-Read-Key: <b64u 16>`, whose SHA-256
+  is the `readKeyHash` it put, opens its own `rid` only (messages, delete).
+- **A put** sends `X-Ligus-Put-Cap: <b64u 16>`, whose SHA-256 is the
+  mailbox's current `putCapHash`; with `LANGSTROTH_RELAY_MAILBOXES=token`
+  it also needs a valid access token. The put cap is in the workspace's
+  approval address, which is not a secret, so this is the one write the
+  relay takes without a signature or a token, on an open relay and on a
+  gated one (`token` mode closes it on a gated relay). Anyone with the
+  address can put requests until an Admin resets it; the limits below bound
+  what that costs.
+
+None of these routes goes through the access gate: each checks the auth
+above itself.
+
+Every key holder can open a request (it is sealed to the members' shared
+key) and so learns its read key: any member, including a device revoked
+before the last key rotation that still derives an old epoch's mailbox,
+can read that request's messages, post as its requester, or delete it. That
+is a property of the design, not a gap in the relay: it gives a denial of
+service on that request at most, since the code the two people compare and
+the requester's checks on the grant stop anything more.
+
+A captured member call stays valid for its 300 s window. The relay refuses
+the same message blob twice on one `rid` (`409 duplicate_message`; an
+honest message is sealed to a fresh key every time), so a replay can't
+fill a request's 10 slots.
+
+**Tenancy.** On a relay with `LANGSTROTH_RELAY_TENANCY`, a mailbox belongs
+to the tenant of the token that registered it: a member call, register or
+reset with another tenant's token answers `404 mailbox_unknown`. Each
+tenant may register `LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT` (1000)
+mailboxes, and a put into a tenant's mailbox spends that tenant's request
+rate.
+
+**Limits.** 64 live requests per mailbox (`429 mailbox_full`, `Retry-After`
+until the oldest expires); 10 messages per request (`429
+too_many_messages`); a request and its messages expire 15 minutes after the
+put; 10 puts a minute per client address (an IPv6 /64), 160 per IPv6 /48
+and 64 in a burst then one a second per mailbox, all counted before the cap
+is checked (`429 mailbox_put_rate`); a request blob of at most 8 KiB and a
+message blob of at most 32 KiB (`413 too_large`). A `rid` is never overwritten, and a
+deleted or expired `rid` stays taken until 15 minutes after its expiry
+(`409 rid_exists`). Registrations are bounded per client address
+(`LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT`, 20) and per process
+(`LANGSTROTH_RELAY_MAX_MAILBOXES`, 10000). Blob bytes are capped three
+ways (`507 mailbox_storage`): 4 MiB per mailbox, 8 MiB for all the
+mailboxes registered from one client address, IPv4 address or IPv6 /48
+(`LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT`), and 64 MiB in all
+(`LANGSTROTH_RELAY_MAILBOX_MAX_BYTES`), so mailboxes a stranger registers
+on an open relay can't fill the relay for every workspace. A mailbox with
+no live request and no member call for 24 hours is forgotten (members
+register it again when they see `mailbox_unknown`). Long polls: 16 per
+client and 64 per IPv6 /48 (past those, `429 mailbox_polls`); once one
+mailbox holds 160 or the relay 900 of its 1000, a long poll answers at once
+as if `wait=0`, so nobody can lock honest pollers out.
+
+**Errors** are JSON problem documents:
+`{"error":"<code>","code":"<code>","message":"..."}` (both fields carry the
+code, so this is the relay's refusal shape too), plus `retryAfter` and
+`Retry-After` on a `429` or `507`. Codes: `mailbox_unknown`,
+`request_unknown`, `stale_counter`, `rid_exists`, `mailbox_full`,
+`too_many_messages`, `duplicate_message`, `mailbox_put_rate`, `mailbox_register`,
+`mailboxes_full`, `mailbox_storage`, `mailbox_polls`, `bad_put_cap`,
+`bad_read_key`, `bad_member_auth`, `auth_required`, `token_required`,
+`bad_signature`, `mailbox_mismatch`, `invalid_request`, `too_large`. With
+mailboxes off, every route is a plain `404` with no problem document.
+
+**Storage.** Mailboxes live in the relay process only, like pairing codes:
+they are not in the snapshot or in Postgres. A restart forgets every
+registration and live request; Ligus members register again when a call
+answers `mailbox_unknown`, and a request lives 15 minutes at most anyway.
+This matches the Helm chart, which runs exactly one sync process; the
+tunnel-only pod (`LANGSTROTH_RELAY_ROUTES=tunnel`) answers `404` here.
+
+**Metrics.** `hive_relay_mailboxes`, `hive_relay_mailbox_requests`,
+`hive_relay_mailbox_bytes` (gauges) and
+`hive_relay_mailbox_refusals_total{code}`.
+
+**What the relay still sees:** which mailboxes exist, when requests are put
+and messages posted, their sizes, and client addresses. It can't link a
+mailbox to a room, and it can withhold or delay requests; it can't read or
+forge one, and the code the two people compare catches a relay that
+substitutes keys.
 
 ## GitHub social routes (deprecated, off by default)
 

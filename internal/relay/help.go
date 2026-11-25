@@ -100,6 +100,8 @@ ENVIRONMENT
   - an APNs key, key id or team id is set while LANGSTROTH_RELAY_TUNNEL is off;
   - LANGSTROTH_RELAY_REQUIRE_DB is on without DATABASE_URL, or Postgres can't
     be reached or migrated;
+  - LANGSTROTH_RELAY_MAILBOXES is not on, off or token, or is token on a
+    relay with no access gate;
   - a LANGSTROTH_RELAY_BACKUP* setting doesn't parse, or relay-state.json is
     missing or unreadable and there are backups but none passes its checks
     (help backup).
@@ -138,6 +140,7 @@ var helpTopics = map[string]helpTopic{
 	"config":          {"every environment variable, its default and meaning", writeConfigHelp},
 	"deploy":          {"one-shot deploys: Docker Compose, systemd, Helm (OCI chart), a PaaS", textTopic(deployHelp)},
 	"membership":      {"roster mode (LANGSTROTH_RELAY_MEMBERSHIP)", textTopic(membershipHelp)},
+	"mailboxes":       {"approval mailboxes for code-match approval (LANGSTROTH_RELAY_MAILBOXES)", textTopic(mailboxesHelp)},
 	"tunnel":          {"the phone tunnel between the Ligus iPhone app and ligus serve", textTopic(tunnelHelp)},
 	"push":            {"push notifications to your own iPhone app build (APNs)", textTopic(pushHelp)},
 	"backup":          {"what to back up and how to restore", textTopic(backupHelp)},
@@ -366,6 +369,87 @@ Attested mode (LANGSTROTH_RELAY_MEMBERSHIP=attested, where the workspace's
 own admin devices publish a signed member list and every request carries a
 member proof) is in design and not built. Setting the value today leaves
 membership off.
+`
+
+const mailboxesHelp = `Mailboxes: approval mailboxes for code-match approval
+
+On by default. A Ligus workspace's members register one approval mailbox per
+key epoch. A new box, computer or phone puts a sealed request into it; an
+Admin's device and the requester then trade a few sealed messages under that
+request, compare a short code on both screens, and the requester deletes the
+request once it has its answer. The relay never holds a key that opens any
+of it: it checks signatures, hashes and limits only.
+
+  LANGSTROTH_RELAY_MAILBOXES=on      (default) the routes below
+  LANGSTROTH_RELAY_MAILBOXES=off     every /v1/mailboxes/* route answers 404;
+                                     Ligus falls back to pasting codes
+  LANGSTROTH_RELAY_MAILBOXES=token   as on, and a put also needs a valid
+                                     access token (needs an access gate:
+                                     LANGSTROTH_RELAY_TOKEN_PUBKEY,
+                                     _ACCESS_TOKENS or _TENANCY)
+
+Routes (JSON; ids are 32 lowercase hex characters):
+  GET    /v1/mailboxes/{mailbox}                         no auth: {mailbox, counter}
+  PUT    /v1/mailboxes/{mailbox}                         register or reset, signed
+  PUT    /v1/mailboxes/{mailbox}/requests/{rid}          put a request: X-Ligus-Put-Cap
+  GET    /v1/mailboxes/{mailbox}/requests                list: a member
+  POST   /v1/mailboxes/{mailbox}/requests/{rid}/msgs     a member or the requester
+  GET    /v1/mailboxes/{mailbox}/requests/{rid}/msgs?after=N&wait=S
+                                                         long poll up to 25 s
+  DELETE /v1/mailboxes/{mailbox}/requests/{rid}          the requester
+
+Who may do what:
+  - Register and reset are self-certifying: the mailbox id is the first 16
+    bytes of SHA-256 of the mailbox's Ed25519 key, and the body is signed by
+    that key, so only a holder of the workspace key can claim or reset one.
+    The next counter (current + 1) resets the put cap; the old one stops
+    working at once. Any other counter is 409 stale_counter.
+  - A member signs X-Ligus-Mailbox-Auth with that key (a timestamp within
+    300 s of the relay's clock). On a token-gated relay members (and
+    register) also send their usual access token.
+  - A requester has no token: its X-Ligus-Read-Key opens its own request
+    only. A put needs the mailbox's current put cap (X-Ligus-Put-Cap), and
+    a token too with LANGSTROTH_RELAY_MAILBOXES=token.
+  The put cap is in the workspace's approval address, which is not a secret:
+  anyone holding it can put requests until an Admin resets the address.
+  That is the only write the relay takes without a signature or a token,
+  and the limits below bound it. Every key holder can open a request and so
+  learns its read key; at worst that disrupts that one request.
+  On a tenancy relay a mailbox belongs to the registering token's tenant.
+
+Limits: 64 live requests per mailbox (429 mailbox_full), 10 messages per
+request (429 too_many_messages), a request and its messages expire 15
+minutes after the put, 10 puts a minute per client address (160 per IPv6
+/48, one a second per mailbox after a burst of 64; 429 mailbox_put_rate), a
+request blob of at most 8 KiB and a message blob of at most 32 KiB (413),
+and the same blob twice on one rid is 409 duplicate_message. A rid is never
+overwritten, and a deleted or expired rid can't be put again for 15 minutes
+past its expiry (409 rid_exists).
+Registrations: LANGSTROTH_RELAY_MAX_MAILBOXES per process,
+LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT per client address,
+LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT per tenant. Blob bytes: 4 MiB per
+mailbox, LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT for the mailboxes one
+client address (IPv4 address or IPv6 /48) registered, and
+LANGSTROTH_RELAY_MAILBOX_MAX_BYTES in all (507 mailbox_storage; help
+config). A mailbox with no live request and no member call for 24 hours is
+forgotten. Long polls: 16 per client and 64 per IPv6 /48 (429
+mailbox_polls); near a mailbox's or the relay's cap they answer at once.
+
+Storage: in the relay process only (like pairing codes), never in the
+snapshot or Postgres. A restart forgets every mailbox and request; members
+register again when a call answers mailbox_unknown. The Helm chart runs one
+sync process; the tunnel-only pod answers 404 here.
+
+Errors are JSON problem documents: {"error":"<code>","code":"<code>",
+"message":...}, plus retryAfter and Retry-After on a 429 or 507. Codes:
+mailbox_unknown, request_unknown, stale_counter (409, with the current
+counter), rid_exists, mailbox_full, too_many_messages, duplicate_message, mailbox_put_rate,
+mailbox_register, mailboxes_full, mailbox_storage, mailbox_polls,
+bad_put_cap, bad_read_key, bad_member_auth, auth_required, token_required,
+bad_signature, mailbox_mismatch, invalid_request, too_large.
+
+Metrics: hive_relay_mailboxes, hive_relay_mailbox_requests,
+hive_relay_mailbox_bytes and hive_relay_mailbox_refusals_total{code}.
 `
 
 const tunnelHelp = `Tunnel: the Ligus iPhone app to a ligus serve host

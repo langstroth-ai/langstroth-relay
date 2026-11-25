@@ -10,7 +10,7 @@ and `.claude/skills/relay-run-local` (plain Markdown; any agent can follow them)
 
 The binary documents itself: `langstroth-relay help` (commands, exit codes,
 refuse-to-start rules), `langstroth-relay help <topic>` (`config`, `deploy`,
-`membership`, `tunnel`, `push`, `backup`, `troubleshooting`) and
+`membership`, `mailboxes`, `tunnel`, `push`, `backup`, `troubleshooting`) and
 `langstroth-relay check --json [--url URL]` (a `ligus.checks.v1` report, the
 shape `ligus doctor --json` prints too: `schema`, `tool`, `command`, `ok`,
 `exitCode`, `checks[]` of `{id, title, status, detail, fix}` with `status`
