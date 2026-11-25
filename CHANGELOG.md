@@ -4,6 +4,30 @@
 
 ### Added
 
+- **Approval mailboxes** (`/v1/mailboxes/*`), the transport for Ligus 0.4
+  code-match approval: a new box, computer or phone puts a sealed request
+  into a workspace's mailbox, and an Admin's device and the requester trade
+  a few sealed messages under it. Additive; no existing route changes.
+  Register and reset are self-certifying (the mailbox id is the hash of an
+  Ed25519 key only workspace-key holders can derive, and the body is signed
+  by it); members sign each call (`X-Ligus-Mailbox-Auth`, 300 s window, plus
+  their access token on a gated relay); a requester uses a read key for its
+  own request; a put needs the mailbox's current put cap. Limits: 64 live
+  requests per mailbox, 10 messages per request, 15-minute expiry, 10 puts
+  a minute per client address, 8 KiB requests and 32 KiB messages, no rid
+  reuse, and caps on registrations per client and per process. State is
+  in-process only (not in the snapshot or Postgres): a restart forgets it
+  and members register again. `langstroth-relay help mailboxes` and
+  [docs/reference.md](docs/reference.md#approval-mailboxes-v1mailboxes).
+  **Upgrade note for self-hosters:** on by default, including on token-gated
+  relays, where puts that present the put cap need no token (a joining
+  device has none yet). Set `LANGSTROTH_RELAY_MAILBOXES=token` to require
+  an access token for puts too, or `off` to answer `404` (Ligus then falls
+  back to pasting codes). An unknown value, or `token` on a relay with no
+  access gate, stops the relay; `check` gains a `mailboxes` line. New
+  settings: `LANGSTROTH_RELAY_MAILBOXES`, `_MAX_MAILBOXES`,
+  `_MAX_MAILBOXES_PER_CLIENT`, `_MAILBOX_MAX_BYTES`.
+
 - **Built-in backups for the memory store** (`LANGSTROTH_RELAY_DATA_DIR`), on
   by default: every hour and on shutdown the relay copies `relay-state.json`,
   gzipped and owner-only, to `<data dir>/backups/` and keeps the newest 24.

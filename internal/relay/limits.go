@@ -33,10 +33,11 @@ const inflightSlash48Factor = 16
 
 // inflightPath reports whether the per-client in-flight cap applies to path:
 // every limited route but the ones with their own concurrency caps (event
-// streams, the tunnel's WebSockets, blob transfers).
+// streams, the tunnel's WebSockets, blob transfers, mailbox long polls).
 func inflightPath(path string) bool {
 	return limitedPath(path) && !strings.HasPrefix(path, "/v1/tunnel/") &&
-		!strings.HasSuffix(path, "/events") && !strings.Contains(path, "/blobs")
+		!strings.HasSuffix(path, "/events") && !strings.Contains(path, "/blobs") &&
+		!(strings.HasPrefix(path, "/v1/mailboxes/") && strings.HasSuffix(path, "/msgs"))
 }
 
 // acquireInflight takes an in-flight slot for r's client (and its /48);

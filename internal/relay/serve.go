@@ -45,6 +45,7 @@ func Serve() {
 	fatalIf(routesConfigError(getenv))
 	fatalIf(apnsWithoutTunnelError(getenv))
 	fatalIf(backupConfigError())
+	fatalIf(mailboxesConfigError())
 
 	// Built-in backups of the memory store (backup.go). Before the store
 	// loads: an unreadable snapshot is moved aside and a missing one is
@@ -108,6 +109,9 @@ func Serve() {
 	if cs, ok := store.(ContactStore); ok {
 		go contactPruneLoop(cs, stopFlush)
 	}
+
+	// Approval mailboxes: expire requests nobody touches (mailboxes.go).
+	go srv.mailboxSweepLoop(stopFlush)
 
 	addr := resolveAddr()
 	// Timeouts bound how long a single connection can tie up resources, which

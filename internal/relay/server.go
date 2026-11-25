@@ -125,6 +125,8 @@ type Server struct {
 
 	githubRoutes bool // deprecated GitHub social routes registered (github_routes.go)
 
+	mbox *mailboxHub // nil = /v1/mailboxes/ off (404) (mailboxes.go)
+
 	contacts   ContactStore // nil = /v1/contacts/ off (404)
 	contactCfg contactConfig
 	contactLim contactLimiters
@@ -243,6 +245,15 @@ func New(o Options) *Server {
 			slog.Warn("store does not implement ContactStore; /v1/contacts/ is off")
 		}
 	}
+	// Approval mailboxes (LANGSTROTH_RELAY_MAILBOXES, default on). A value
+	// that doesn't parse stops Serve (mailboxesConfigError); a library
+	// caller gets the routes off rather than a guess.
+	if mode, err := mailboxModeFromEnv(); err != nil {
+		slog.Error("mailbox config refused; /v1/mailboxes/ is off", "error", err)
+	} else if mode != mailboxesOff {
+		_, open := s.entitlement.Allow("", nowUnix())
+		s.mbox = newMailboxHub(mode, !open)
+	}
 	// A tenant-confined gate is always workspace-strict (see
 	// entitlementConfigError): tid alone would let one tenant's token reach
 	// another tenant's workspaces.
@@ -311,6 +322,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /metrics", s.guardMetrics(func(w http.ResponseWriter, r *http.Request) {
 		m.handler(w, r)
 		s.writeLimitMetrics(r.Context(), w)
+		s.writeMailboxMetrics(w)
 	}))
 
 	mux.HandleFunc("POST /v1/workspaces/{id}/envelopes", s.scoped(s.postEnvelope))
@@ -346,6 +358,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Contacts (v0.3): opaque signed records + sealed drop boxes.
 	s.registerContacts(mux)
+
+	// Approval mailboxes (Ligus 0.4): additive; off -> 404.
+	s.registerMailboxes(mux)
 
 	// User/token management — gated by the AdminAuthorizer seam (not the relay
 	// access token), so these bypass the access gate below.
@@ -414,10 +429,12 @@ func (s *Server) gate(next http.Handler) http.Handler {
 			defer release()
 		}
 		if r.URL.Path == "/" || r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/v1/admin/") ||
-			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") || (s.tenancy != nil && (r.URL.Path == "/v1/tenant" || strings.HasPrefix(r.URL.Path, "/v1/tenant/"))) {
+			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") || strings.HasPrefix(r.URL.Path, "/v1/mailboxes/") || (s.tenancy != nil && (r.URL.Path == "/v1/tenant" || strings.HasPrefix(r.URL.Path, "/v1/tenant/"))) {
 			// The tunnel authenticates hosts and phones itself (signed
 			// challenges + host-signed credentials); a host's registration
 			// token is checked against this same access policy (tunnel_policy.go).
+			// Approval mailboxes check their own auth (mailboxes.go): a
+			// requester has no token, and a member's token is checked there.
 			// The status page, health, and metrics are public; the admin API runs
 			// its own AdminAuthorizer (an operator credential, not a relay token).
 			next.ServeHTTP(w, r)
