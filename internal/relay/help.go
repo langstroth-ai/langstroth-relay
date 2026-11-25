@@ -402,7 +402,8 @@ Who may do what:
   - Register and reset are self-certifying: the mailbox id is the first 16
     bytes of SHA-256 of the mailbox's Ed25519 key, and the body is signed by
     that key, so only a holder of the workspace key can claim or reset one.
-    A higher counter resets the put cap; the old one stops working at once.
+    The next counter (current + 1) resets the put cap; the old one stops
+    working at once. Any other counter is 409 stale_counter.
   - A member signs X-Ligus-Mailbox-Auth with that key (a timestamp within
     300 s of the relay's clock). On a token-gated relay members (and
     register) also send their usual access token.
@@ -412,18 +413,27 @@ Who may do what:
   The put cap is in the workspace's approval address, which is not a secret:
   anyone holding it can put requests until an Admin resets the address.
   That is the only write the relay takes without a signature or a token,
-  and the limits below bound it.
+  and the limits below bound it. Every key holder can open a request and so
+  learns its read key; at worst that disrupts that one request.
+  On a tenancy relay a mailbox belongs to the registering token's tenant.
 
 Limits: 64 live requests per mailbox (429 mailbox_full), 10 messages per
 request (429 too_many_messages), a request and its messages expire 15
-minutes after the put, 10 puts a minute per client address (429
-mailbox_put_rate), a request blob of at most 8 KiB and a message blob of at
-most 32 KiB (413). A rid is never overwritten, and a deleted or expired rid
-can't be put again for 15 minutes past its expiry (409 rid_exists).
+minutes after the put, 10 puts a minute per client address (160 per IPv6
+/48, one a second per mailbox after a burst of 64; 429 mailbox_put_rate), a
+request blob of at most 8 KiB and a message blob of at most 32 KiB (413),
+and the same blob twice on one rid is 409 duplicate_message. A rid is never
+overwritten, and a deleted or expired rid can't be put again for 15 minutes
+past its expiry (409 rid_exists).
 Registrations: LANGSTROTH_RELAY_MAX_MAILBOXES per process,
-LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT per client address, and
-LANGSTROTH_RELAY_MAILBOX_MAX_BYTES of blobs in all (help config). A mailbox
-no member touched for 30 days is forgotten.
+LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT per client address,
+LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT per tenant. Blob bytes: 4 MiB per
+mailbox, LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT for the mailboxes one
+client address (IPv4 address or IPv6 /48) registered, and
+LANGSTROTH_RELAY_MAILBOX_MAX_BYTES in all (507 mailbox_storage; help
+config). A mailbox with no live request and no member call for 24 hours is
+forgotten. Long polls: 16 per client and 64 per IPv6 /48 (429
+mailbox_polls); near a mailbox's or the relay's cap they answer at once.
 
 Storage: in the relay process only (like pairing codes), never in the
 snapshot or Postgres. A restart forgets every mailbox and request; members
@@ -433,7 +443,7 @@ sync process; the tunnel-only pod answers 404 here.
 Errors are JSON problem documents: {"error":"<code>","code":"<code>",
 "message":...}, plus retryAfter and Retry-After on a 429 or 507. Codes:
 mailbox_unknown, request_unknown, stale_counter (409, with the current
-counter), rid_exists, mailbox_full, too_many_messages, mailbox_put_rate,
+counter), rid_exists, mailbox_full, too_many_messages, duplicate_message, mailbox_put_rate,
 mailbox_register, mailboxes_full, mailbox_storage, mailbox_polls,
 bad_put_cap, bad_read_key, bad_member_auth, auth_required, token_required,
 bad_signature, mailbox_mismatch, invalid_request, too_large.

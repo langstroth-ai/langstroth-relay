@@ -71,25 +71,33 @@ const (
 	mailboxMaxWait        = 25 * time.Second
 
 	// The relay's own bounds.
-	mailboxMaxReserved       = 4 * mailboxMaxLive  // deleted/expired rids held per mailbox
-	mailboxReserveFor        = mailboxRequestTTL   // a dead rid stays taken this long past its expiry
-	mailboxIdleTTL           = 30 * 24 * time.Hour // a mailbox no member touched for this long is forgotten
-	mailboxMaxPolls          = 1000                // concurrent long polls per process
-	mailboxMaxPollsPerClient = 16                  // concurrent long polls per client
-	mailboxSweepEvery        = 10 * time.Second    // lazy sweep of every mailbox, at most
-	mailboxRegisterBodyCap   = 4 << 10             // register body
-	mailboxSlash48Factor     = createSlash48Factor // an IPv6 /48 holds this many clients' mailboxes
-	mailboxRetryStale        = 15 * time.Second    // Retry-After when only time frees a slot
-	mailboxRetryStorage      = retryStoreFull      // 507: the operator or expiry frees it
-	mailboxRetryRegister     = 24 * time.Hour      // a client's mailbox cap: idle expiry frees it
-	defaultMaxMailboxes      = 10000               // LANGSTROTH_RELAY_MAX_MAILBOXES
-	defaultMaxMailboxesPerCl = 20                  // LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT
-	defaultMailboxMaxBytes   = 64 << 20            // LANGSTROTH_RELAY_MAILBOX_MAX_BYTES
-	mailboxSweepLoopInterval = 30 * time.Second    // background sweep (Serve)
-	mailboxPollRetry         = retrySSE            // Retry-After for mailbox_polls
-	mailboxMsgRetryMin       = time.Second         // floor for too_many_messages
-	mailboxB64Alphabet       = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-	mailboxMaxCounter        = math.MaxUint32
+	mailboxMaxReserved        = 4 * mailboxMaxLive       // deleted/expired rids held per mailbox
+	mailboxReserveFor         = mailboxRequestTTL        // a dead rid stays taken this long past its expiry
+	mailboxIdleTTL            = 24 * time.Hour           // a mailbox with no live request and no member call for this long is forgotten
+	mailboxMaxPolls           = 1000                     // concurrent long polls per process
+	mailboxPollsSoft          = mailboxMaxPolls * 9 / 10 // past this, long polls answer at once (wait=0)
+	mailboxMaxPollsPerClient  = 16                       // concurrent long polls per client (/64)
+	mailboxMaxPollsPer48      = 64                       // concurrent long polls per IPv6 /48
+	mailboxMaxPollsPerBox     = 160                      // concurrent long polls on one mailbox before they answer at once
+	mailboxMaxBytesPerBox     = 4 << 20                  // blob bytes one mailbox's live requests hold
+	mailboxBoxPutRate         = 1.0                      // puts per second into one mailbox, all clients
+	mailboxBoxPutBurst        = mailboxMaxLive           // a 64-box rollout fits in one burst
+	mailboxSweepEvery         = 10 * time.Second         // lazy sweep of every mailbox, at most
+	mailboxRegisterBodyCap    = 4 << 10                  // register body
+	mailboxSlash48Factor      = createSlash48Factor      // an IPv6 /48 holds this many clients' mailboxes
+	mailboxRetryStale         = 15 * time.Second         // Retry-After when only time frees a slot
+	mailboxRetryStorage       = retryStoreFull           // 507: the operator or expiry frees it
+	mailboxRetryRegister      = mailboxIdleTTL           // a client's mailbox cap: idle expiry frees it
+	defaultMaxMailboxes       = 10000                    // LANGSTROTH_RELAY_MAX_MAILBOXES
+	defaultMaxMailboxesPerCl  = 20                       // LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT
+	defaultMailboxMaxBytes    = 64 << 20                 // LANGSTROTH_RELAY_MAILBOX_MAX_BYTES
+	defaultMailboxClientBytes = 8 << 20                  // LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT
+	defaultMaxMailboxesPerTn  = 1000                     // LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT
+	mailboxSweepLoopInterval  = 30 * time.Second         // background sweep (Serve)
+	mailboxPollRetry          = retrySSE                 // Retry-After for mailbox_polls
+	mailboxMsgRetryMin        = time.Second              // floor for too_many_messages
+	mailboxB64Alphabet        = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	mailboxMaxCounter         = math.MaxUint32
 )
 
 // LANGSTROTH_RELAY_MAILBOXES values.
@@ -119,6 +127,7 @@ const (
 	mbCodeTokenRequired  = "token_required"
 	mbCodeBadSignature   = "bad_signature"
 	mbCodeMismatch       = "mailbox_mismatch"
+	mbCodeDuplicate      = "duplicate_message"
 	mbCodeInvalid        = "invalid_request"
 	mbCodeTooLarge       = "too_large"
 )
@@ -173,10 +182,16 @@ type mailboxHub struct {
 	maxBoxes     int
 	maxPerClient int
 	maxBytes     int64
+	ownerBytes   int64 // per registering client (IPv4 address or IPv6 /48)
+	maxPerTenant int   // tenancy: mailboxes per tenant
 
-	putLimiter  *ipRateLimiter
-	polls       *concurrencyLimiter
-	pollsClient *keyedConcurrencyLimiter
+	putLimiter   *ipRateLimiter // per client (/64)
+	putLimiter48 *ipRateLimiter // per IPv6 /48 (mailboxSlash48Factor times the rate)
+	putLimitBox  *ipRateLimiter // per mailbox, all clients
+	polls        *concurrencyLimiter
+	pollsClient  *keyedConcurrencyLimiter
+	polls48      *keyedConcurrencyLimiter
+	pollsBox     *keyedConcurrencyLimiter
 
 	refusals map[string]*atomic.Int64
 
@@ -184,6 +199,8 @@ type mailboxHub struct {
 	boxes     map[string]*mailbox
 	perClient map[string]int
 	per48     map[string]int
+	perTenant map[string]int
+	byOwner   map[string]int64 // blob bytes held, per mailbox owner group
 	bytes     int64
 	reqCount  int
 	sweptAt   time.Time
@@ -196,6 +213,9 @@ type mailbox struct {
 	counter    uint32
 	client     string // clientKey of the registering client
 	slash48    string
+	owner      string    // the registering client's IPv4 address or IPv6 /48: its blob bytes are charged here
+	tenant     string    // tenancy: the registering token's tenant ("" otherwise)
+	bytes      int64     // blob bytes its live requests hold
 	active     time.Time // last register or member call
 	reqs       map[string]*mbRequest
 	reserved   map[string]time.Time // dead rid -> until when it stays taken
@@ -229,13 +249,21 @@ func newMailboxHub(mode string, gated bool) *mailboxHub {
 		maxBoxes:     int(max(envInt64("LANGSTROTH_RELAY_MAX_MAILBOXES", defaultMaxMailboxes), 0)),
 		maxPerClient: int(max(envInt64("LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT", defaultMaxMailboxesPerCl), 0)),
 		maxBytes:     max(envInt64("LANGSTROTH_RELAY_MAILBOX_MAX_BYTES", defaultMailboxMaxBytes), 0),
+		ownerBytes:   max(envInt64("LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT", defaultMailboxClientBytes), 0),
+		maxPerTenant: int(max(envInt64("LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT", defaultMaxMailboxesPerTn), 0)),
 		putLimiter:   newIPRateLimiter(mailboxPutsPerMinute/60.0, mailboxPutsPerMinute),
+		putLimiter48: newIPRateLimiter(mailboxSlash48Factor*mailboxPutsPerMinute/60.0, mailboxSlash48Factor*mailboxPutsPerMinute),
+		putLimitBox:  newIPRateLimiter(mailboxBoxPutRate, mailboxBoxPutBurst),
 		polls:        newConcurrencyLimiter(mailboxMaxPolls),
 		pollsClient:  newKeyedConcurrencyLimiter(mailboxMaxPollsPerClient),
+		polls48:      newKeyedConcurrencyLimiter(mailboxMaxPollsPer48),
+		pollsBox:     newKeyedConcurrencyLimiter(mailboxMaxPollsPerBox),
 		refusals:     map[string]*atomic.Int64{},
 		boxes:        map[string]*mailbox{},
 		perClient:    map[string]int{},
 		per48:        map[string]int{},
+		perTenant:    map[string]int{},
+		byOwner:      map[string]int64{},
 	}
 	for _, c := range mailboxRefusalCodes {
 		h.refusals[c] = new(atomic.Int64)
@@ -411,11 +439,39 @@ func (s *Server) mailboxPathIDs(w http.ResponseWriter, r *http.Request, withRID 
 // tokenOK checks the access token as the gate would (any valid token; a
 // mailbox isn't bound to a room). Open relay: always true.
 func (s *Server) mailboxTokenOK(w http.ResponseWriter, r *http.Request) bool {
-	if _, ok := s.entitlement.Allow(bearerToken(r), nowUnix()); !ok {
+	_, ok := s.mailboxToken(w, r)
+	return ok
+}
+
+// mailboxToken is mailboxTokenOK that also returns the token's tenant on a
+// tenancy relay ("" otherwise).
+func (s *Server) mailboxToken(w http.ResponseWriter, r *http.Request) (string, bool) {
+	c, ok := s.entitlement.Allow(bearerToken(r), nowUnix())
+	if !ok {
 		s.mbox.problem(w, http.StatusUnauthorized, mbCodeTokenRequired, "relay requires a valid access token", 0, nil)
-		return false
+		return "", false
 	}
-	return true
+	if s.tenancy != nil && c != nil {
+		return c.Tid, true
+	}
+	return "", true
+}
+
+// mailboxTenant is the configured tenant id, or nil.
+func (s *Server) mailboxTenant(id string) *tenantConf {
+	if s.tenancy == nil || id == "" {
+		return nil
+	}
+	return s.tenancy.tenants[id]
+}
+
+// mailboxOwner is the group a mailbox's blob bytes are charged to: the
+// registering client's IPv6 /48, or its IPv4 address.
+func mailboxOwner(r *http.Request) string {
+	if k := slash48Key(r); k != "" {
+		return k
+	}
+	return clientKey(r)
 }
 
 // ---- hub internals (h.mu held) ----
@@ -441,7 +497,7 @@ func (h *mailboxHub) dropRequestLocked(b *mailbox, q *mbRequest) {
 	for _, m := range q.msgs {
 		n += int64(len(m.Blob))
 	}
-	h.bytes -= n
+	h.chargeLocked(b, -n)
 	h.reqCount--
 	q.gone = true
 	q.msgs = nil
@@ -460,8 +516,36 @@ func (h *mailboxHub) sweepAllLocked(now time.Time) {
 	}
 }
 
+// roomForLocked reports which byte cap n more bytes into b would pass:
+// the mailbox's, its owner's (the registering client) or the relay's.
+func (h *mailboxHub) roomForLocked(b *mailbox, n int64) (string, bool) {
+	switch {
+	case b.bytes+n > mailboxMaxBytesPerBox:
+		return "this mailbox's storage is full", false
+	case h.ownerBytes > 0 && h.byOwner[b.owner]+n > h.ownerBytes:
+		return "the storage of the mailboxes registered from this mailbox's client address is full", false
+	case h.maxBytes > 0 && h.bytes+n > h.maxBytes:
+		return "relay mailbox storage is full", false
+	}
+	return "", true
+}
+
+// chargeLocked adds n (negative to free) blob bytes to b, its owner and the relay.
+func (h *mailboxHub) chargeLocked(b *mailbox, n int64) {
+	b.bytes += n
+	h.bytes += n
+	if h.byOwner[b.owner] += n; h.byOwner[b.owner] <= 0 {
+		delete(h.byOwner, b.owner)
+	}
+}
+
 func (h *mailboxHub) forgetLocked(id string, b *mailbox) {
 	delete(h.boxes, id)
+	if b.tenant != "" {
+		if h.perTenant[b.tenant]--; h.perTenant[b.tenant] <= 0 {
+			delete(h.perTenant, b.tenant)
+		}
+	}
 	if h.perClient[b.client]--; h.perClient[b.client] <= 0 {
 		delete(h.perClient, b.client)
 	}
@@ -490,12 +574,13 @@ func (h *mailboxHub) sweep() {
 	h.sweepAllLocked(h.now())
 }
 
-// authPub returns a copy of the registered key of mailbox id.
-func (h *mailboxHub) authPub(id string) (ed25519.PublicKey, bool) {
+// authPub returns a copy of the registered key of mailbox id, for a caller
+// of tenant (tenancy: another tenant's mailbox reads as unknown).
+func (h *mailboxHub) authPub(id, tenant string) (ed25519.PublicKey, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	b := h.boxLocked(id, h.now())
-	if b == nil {
+	if b == nil || b.tenant != tenant {
 		return nil, false
 	}
 	return append(ed25519.PublicKey(nil), b.authPub...), true
@@ -543,7 +628,8 @@ func (s *Server) mailboxMemberAuth(w http.ResponseWriter, r *http.Request, mb st
 		h.problem(w, http.StatusUnauthorized, mbCodeAuthRequired, "member auth required ("+mailboxAuthHeader+")", 0, nil)
 		return false
 	}
-	if !s.mailboxTokenOK(w, r) {
+	tenant, ok := s.mailboxToken(w, r)
+	if !ok {
 		return false
 	}
 	tsText, sigText, ok := strings.Cut(hdr, ".")
@@ -558,7 +644,7 @@ func (s *Server) mailboxMemberAuth(w http.ResponseWriter, r *http.Request, mb st
 		h.problem(w, http.StatusUnauthorized, mbCodeBadMemberAuth, "member auth timestamp is more than 300 s from the relay's clock", 0, nil)
 		return false
 	}
-	pub, ok := h.authPub(mb)
+	pub, ok := h.authPub(mb, tenant)
 	if !ok {
 		h.problem(w, http.StatusNotFound, mbCodeUnknown, "no such mailbox", 0, nil)
 		return false
@@ -651,7 +737,11 @@ type mailboxRegisterReq struct {
 // mailboxRegister: PUT /v1/mailboxes/{mailbox} registers or resets a mailbox.
 func (s *Server) mailboxRegister(w http.ResponseWriter, r *http.Request) {
 	mb, _, ok := s.mailboxPathIDs(w, r, false)
-	if !ok || !s.limitWrite(w, r) || !s.mailboxTokenOK(w, r) {
+	if !ok || !s.limitWrite(w, r) {
+		return
+	}
+	tenant, ok := s.mailboxToken(w, r)
+	if !ok {
 		return
 	}
 	h := s.mbox
@@ -684,7 +774,7 @@ func (s *Server) mailboxRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// Self-certifying: the cheap check first, then the signature.
 	if mailboxIDOf(authPub) != mb {
-		h.problem(w, http.StatusForbidden, mbCodeMismatch, "mailbox is not hex(SHA256(authPub)[:16])", 0, nil)
+		h.problem(w, http.StatusBadRequest, mbCodeMismatch, "mailbox is not hex(SHA256(authPub)[:16])", 0, nil)
 		return
 	}
 	var mbRaw [16]byte
@@ -700,8 +790,17 @@ func (s *Server) mailboxRegister(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	b := h.boxLocked(mb, now)
 	switch {
+	case b != nil && b.tenant != tenant:
+		// Tenancy: another tenant's mailbox is invisible.
+		h.mu.Unlock()
+		h.problem(w, http.StatusNotFound, mbCodeUnknown, "no such mailbox", 0, nil)
 	case b == nil:
 		client, s48 := clientKey(r), slash48Key(r)
+		if tenant != "" && h.maxPerTenant > 0 && h.perTenant[tenant] >= h.maxPerTenant {
+			h.mu.Unlock()
+			h.problem(w, http.StatusTooManyRequests, mbCodeRegister, "this tenant registered its quota of mailboxes", mailboxRetryRegister, nil)
+			return
+		}
 		if h.maxPerClient > 0 && (h.perClient[client] >= h.maxPerClient || s48 != "" && h.per48[s48] >= h.maxPerClient*mailboxSlash48Factor) {
 			h.mu.Unlock()
 			h.problem(w, http.StatusTooManyRequests, mbCodeRegister, "too many mailboxes registered from this client", mailboxRetryRegister, nil)
@@ -714,25 +813,30 @@ func (s *Server) mailboxRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		h.boxes[mb] = &mailbox{
 			id: mb, authPub: append(ed25519.PublicKey(nil), authPub...), putCapHash: ch, counter: n,
-			client: client, slash48: s48, active: now,
+			client: client, slash48: s48, owner: mailboxOwner(r), tenant: tenant, active: now,
 			reqs: map[string]*mbRequest{}, reserved: map[string]time.Time{},
 		}
 		h.perClient[client]++
+		if tenant != "" {
+			h.perTenant[tenant]++
+		}
 		if s48 != "" {
 			h.per48[s48]++
 		}
 		h.mu.Unlock()
 		mbWriteJSON(w, http.StatusCreated, mailboxInfo{Mailbox: mb, Counter: n})
-	case n == b.counter && ch == b.putCapHash, n > b.counter:
-		// Same registration again (idempotent), or a reset: the old cap
-		// stops working at once. Live requests stay.
+	case n == b.counter && ch == b.putCapHash, n == b.counter+1 && b.counter < mailboxMaxCounter:
+		// Same registration again (idempotent), or a reset to the next
+		// counter: the old cap stops working at once. Live requests stay.
+		// Only the next counter: a jump (to 2^32-1, say) would leave no
+		// counter for an honest reset until a key rotation.
 		b.counter, b.putCapHash, b.active = n, ch, now
 		h.mu.Unlock()
 		mbWriteJSON(w, http.StatusOK, mailboxInfo{Mailbox: mb, Counter: n})
 	default:
 		cur := b.counter
 		h.mu.Unlock()
-		h.problem(w, http.StatusConflict, mbCodeStale, "counter is below the registered one, or equal with another putCapHash", 0, &cur)
+		h.problem(w, http.StatusConflict, mbCodeStale, "counter must be the registered one (with the same putCapHash) or the next one", 0, &cur)
 	}
 }
 
@@ -766,6 +870,16 @@ func (s *Server) mailboxPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if ok, wait := h.putLimiter.allowWait(clientKey(r)); !ok {
 		h.problem(w, http.StatusTooManyRequests, mbCodePutRate, "too many mailbox puts from this client (10 a minute)", wait, nil)
+		return
+	}
+	if k := slash48Key(r); k != "" {
+		if ok, wait := h.putLimiter48.allowWait(k); !ok {
+			h.problem(w, http.StatusTooManyRequests, mbCodePutRate, "too many mailbox puts from this network (IPv6 /48)", wait, nil)
+			return
+		}
+	}
+	if ok, wait := h.putLimitBox.allowWait(mb); !ok {
+		h.problem(w, http.StatusTooManyRequests, mbCodePutRate, "too many puts into this mailbox", wait, nil)
 		return
 	}
 	raw, ok := h.readBody(w, r, mailboxMaxRequestBlob+4096)
@@ -806,6 +920,15 @@ func (s *Server) mailboxPut(w http.ResponseWriter, r *http.Request) {
 		h.problem(w, http.StatusForbidden, mbCodeBadPutCap, "put cap missing or not the mailbox's current one", 0, nil)
 		return
 	}
+	// Tenancy: a put into a tenant's mailbox spends that tenant's request rate.
+	if t := s.mailboxTenant(b.tenant); t != nil && t.rate != nil {
+		if ok, wait := t.rate.allowWait(t.id); !ok {
+			h.mu.Unlock()
+			countLimit(limTenantRate, t.id)
+			h.problem(w, http.StatusTooManyRequests, mbCodePutRate, "tenant rate limit exceeded", wait, nil)
+			return
+		}
+	}
 	if _, live := b.reqs[rid]; live {
 		h.mu.Unlock()
 		h.problem(w, http.StatusConflict, mbCodeRidExists, "rid exists", 0, nil)
@@ -831,17 +954,21 @@ func (s *Server) mailboxPut(w http.ResponseWriter, r *http.Request) {
 		h.problem(w, http.StatusTooManyRequests, mbCodeFull, "mailbox holds 64 live requests", wait, nil)
 		return
 	}
-	if h.maxBytes > 0 && h.bytes+int64(len(req.Blob)) > h.maxBytes {
+	if msg, ok := h.roomForLocked(b, int64(len(req.Blob))); !ok {
 		h.mu.Unlock()
-		h.problem(w, http.StatusInsufficientStorage, mbCodeStorage, "relay mailbox storage is full", mailboxRetryStorage, nil)
+		h.problem(w, http.StatusInsufficientStorage, mbCodeStorage, msg, mailboxRetryStorage, nil)
 		return
 	}
+	tenant := b.tenant
 	q := &mbRequest{rid: rid, blob: req.Blob, putAt: now, expiresAt: now.Add(mailboxRequestTTL), wake: make(chan struct{})}
 	copy(q.readKeyHash[:], rkh)
 	b.reqs[rid] = q
-	h.bytes += int64(len(req.Blob))
+	h.chargeLocked(b, int64(len(req.Blob)))
 	h.reqCount++
 	h.mu.Unlock()
+	if tenant != "" {
+		countTenantRequest(tenant)
+	}
 	mbWriteJSON(w, http.StatusCreated, mailboxPutResp{RID: rid, PutAt: ms(q.putAt), ExpiresAt: ms(q.expiresAt)})
 }
 
@@ -921,26 +1048,35 @@ func (s *Server) mailboxPostMsg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.mu.Lock()
-	_, q := h.requestForLocked(w, mb, rid, c)
+	b, q := h.requestForLocked(w, mb, rid, c)
 	if q == nil {
 		h.mu.Unlock()
 		return
 	}
 	now := h.now()
+	// Every honest message is sealed to a fresh ephemeral key, so the same
+	// blob twice is a replay (a captured member call is valid for 300 s).
+	for _, m := range q.msgs {
+		if m.Blob == req.Blob {
+			h.mu.Unlock()
+			h.problem(w, http.StatusConflict, mbCodeDuplicate, "this blob is already posted on this request", 0, nil)
+			return
+		}
+	}
 	if len(q.msgs) >= mailboxMaxMsgs {
 		wait := max(q.expiresAt.Sub(now), mailboxMsgRetryMin)
 		h.mu.Unlock()
 		h.problem(w, http.StatusTooManyRequests, mbCodeTooManyMsgs, "this request holds 10 messages", wait, nil)
 		return
 	}
-	if h.maxBytes > 0 && h.bytes+int64(len(req.Blob)) > h.maxBytes {
+	if msg, ok := h.roomForLocked(b, int64(len(req.Blob))); !ok {
 		h.mu.Unlock()
-		h.problem(w, http.StatusInsufficientStorage, mbCodeStorage, "relay mailbox storage is full", mailboxRetryStorage, nil)
+		h.problem(w, http.StatusInsufficientStorage, mbCodeStorage, msg, mailboxRetryStorage, nil)
 		return
 	}
 	seq := len(q.msgs) + 1
 	q.msgs = append(q.msgs, mbMsg{Seq: seq, Blob: req.Blob, To: req.To, From: c.from(), At: ms(now)})
-	h.bytes += int64(len(req.Blob))
+	h.chargeLocked(b, int64(len(req.Blob)))
 	close(q.wake)
 	q.wake = make(chan struct{})
 	h.mu.Unlock()
@@ -980,18 +1116,35 @@ func (s *Server) mailboxGetMsgs(w http.ResponseWriter, r *http.Request) {
 		wait = min(time.Duration(n)*time.Second, mailboxMaxWait)
 	}
 	if wait > 0 {
-		rel, ok := h.polls.acquire()
-		if !ok {
-			h.problem(w, http.StatusTooManyRequests, mbCodePolls, "too many mailbox long polls on this relay", mailboxPollRetry, nil)
-			return
-		}
-		defer rel()
+		// One client (/64) or network (/48) over its share is refused; when
+		// the relay or this mailbox is near its cap the poll answers at once
+		// instead (wait=0), so nobody can lock honest pollers out.
 		relC, ok := h.pollsClient.acquire(clientKey(r))
 		if !ok {
 			h.problem(w, http.StatusTooManyRequests, mbCodePolls, "too many mailbox long polls from this client", mailboxPollRetry, nil)
 			return
 		}
 		defer relC()
+		if k := slash48Key(r); k != "" {
+			rel48, ok := h.polls48.acquire(k)
+			if !ok {
+				h.problem(w, http.StatusTooManyRequests, mbCodePolls, "too many mailbox long polls from this network (IPv6 /48)", mailboxPollRetry, nil)
+				return
+			}
+			defer rel48()
+		}
+		if h.polls.cur.Load() >= mailboxPollsSoft {
+			wait = 0
+		} else if rel, ok := h.polls.acquire(); !ok {
+			wait = 0
+		} else {
+			defer rel()
+			if relB, ok := h.pollsBox.acquire(mb); !ok {
+				wait = 0
+			} else {
+				defer relB()
+			}
+		}
 	}
 	deadline := time.Now().Add(wait)
 	for {

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -128,6 +129,8 @@ func newMBEnv(t *testing.T, ent EntitlementVerifier, k byte, keepPutRate bool) *
 	srv.mbox.now = clock.now
 	if !keepPutRate {
 		srv.mbox.putLimiter = newIPRateLimiter(0, 0)
+		srv.mbox.putLimiter48 = newIPRateLimiter(0, 0)
+		srv.mbox.putLimitBox = newIPRateLimiter(0, 0)
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -241,8 +244,12 @@ func readHdr(rk []byte) map[string]string {
 	return map[string]string{mailboxReadKeyHeader: b64.EncodeToString(rk)}
 }
 
+var msgSeq atomic.Int64
+
+// msgBody is a message with a blob of its own: honest blobs are sealed to a
+// fresh key each time, and the relay refuses the same blob twice on a rid.
 func msgBody(to string) []byte {
-	b, _ := json.Marshal(map[string]string{"blob": "bXNn", "to": to})
+	b, _ := json.Marshal(map[string]string{"blob": "bXNn" + strconv.FormatInt(msgSeq.Add(1), 10), "to": to})
 	return b
 }
 
@@ -275,7 +282,8 @@ func TestMailboxRegisterCounterRules(t *testing.T) {
 		t.Fatalf("stale_counter should carry the current counter: %s", r.raw)
 	}
 	want(t, e.register(putCap(0), 2), 409, mbCodeStale) // lower
-	want(t, e.register(putCap(4), 4), 200, "")          // higher: reset
+	want(t, e.register(putCap(5), 5), 409, mbCodeStale) // a jump past the next counter
+	want(t, e.register(putCap(4), 4), 200, "")          // the next counter: reset
 	r = e.do("GET", "/v1/mailboxes/"+e.id, nil, nil)
 	want(t, r, 200, "")
 	if r.body["counter"] != float64(4) || r.body["mailbox"] != e.id {
@@ -291,7 +299,7 @@ func TestMailboxRegisterAndResetNeedTheMailboxAuthKey(t *testing.T) {
 	want(t, e.do("PUT", "/v1/mailboxes/"+e.id, e.registerBody(other, putCap(1), 0), nil), 403, mbCodeBadSignature)
 	// Another key's authPub, signed by it, claiming this mailbox id: refused.
 	o := &mbEnv{t: t, priv: other, id: e.id}
-	want(t, e.do("PUT", "/v1/mailboxes/"+e.id, o.registerBody(nil, putCap(1), 0), nil), 403, mbCodeMismatch)
+	want(t, e.do("PUT", "/v1/mailboxes/"+e.id, o.registerBody(nil, putCap(1), 0), nil), 400, mbCodeMismatch)
 	// A tampered counter: the signature no longer verifies.
 	var body map[string]any
 	_ = json.Unmarshal(e.registerBody(nil, putCap(1), 0), &body)
@@ -454,7 +462,7 @@ func TestMailbox11thMessageRefused(t *testing.T) {
 		t.Fatalf("after=8: %s", r.raw)
 	}
 	m := msgs[0].(map[string]any)
-	if m["seq"] != float64(9) || m["from"] != "requester" || m["to"] != "members" || m["blob"] != "bXNn" || m["at"] != float64(1764000000000) {
+	if m["seq"] != float64(9) || m["from"] != "requester" || m["to"] != "members" || !strings.HasPrefix(m["blob"].(string), "bXNn") || m["at"] != float64(1764000000000) {
 		t.Fatalf("message: %v", m)
 	}
 	if msgs[1].(map[string]any)["from"] != "member" {
@@ -727,8 +735,8 @@ func TestMailboxStorageCap(t *testing.T) {
 	t.Setenv("LANGSTROTH_RELAY_MAILBOX_MAX_BYTES", "20")
 	e := newMBEnv(t, nil, 1, false)
 	want(t, e.register(putCap(1), 0), 201, "")
-	want(t, e.put(putCap(1), rid(1), readKey(1), nil), 201, "") // 8 bytes
-	want(t, e.do("POST", e.reqPath(rid(1))+"/msgs", msgBody("members"), readHdr(readKey(1))), 201, "")
+	want(t, e.put(putCap(1), rid(1), readKey(1), nil), 201, "")                                                              // 8 bytes
+	want(t, e.do("POST", e.reqPath(rid(1))+"/msgs", []byte(`{"blob":"bXNn","to":"members"}`), readHdr(readKey(1))), 201, "") // 4 bytes
 	want(t, e.put(putCap(1), rid(2), readKey(2), nil), 201, "")
 	want(t, e.put(putCap(1), rid(3), readKey(3), nil), 507, mbCodeStorage)
 }

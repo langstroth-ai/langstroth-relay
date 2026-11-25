@@ -83,7 +83,9 @@ var relaySettingGroups = []settingGroup{
 		{"LANGSTROTH_RELAY_MAX_CONTACTS", "100000", "Memory store: live contact records (507 past it; 0 = unbounded)."},
 		{"LANGSTROTH_RELAY_MAX_CONTACT_BYTES", "0 (off)", "Postgres: contact record plus drop bytes across the relay; new ones past it get 507."},
 		{"LANGSTROTH_RELAY_MAX_MAILBOXES", "10000", "Registered approval mailboxes per process (507 mailboxes_full past it; 0 = unbounded)."},
-		{"LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT", "20", "Approval mailboxes one client address may register (429 mailbox_register past it; an IPv6 /48 gets 16 times as many; 0 = off). A mailbox no member touched for 30 days is forgotten."},
+		{"LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT", "20", "Approval mailboxes one client address may register (429 mailbox_register past it; an IPv6 /48 gets 16 times as many; 0 = off). A mailbox with no live request and no member call for 24 hours is forgotten."},
+		{"LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT", "1000", "Tenancy: approval mailboxes one tenant may register (429 mailbox_register past it; 0 = off)."},
+		{"LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT", "8388608 (8 MiB)", "Blob bytes the live requests in all mailboxes registered from one client address (IPv4 address or IPv6 /48) may hold (507 mailbox_storage; 0 = off). One mailbox holds at most 4 MiB."},
 		{"LANGSTROTH_RELAY_MAILBOX_MAX_BYTES", "67108864 (64 MiB)", "Request and message blob bytes all live approval requests hold (507 mailbox_storage past it; 0 = off)."},
 	}},
 	{"Blobs (encrypted attachments)", []relaySetting{

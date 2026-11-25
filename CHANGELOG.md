@@ -14,8 +14,13 @@
   their access token on a gated relay); a requester uses a read key for its
   own request; a put needs the mailbox's current put cap. Limits: 64 live
   requests per mailbox, 10 messages per request, 15-minute expiry, 10 puts
-  a minute per client address, 8 KiB requests and 32 KiB messages, no rid
-  reuse, and caps on registrations per client and per process. State is
+  a minute per client address (and per IPv6 /48 and per mailbox), 8 KiB
+  requests and 32 KiB messages, no rid reuse, no duplicate message on a
+  rid, a reset only to the next counter, byte caps per mailbox, per
+  registering client address and per relay, caps on registrations per
+  client, per tenant and per process, and long-poll caps per client and per
+  /48 that degrade to an immediate answer near a mailbox's or the relay's
+  cap. On a tenancy relay a mailbox belongs to the registering tenant. State is
   in-process only (not in the snapshot or Postgres): a restart forgets it
   and members register again. `langstroth-relay help mailboxes` and
   [docs/reference.md](docs/reference.md#approval-mailboxes-v1mailboxes).
@@ -26,7 +31,8 @@
   back to pasting codes). An unknown value, or `token` on a relay with no
   access gate, stops the relay; `check` gains a `mailboxes` line. New
   settings: `LANGSTROTH_RELAY_MAILBOXES`, `_MAX_MAILBOXES`,
-  `_MAX_MAILBOXES_PER_CLIENT`, `_MAILBOX_MAX_BYTES`.
+  `_MAX_MAILBOXES_PER_CLIENT`, `_MAX_MAILBOXES_PER_TENANT`,
+  `_MAILBOX_MAX_BYTES`, `_MAILBOX_MAX_BYTES_PER_CLIENT`.
 
 - **Built-in backups for the memory store** (`LANGSTROTH_RELAY_DATA_DIR`), on
   by default: every hour and on shutdown the relay copies `relay-state.json`,
