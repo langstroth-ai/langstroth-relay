@@ -236,6 +236,25 @@ func (s *postgresStore) pgDeleteBlobs(ctx context.Context, sql string, args ...a
 
 const blobReturning = ` RETURNING workspace, tenant, uploader, size`
 
+// RetainBlob moves a live blob's expiry forward in one statement (the same
+// rule as retainedExpiry: never past created_at plus maxAge, never earlier,
+// and a blob kept until deleted stays so). Sizes and usage are untouched.
+func (s *postgresStore) RetainBlob(ctx context.Context, room, id string, now, until, maxAge int64) (int64, bool, error) {
+	var exp int64
+	err := s.pool.QueryRow(ctx, `
+UPDATE relay_blobs SET expires_at = CASE WHEN expires_at = 0 THEN 0 ELSE
+  GREATEST(expires_at, CASE WHEN $5::bigint > 0 THEN LEAST($4::bigint, created_at + $5::bigint) ELSE $4::bigint END) END
+WHERE workspace = $1 AND id = $2 AND (expires_at = 0 OR expires_at > $3)
+RETURNING expires_at`, room, id, now, until, maxAge).Scan(&exp)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return exp, true, nil
+}
+
 func (s *postgresStore) DeleteBlob(ctx context.Context, room, id string) (bool, error) {
 	n, err := s.pgDeleteBlobs(ctx, `DELETE FROM relay_blobs WHERE workspace = $1 AND id = $2`+blobReturning, room, id)
 	return n > 0, err

@@ -321,6 +321,7 @@ blobs:
   writerMaxCount: null   # 500       LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT
   totalMaxBytes: null    # 0         LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES (relay-wide; 0 = off)
   retentionDays: null    # 30        LANGSTROTH_RELAY_BLOB_RETENTION_DAYS (0 = keep until deleted)
+  maxAgeDays: null       # 365       LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS (renewals never keep a blob past this age; 0 = no cap)
   rate: null             # 1         LANGSTROTH_RELAY_BLOB_RATE (uploads per second per uploader per workspace)
   burst: null            # 20        LANGSTROTH_RELAY_BLOB_BURST
   maxInflight: null      # 16        LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT (uploads being received at once, per pod; 0 = off)

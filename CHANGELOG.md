@@ -4,6 +4,29 @@
 
 ### Added
 
+- **Blob retain route** (`POST /v1/workspaces/{id}/blobs/{blob}/retain`),
+  so Ligus 0.4 clients can keep the attachments their workspace still refers
+  to: the blob then expires `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` from now,
+  never later than `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` (new, default 365,
+  `0` = no cap) after its upload, and never earlier than before. Same access
+  as a download, rated like a write, idempotent; `404 blob_not_found` for an
+  unknown or expired blob. Renewed blobs still count toward every quota.
+  Additive; no existing route changes, and no schema change (both stores
+  already keep the upload time). Chart value `blobs.maxAgeDays`.
+  **Upgrade note for self-hosters:** with the defaults, an attachment a
+  Ligus workspace still uses now stays up to a year instead of 30 days.
+  Set `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` to the longest you want to keep
+  one (for example `30` keeps today's behaviour).
+
+### Deprecated
+
+- **The relay roster for Ligus workspaces** (`LANGSTROTH_RELAY_MEMBERSHIP`).
+  Ligus never reads it and keeps its own signed roster in the workspace
+  log, so a relay roster on a Ligus workspace can drift from the real one;
+  the relay can't verify the signed roster because it holds no keys. Gate a
+  Ligus relay with signed tokens and workspace scope instead. Relay
+  membership stays supported for other clients.
+
 - **Approval mailboxes** (`/v1/mailboxes/*`), the transport for Ligus 0.4
   code-match approval: a new box, computer or phone puts a sealed request
   into a workspace's mailbox, and an Admin's device and the requester trade

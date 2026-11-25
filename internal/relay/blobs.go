@@ -27,6 +27,7 @@ import (
 //	POST   /v1/workspaces/{id}/blobs          body = ciphertext → 201 {"id","size","sha256","expiresAt"}
 //	GET    /v1/workspaces/{id}/blobs/{blob}   → 200 application/octet-stream
 //	DELETE /v1/workspaces/{id}/blobs/{blob}   → 204 (whether or not it existed)
+//	POST   /v1/workspaces/{id}/blobs/{blob}/retain → 200 {"id","expiresAt"} (404 if unknown)
 //
 // Ids are minted by the relay (32 random bytes, base64url without padding)
 // and there is no route that lists them, so a blob can't be found by
@@ -74,6 +75,7 @@ const (
 	defaultBlobRoomMaxBytes  = 512 << 20 // one workspace
 	defaultBlobRoomMaxCount  = 2000
 	defaultBlobRetentionDays = 30
+	defaultBlobMaxAgeDays    = 365 // retain never pushes a blob past this age
 	defaultBlobRate          = 1.0 // uploads per second per writer per workspace
 	defaultBlobBurst         = 20
 
@@ -128,6 +130,7 @@ type blobConfig struct {
 	writerMaxCount int64 // LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT (default 500; 0 = off)
 	totalMaxBytes  int64 // LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES (0 = off)
 	retention      time.Duration
+	maxAge         time.Duration  // LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS (0 = no cap)
 	rate           *ipRateLimiter // LANGSTROTH_RELAY_BLOB_RATE / _BURST (nil = off)
 	inflight       *blobInflight  // LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT / _WRITER_INFLIGHT (nil = off)
 	download       *ipRateLimiter // LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE / _BURST, per blob (nil = off)
@@ -148,6 +151,7 @@ func blobConfigFromEnv() blobConfig {
 		writerMaxCount: pos("LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT", defaultBlobWriterMaxCount),
 		totalMaxBytes:  pos("LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES", 0),
 		retention:      daysEnv("LANGSTROTH_RELAY_BLOB_RETENTION_DAYS", defaultBlobRetentionDays),
+		maxAge:         daysEnv("LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS", defaultBlobMaxAgeDays),
 	}
 	if c.maxBytes == 0 {
 		c.maxBytes = defaultBlobMaxBytes // a blob size cap is never off
@@ -188,7 +192,7 @@ func (c blobConfig) log() {
 	}
 	attrs := []any{"max_bytes", c.maxBytes, "room_max_bytes", c.roomMaxBytes, "room_max_count", c.roomMaxCount,
 		"writer_max_bytes", c.writerMaxBytes, "writer_max_count", c.writerMaxCount, "total_max_bytes", c.totalMaxBytes,
-		"retention_days", int(c.retention / (24 * time.Hour))}
+		"retention_days", int(c.retention / (24 * time.Hour)), "max_age_days", int(c.maxAge / (24 * time.Hour))}
 	if c.rate != nil {
 		attrs = append(attrs, "rate", c.rate.rate, "burst", c.rate.burst)
 	}
@@ -308,6 +312,31 @@ type blobStore interface {
 	PruneExpiredBlobs(ctx context.Context, now int64) (int64, error)
 }
 
+// blobRetainer is the optional retain half of a blob store (both built-in
+// stores have it). A Store without it answers 404 on the retain route, which
+// clients read as an old relay.
+type blobRetainer interface {
+	// RetainBlob moves a live (unexpired at now) blob's expiry to until,
+	// but never past its creation time plus maxAge (seconds; 0 = no cap)
+	// and never earlier than it already is. A blob kept until deleted
+	// (expiry 0) stays so. Returns the blob's expiry afterwards; false if
+	// room holds no such live blob.
+	RetainBlob(ctx context.Context, room, id string, now, until, maxAge int64) (int64, bool, error)
+}
+
+// retainedExpiry is the expiry RetainBlob sets on a blob created at created
+// with expiry cur. Shared by both stores so they can't disagree.
+func retainedExpiry(cur, created, until, maxAge int64) int64 {
+	if cur == 0 {
+		return 0 // kept until deleted
+	}
+	next := until
+	if maxAge > 0 && created+maxAge < next {
+		next = created + maxAge
+	}
+	return max(cur, next)
+}
+
 // newBlobID mints a blob id: 32 random bytes, base64url without padding.
 func newBlobID() string {
 	var b [blobIDBytes]byte
@@ -376,6 +405,7 @@ func (s *Server) registerBlobs(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{id}/blobs", s.scoped(s.postBlob))
 	mux.HandleFunc("GET /v1/workspaces/{id}/blobs/{blob}", s.scoped(s.getBlob))
 	mux.HandleFunc("DELETE /v1/workspaces/{id}/blobs/{blob}", s.scoped(s.deleteBlob))
+	mux.HandleFunc("POST /v1/workspaces/{id}/blobs/{blob}/retain", s.scoped(s.retainBlob))
 }
 
 type blobError struct {
@@ -615,6 +645,42 @@ func (s *Server) deleteBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// retainBlob renews a live blob: its expiry becomes now plus the retention,
+// capped at its creation plus LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS, so clients
+// keep the files their workspace still refers to without defeating the
+// operator's limit. Read access is enough (any member may keep a file it can
+// download); it is rated like a write, and the blob keeps counting against
+// every quota. Idempotent: a repeat moves the expiry only forward.
+func (s *Server) retainBlob(w http.ResponseWriter, r *http.Request) {
+	if !s.limitWrite(w, r) {
+		return
+	}
+	room := r.PathValue("id")
+	if !s.enforceRead(w, r, room) {
+		return
+	}
+	id := r.PathValue("blob")
+	rt, ok := s.blobStore.(blobRetainer)
+	if !ok || !validBlobID(id) {
+		blobNotFound(w)
+		return
+	}
+	now := time.Now().Unix()
+	until := int64(0) // retention off: blobs don't expire, nothing to move
+	if s.blobs.retention > 0 {
+		until = now + int64(s.blobs.retention/time.Second)
+	}
+	exp, found, err := rt.RetainBlob(r.Context(), room, id, now, until, int64(s.blobs.maxAge/time.Second))
+	if storeErr(w, err) {
+		return
+	}
+	if !found {
+		blobNotFound(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "expiresAt": exp})
 }
 
 // isRosterAdmin reports whether the caller is an Admin or Owner of room on

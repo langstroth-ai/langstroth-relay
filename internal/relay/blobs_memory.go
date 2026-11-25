@@ -217,6 +217,17 @@ func (s *memoryStore) GetBlob(_ context.Context, room, id string, now int64) (Bl
 	return b.meta, b.data, true, nil
 }
 
+func (s *memoryStore) RetainBlob(_ context.Context, room, id string, now, until, maxAge int64) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.blobs[room][id]
+	if b == nil || (b.meta.ExpiresAt != 0 && b.meta.ExpiresAt <= now) {
+		return 0, false, nil
+	}
+	b.meta.ExpiresAt = retainedExpiry(b.meta.ExpiresAt, b.meta.CreatedAt, until, maxAge)
+	return b.meta.ExpiresAt, true, nil
+}
+
 func (s *memoryStore) DeleteBlob(_ context.Context, room, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

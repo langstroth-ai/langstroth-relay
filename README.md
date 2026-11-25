@@ -157,7 +157,7 @@ All under `/v1`, JSON unless noted. Details: [docs/reference.md](docs/reference.
 | Area | Routes |
 |---|---|
 | Sync | `POST`/`GET /v1/workspaces/{id}/envelopes` (paged with `?after=`), `GET .../events` (Server-Sent Events nudges), `.../keyring`, `.../presence`, `.../candidates` |
-| Attachments | `POST /v1/workspaces/{id}/blobs`, `GET`/`DELETE .../blobs/{blob}`: opaque ciphertext, 25 MiB per blob by default, 30-day retention ([docs/blobs.md](docs/blobs.md)) |
+| Attachments | `POST /v1/workspaces/{id}/blobs`, `GET`/`DELETE .../blobs/{blob}`, `POST .../blobs/{blob}/retain`: opaque ciphertext, 25 MiB per blob by default, 30-day retention that clients renew (capped at 365 days) ([docs/blobs.md](docs/blobs.md)) |
 | Membership | `.../members`, `.../members/claim`, `.../invites`, `.../join` (with `LANGSTROTH_RELAY_MEMBERSHIP=1`) |
 | Pairing | `POST /v1/pair`, `GET /v1/pair/{code}`: single-use short codes |
 | Contacts | `PUT`/`GET`/`DELETE /v1/contacts/{cid}`, `.../drop` |
