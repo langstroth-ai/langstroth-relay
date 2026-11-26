@@ -333,6 +333,12 @@ After any deploy
 
 const membershipHelp = `Membership: roster mode
 
+Deprecated for Ligus workspaces (Ligus 0.4 and later): Ligus keeps its own
+signed roster in the workspace log and never reads this one, so a relay
+roster on a Ligus workspace can drift from the real one. Gate a Ligus relay
+with signed tokens and LANGSTROTH_RELAY_WORKSPACE_SCOPE instead. Roster mode
+stays supported for other clients.
+
 Off by default: any client that passes the access gate may read and write
 any workspace whose id it knows. Turn on relay-managed membership with
 

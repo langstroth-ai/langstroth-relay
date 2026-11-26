@@ -35,7 +35,7 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_WORKSPACE_SCOPE` | `off` | `off`, `claims` or `strict`: confine signed tokens to the workspace ids in their `workspaces` claim. See [Optional access gating](#optional-access-gating) |
 | `LANGSTROTH_RELAY_TOKEN_PUBKEY_NEXT` | empty | A second issuer public key accepted next to `LANGSTROTH_RELAY_TOKEN_PUBKEY` while the issuer rotates its key. Needs `LANGSTROTH_RELAY_TOKEN_PUBKEY`; a key that doesn't parse denies every token |
 | `LANGSTROTH_RELAY_TENANTS` | unset | Comma-separated tenant ids. When set, a signed token must carry a `tid` claim in this list (tokens without one get `401`). Needs `LANGSTROTH_RELAY_TOKEN_PUBKEY` and `LANGSTROTH_RELAY_WORKSPACE_SCOPE=strict` (the relay refuses to start otherwise, because `tid` alone does not keep one tenant out of another's workspaces). See [Sign-in with your identity provider](#sign-in-with-your-identity-provider-langstroth-auth) |
-| `LANGSTROTH_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join) |
+| `LANGSTROTH_RELAY_MEMBERSHIP` | off | `1`: relay-managed team membership (roster, claim, invites, join). Deprecated for Ligus workspaces (below); still supported for other clients |
 | `LANGSTROTH_RELAY_MEMBERSHIP_PUBKEY` | empty | Ed25519 key whose signed tokens identify callers for membership on an otherwise open relay |
 | `LANGSTROTH_RELAY_METRICS_TOKEN` | empty | bearer required on `/metrics` (empty = open) |
 | `LANGSTROTH_RELAY_CONTACTS` | on | `off`: unregister `/v1/contacts/*` (404, as on a v0.2 relay). See [Contacts](#contacts-v1contacts) |
@@ -89,7 +89,8 @@ names (`LANGSTROTH_RELAY_TRUSTED_PROXIES`), with IPv6 keyed on its /64.
 | `LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES` / `_ROOM_MAX_COUNT` | `536870912` / `2000` | blob bytes and blobs per workspace (`0` = off); `507 blob_room_bytes` / `blob_room_count` |
 | `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` / `_WRITER_MAX_COUNT` | 128 MiB / `500` (`0` = off) | per uploader (token subject, else address) per workspace; `507 blob_writer_*` |
 | `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | blob bytes across the relay; `507 blob_total_bytes` |
-| `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | a blob expires N days after upload (`0` = keep until deleted) |
+| `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | a blob expires N days after upload or its last renewal (`0` = keep until deleted) |
+| `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` | `365` | a renewal (`POST …/blobs/{blob}/retain`) never keeps a blob past N days after its upload (`0` = no cap). Below the retention it only stops renewals |
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | uploads per second per uploader per workspace; `429 blob_rate` |
 | `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` / `_WRITER_INFLIGHT` | `16` / `4` | uploads being received at once, relay-wide and per uploader (`0` = off); `429 blob_inflight` |
 | `LANGSTROTH_RELAY_BLOB_DOWNLOAD_RATE` / `_BURST` | `0.5` / `100` | downloads per second of one blob (`0` = off); `429 blob_download_rate` |
@@ -411,13 +412,20 @@ each download against the signed event that refers to it. On by default
 | `POST` | `/v1/workspaces/{id}/blobs` | raw ciphertext body (≤ `LANGSTROTH_RELAY_BLOB_MAX_BYTES`, 25 MiB) | `201 {"id":"<43 chars>","size":n,"sha256":"<hex>","expiresAt":<unix s, 0 = never>}` |
 | `GET` | `/v1/workspaces/{id}/blobs/{blob}` | | `200 application/octet-stream` (`Content-Disposition: attachment`, `nosniff`, `no-store`) |
 | `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204` (also when absent); `403 blob_not_yours` when it was uploaded by another token subject and the caller isn't a workspace Admin on the relay roster |
+| `POST` | `/v1/workspaces/{id}/blobs/{blob}/retain` | no body | `200 {"id":"<43 chars>","expiresAt":<unix s, 0 = never>}`: the blob now expires `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` from now, but never later than `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` after its upload, and never earlier than it already did. `404 blob_not_found` for an unknown or expired blob (and on relays older than this route) |
 
 Ids are 32 random bytes minted by the relay (base64url, no padding); there
 is no listing route. An unknown, expired or other workspace's blob is `404
 blob_not_found`; an upload to a workspace that holds nothing is `404
 no_workspace` (blobs never create rooms). Per-blob, per-workspace,
 per-uploader, per-tenant and relay-wide quotas, an upload rate, 30-day
-retention and deletion: [blobs.md](blobs.md).
+retention, renewal and deletion: [blobs.md](blobs.md).
+
+The retain route takes the same access as a download (any member on a
+roster-gated relay, any client on an open one) and counts toward the write
+rate (`LANGSTROTH_RELAY_PUSH_RATE`) as well as the read rate. A renewed blob
+still counts toward every blob quota. Repeating it is harmless: the expiry
+only moves forward.
 
 ## Contacts (`/v1/contacts/*`)
 
@@ -665,6 +673,16 @@ the `hrt1` format is unchanged, but a relay that doesn't enforce it (older, or
 `off`) ignores it: a scoped token is only confined where the operator turns
 this on. Relay-managed membership (`LANGSTROTH_RELAY_MEMBERSHIP=1`) is the
 alternative when the roster, not the issuer, should decide.
+
+**The relay roster and Ligus.** For Ligus workspaces the relay roster is
+deprecated as of Ligus 0.4. Ligus keeps its own roster as signed events
+inside the workspace log and never reads the relay's, so a relay roster on
+a Ligus workspace is a second list that can drift from the real one (a
+member removed in Ligus can stay on it, and the other way round). The relay
+can't check it against the signed roster, because it holds no workspace
+keys. Gate a Ligus relay with signed tokens and workspace scope instead.
+Relay membership stays a supported feature for other clients that want the
+relay to keep their roster.
 
 **Deferred (known, needs a design decision — not implemented here):**
 - *High-entropy workspace ids.* Clients today derive a workspace id from a

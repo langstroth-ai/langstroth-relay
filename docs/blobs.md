@@ -18,7 +18,7 @@ blob is caught on the client and the download fails closed.
 
 ## Routes
 
-All three sit behind the access gate and the workspace scope check like the
+All four sit behind the access gate and the workspace scope check like the
 other `/v1/workspaces/{id}/…` routes; with relay membership on, any member
 (Viewer included) may upload, download and delete, as for envelopes. A delete
 still succeeds only for the blob's uploader or a workspace Admin (below).
@@ -28,6 +28,7 @@ still succeeds only for the blob's uploader or a workspace Admin (below).
 | `POST` | `/v1/workspaces/{id}/blobs` | the ciphertext as the raw body (any `Content-Type`) | `201 {"id":"<43 chars>","size":<bytes>,"sha256":"<hex of the stored bytes>","expiresAt":<unix s, 0 = never>}` |
 | `GET` | `/v1/workspaces/{id}/blobs/{blob}` | | `200 application/octet-stream`, with `Content-Length`, `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` |
 | `DELETE` | `/v1/workspaces/{id}/blobs/{blob}` | | `204`, whether or not the blob existed; `403 {"error":"blob_not_yours"}` when the blob is bound to another uploader (below) |
+| `POST` | `/v1/workspaces/{id}/blobs/{blob}/retain` | no body | `200 {"id":"<43 chars>","expiresAt":<unix s, 0 = never>}`; `404 {"error":"blob_not_found"}` for an unknown or expired blob (below, "Renewing") |
 
 - **Ids are minted by the relay:** 32 random bytes, base64url without padding
   (43 characters of `A–Z a–z 0–9 - _`). There is no route that lists a
@@ -55,6 +56,33 @@ still succeeds only for the blob's uploader or a workspace Admin (below).
   Downloads are paced the same way: a client that reads nothing for 15
   seconds, or averages under 8 KiB/s after the first 15, is disconnected
   (the response is cut short; the client's hash check fails it closed).
+
+### Renewing
+
+A blob expires `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` after its upload. A
+client that still refers to it (a Ligus attachment nobody has deleted)
+renews it with `POST /v1/workspaces/{id}/blobs/{blob}/retain`, and the blob
+then expires that many days from now. Two limits keep renewals from
+defeating the operator's retention:
+
+- A renewal never keeps a blob past `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS`
+  (default `365`) after its upload; `0` removes the cap. After that age the
+  blob expires at its last expiry whatever the clients do.
+- A renewed blob still counts toward every blob quota (per workspace, per
+  uploader, per tenant, relay-wide), so renewing never makes room for more.
+
+Who may renew: whoever may download it (any member, Viewer included, on a
+roster-gated relay; any client with the id on an open one). It is rated
+like a write (`LANGSTROTH_RELAY_PUSH_RATE`) as well as a read, and it is
+idempotent: the expiry only ever moves forward, so a repeat or a client
+asking twice changes nothing. An unknown, expired or deleted blob answers
+`404 blob_not_found`, and so does a relay older than this route; clients
+treat both as "this file is no longer on the relay" and keep working as
+before. A blob with no expiry (retention `0`) keeps none.
+
+Ligus clients renew once a blob is a third of the way through its
+retention (after about ten days with the default), at most once a day per
+blob, from the sharer's devices and Admins' desktops.
 
 ### Deleting
 
@@ -84,7 +112,8 @@ deleted it. The relay's binding is a second line: a member who learned an
 id from the log can't remove someone else's file from the relay.
 
 **What an Admin's client needs.** The relay recognises an Admin only
-through relay membership (`LANGSTROTH_RELAY_MEMBERSHIP`), by the Admin's
+through relay membership (`LANGSTROTH_RELAY_MEMBERSHIP`, deprecated for
+Ligus workspaces: see the [reference](reference.md#optional-access-gating)), by the Admin's
 token subject on the workspace roster. A Ligus Admin removing a member
 should therefore call `DELETE /v1/workspaces/{id}/members/{account}` (which
 deletes every blob that member's subject uploaded there, below), or delete
@@ -112,14 +141,15 @@ Every limit refuses; nothing is evicted to make room. Storage refusals are
 
 | Variable | Default | `error` | Meaning |
 |---|---|---|---|
-| `LANGSTROTH_RELAY_BLOBS` | `on` | | `off` unregisters the three routes (`404`) |
+| `LANGSTROTH_RELAY_BLOBS` | `on` | | `off` unregisters the four routes (`404`) |
 | `LANGSTROTH_RELAY_BLOB_MAX_BYTES` | `26214400` (25 MiB) | `413 blob_too_large` | one blob. `0` keeps the default: there is always a cap |
 | `LANGSTROTH_RELAY_BLOB_ROOM_MAX_BYTES` | `536870912` (512 MiB) | `507 blob_room_bytes` | blob bytes per workspace (`0` = off) |
 | `LANGSTROTH_RELAY_BLOB_ROOM_MAX_COUNT` | `2000` | `507 blob_room_count` | blobs per workspace (`0` = off) |
 | `LANGSTROTH_RELAY_BLOB_WRITER_MAX_BYTES` | `134217728` (128 MiB) | `507 blob_writer_bytes` | blob bytes per uploader per workspace: the per-member quota. The uploader is the token subject (tenant-qualified), else the client address |
 | `LANGSTROTH_RELAY_BLOB_WRITER_MAX_COUNT` | `500` | `507 blob_writer_count` | blobs per uploader per workspace |
 | `LANGSTROTH_RELAY_BLOB_TOTAL_MAX_BYTES` | `0` (off) | `507 blob_total_bytes` | blob bytes across the relay; `Retry-After` ten minutes |
-| `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | | a blob expires this many days after upload (`0` = kept until deleted). Expired blobs answer `404` at once and are deleted hourly |
+| `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` | `30` | | a blob expires this many days after upload or its last renewal (`0` = kept until deleted). Expired blobs answer `404` at once and are deleted hourly |
+| `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` | `365` | | a renewal never keeps a blob past this many days after its upload (`0` = no cap) |
 | `LANGSTROTH_RELAY_BLOB_RATE` / `_BURST` | `1` / `20` | `429 blob_rate` | uploads per second per uploader per workspace (`0` rate = off). Downloads count toward the normal read rate |
 | `LANGSTROTH_RELAY_BLOB_MAX_INFLIGHT` | `16` | `429 blob_inflight` | uploads being received at once, per relay process (`0` = off). Each holds up to `BLOB_MAX_BYTES` in memory while it arrives, so this bounds upload memory to about `16 × 25 MiB`; `Retry-After` five seconds |
 | `LANGSTROTH_RELAY_BLOB_WRITER_INFLIGHT` | `4` | `429 blob_inflight` | uploads being received at once per uploader (`0` = off), so one client holding uploads open can't take every slot |
