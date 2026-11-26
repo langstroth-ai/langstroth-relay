@@ -238,7 +238,7 @@ for example 800MiB on a 1 GB machine).
 const deployHelp = `Deploy: one-shot sequences
 
 Every sequence ends with a health check that prints "ok". Replace <version>
-with a release, for example 0.3.2 (images and charts are tagged without the
+with a release, for example 0.4.0 (images and charts are tagged without the
 leading v). Three rules hold everywhere:
   - One instance per URL: pairing codes, live push and rate limits live in
     the process. Replace the relay rather than rolling it.

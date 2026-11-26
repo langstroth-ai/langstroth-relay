@@ -56,7 +56,7 @@ kubectl label namespace langstroth-relay pod-security.kubernetes.io/enforce=rest
 kubectl -n langstroth-relay create secret generic relay-db \
   --from-literal=DATABASE_URL='postgres://relay:<password>@db.example.internal:5432/relay?sslmode=verify-full'
 helm install langstroth-relay oci://ghcr.io/langstroth-ai/charts/langstroth-relay \
-  --version 0.3.2 -n langstroth-relay \
+  --version 0.4.0 -n langstroth-relay \
   --set database.mode=external --set database.external.existingSecret=relay-db \
   --set 'database.external.cidrs={10.0.0.5/32}'   # the database's address, for the egress policy
 kubectl -n langstroth-relay rollout status deploy/langstroth-relay-sync

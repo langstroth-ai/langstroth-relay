@@ -596,6 +596,15 @@ code, so this is the relay's refusal shape too), plus `retryAfter` and
 `bad_signature`, `mailbox_mismatch`, `invalid_request`, `too_large`. With
 mailboxes off, every route is a plain `404` with no problem document.
 
+**Reading a `404`** (the rule Ligus 0.4 clients follow):
+`mailbox_unknown` means no mailbox at that id (members register it again,
+counter 0); `request_unknown` means the `rid` is unknown, expired or
+deleted (the request is dead); a `404` without a mailbox problem document
+(mailboxes off, an older relay, or the tunnel-only pod) means the relay has
+no mailbox routes, and the client falls back to pasting codes. A client
+also reads any `404` from register (`PUT /v1/mailboxes/{mailbox}`) as "no
+routes", which is what a reset across tenants gets too.
+
 **Storage.** Mailboxes live in the relay process only, like pairing codes:
 they are not in the snapshot or in Postgres. A restart forgets every
 registration and live request; Ligus members register again when a call

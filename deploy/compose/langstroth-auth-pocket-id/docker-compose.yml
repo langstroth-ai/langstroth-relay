@@ -4,7 +4,7 @@
 #
 # Before the first start:
 #   mkdir -p secrets && chmod 700 secrets
-#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/langstroth-ai/langstroth-auth:0.3.0 keygen --out /out/signing-key
+#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/langstroth-ai/langstroth-auth:0.4.0 keygen --out /out/signing-key
 #     (prints public_key=...; put it in .env as LANGSTROTH_RELAY_TOKEN_PUBKEY)
 #   After creating the OIDC client in Pocket ID, save its secret:
 #   printf %s '<client secret>' > secrets/pocket-id-client-secret && chmod 600 secrets/pocket-id-client-secret
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   langstroth-auth:
-    image: ghcr.io/langstroth-ai/langstroth-auth:0.3.0
+    image: ghcr.io/langstroth-ai/langstroth-auth:0.4.0
     command: ["serve", "--config", "/etc/langstroth-auth/config.json"]
     volumes:
       - ./langstroth-auth.json:/etc/langstroth-auth/config.json:ro
@@ -36,7 +36,7 @@ services:
     restart: unless-stopped
 
   relay:
-    image: ghcr.io/langstroth-ai/langstroth-relay:0.3.0
+    image: ghcr.io/langstroth-ai/langstroth-relay:0.4.0
     environment:
       LANGSTROTH_RELAY_TOKEN_PUBKEY: ${LANGSTROTH_RELAY_TOKEN_PUBKEY:?set it from langstroth-auth keygen}
       LANGSTROTH_RELAY_WORKSPACE_SCOPE: strict

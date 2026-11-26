@@ -12,7 +12,7 @@ for *ligustica*, the Italian honeybee).
 </picture>
 
 ```sh
-docker run -d -p 8443:8443 -v langstroth-data:/data ghcr.io/langstroth-ai/langstroth-relay:0.3.2
+docker run -d -p 8443:8443 -v langstroth-data:/data ghcr.io/langstroth-ai/langstroth-relay:0.4.0
 curl localhost:8443/v1/health   # ok
 ```
 

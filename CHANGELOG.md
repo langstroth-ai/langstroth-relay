@@ -2,30 +2,15 @@
 
 ## Unreleased
 
+## v0.4.0
+
+The relay side of Ligus 0.4: approval mailboxes for code-match approval,
+renewable blob attachments, and built-in backups for the memory store. Every
+addition is additive: `/v1` and `hrt1` request and response formats for the
+existing routes are unchanged (the golden route and contact tests pass with
+mailboxes on and off), and there is no schema change.
+
 ### Added
-
-- **Blob retain route** (`POST /v1/workspaces/{id}/blobs/{blob}/retain`),
-  so Ligus 0.4 clients can keep the attachments their workspace still refers
-  to: the blob then expires `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` from now,
-  never later than `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` (new, default 365,
-  `0` = no cap) after its upload, and never earlier than before. Same access
-  as a download, rated like a write, idempotent; `404 blob_not_found` for an
-  unknown or expired blob. Renewed blobs still count toward every quota.
-  Additive; no existing route changes, and no schema change (both stores
-  already keep the upload time). Chart value `blobs.maxAgeDays`.
-  **Upgrade note for self-hosters:** with the defaults, an attachment a
-  Ligus workspace still uses now stays up to a year instead of 30 days.
-  Set `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` to the longest you want to keep
-  one (for example `30` keeps today's behaviour).
-
-### Deprecated
-
-- **The relay roster for Ligus workspaces** (`LANGSTROTH_RELAY_MEMBERSHIP`).
-  Ligus never reads it and keeps its own signed roster in the workspace
-  log, so a relay roster on a Ligus workspace can drift from the real one;
-  the relay can't verify the signed roster because it holds no keys. Gate a
-  Ligus relay with signed tokens and workspace scope instead. Relay
-  membership stays supported for other clients.
 
 - **Approval mailboxes** (`/v1/mailboxes/*`), the transport for Ligus 0.4
   code-match approval: a new box, computer or phone puts a sealed request
@@ -57,6 +42,20 @@
   `_MAX_MAILBOXES_PER_CLIENT`, `_MAX_MAILBOXES_PER_TENANT`,
   `_MAILBOX_MAX_BYTES`, `_MAILBOX_MAX_BYTES_PER_CLIENT`.
 
+- **Blob retain route** (`POST /v1/workspaces/{id}/blobs/{blob}/retain`),
+  so Ligus 0.4 clients can keep the attachments their workspace still refers
+  to: the blob then expires `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` from now,
+  never later than `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` (new, default 365,
+  `0` = no cap) after its upload, and never earlier than before. Same access
+  as a download, rated like a write, idempotent; `404 blob_not_found` for an
+  unknown or expired blob. Renewed blobs still count toward every quota.
+  Additive; no existing route changes, and no schema change (both stores
+  already keep the upload time). Chart value `blobs.maxAgeDays`.
+  **Upgrade note for self-hosters:** with the defaults, an attachment a
+  Ligus workspace still uses now stays up to a year instead of 30 days.
+  Set `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS` to the longest you want to keep
+  one (for example `30` keeps today's behaviour).
+
 - **Built-in backups for the memory store** (`LANGSTROTH_RELAY_DATA_DIR`), on
   by default: every hour and on shutdown the relay copies `relay-state.json`,
   gzipped and owner-only, to `<data dir>/backups/` and keeps the newest 24.
@@ -73,6 +72,15 @@
   `_BACKUP_RESTORE`; a value that doesn't parse stops the relay. Postgres is
   not covered (use the database's own backups). See `langstroth-relay help
   backup`.
+
+### Deprecated
+
+- **The relay roster for Ligus workspaces** (`LANGSTROTH_RELAY_MEMBERSHIP`).
+  Ligus never reads it and keeps its own signed roster in the workspace
+  log, so a relay roster on a Ligus workspace can drift from the real one;
+  the relay can't verify the signed roster because it holds no keys. Gate a
+  Ligus relay with signed tokens and workspace scope instead. Relay
+  membership stays supported for other clients.
 
 ### Fixed
 
@@ -108,6 +116,62 @@
   examples, exit codes) and topic as one `ligus.help.v1` document.
 - Every flag takes `--flag=value` as well as `--flag value`, and `check`
   takes `-o json|text` (`-o json` is `--json`).
+
+### Upgrading (operator notes)
+
+- **Approval mailboxes are on by default** (`LANGSTROTH_RELAY_MAILBOXES=on`),
+  on open and on token-gated relays. On a gated relay a put that presents
+  the put cap needs no token (a joining device has none yet); register,
+  reset and every member call still need a valid access token. `token`
+  requires a token for puts too and needs an access gate (on a relay with
+  no gate it stops the relay); `off` answers a plain `404` on every
+  `/v1/mailboxes/*` route and Ligus falls back to pasting codes. Any other
+  value stops the relay.
+- **Mailbox caps** (all per process; `0` turns a cap off):
+  `LANGSTROTH_RELAY_MAX_MAILBOXES` (10000, then `507 mailboxes_full`),
+  `LANGSTROTH_RELAY_MAX_MAILBOXES_PER_CLIENT` (20 per client address, 16
+  times that per IPv6 /48, then `429 mailbox_register`),
+  `LANGSTROTH_RELAY_MAX_MAILBOXES_PER_TENANT` (1000, tenancy relays only),
+  `LANGSTROTH_RELAY_MAILBOX_MAX_BYTES_PER_CLIENT` (8 MiB) and
+  `LANGSTROTH_RELAY_MAILBOX_MAX_BYTES` (64 MiB, then `507 mailbox_storage`).
+  The fixed limits (64 live requests per mailbox, 10 messages per request,
+  15-minute expiry, 4 MiB per mailbox, the put rates and long-poll caps)
+  are not settings. Mailbox state is in the relay process only: a restart
+  forgets it and Ligus members register again, so keep one sync process
+  per relay URL (the chart already does).
+- **Blob retention.** `LANGSTROTH_RELAY_BLOB_RETENTION_DAYS` (30) is
+  unchanged, but a Ligus 0.4 client now renews the attachments its
+  workspace still refers to, up to `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS`
+  (new, default **365**, `0` = no cap) after the upload. An attachment in
+  use can therefore stay up to a year instead of 30 days and keeps counting
+  toward every blob quota; set `LANGSTROTH_RELAY_BLOB_MAX_AGE_DAYS=30` to
+  keep v0.3 behaviour. Chart value `blobs.maxAgeDays`.
+- **Backups (memory store only).** With `LANGSTROTH_RELAY_DATA_DIR` set the
+  relay now writes gzipped, owner-only backups of `relay-state.json` to
+  `<data dir>/backups/` every hour and on shutdown, keeps the newest 24 and,
+  at startup, restores the newest good one when the state file is missing or
+  unreadable. Settings: `LANGSTROTH_RELAY_BACKUP` (`on`),
+  `LANGSTROTH_RELAY_BACKUP_DIR` (`<data dir>/backups`),
+  `LANGSTROTH_RELAY_BACKUP_INTERVAL` (`1h`, at least `1m`),
+  `LANGSTROTH_RELAY_BACKUP_KEEP` (24) and `LANGSTROTH_RELAY_BACKUP_RESTORE`
+  (`on`). A value that doesn't parse stops the relay, and so does a backup
+  directory where backups exist but none passes its checks. Backups share
+  the data volume unless `LANGSTROTH_RELAY_BACKUP_DIR` points elsewhere, so
+  size the volume for the state plus up to 24 compressed copies. Postgres is
+  not covered: use the database's own backups.
+- `langstroth-relay check` gains `mailboxes` and `backup` lines; run it
+  after upgrading.
+- Rollback: pin v0.3.2 again. Nothing new is persisted outside the backups
+  directory (mailboxes are in memory, blob renewals reuse the existing
+  expiry field), so v0.3.2 reads the same state and ignores `backups/`.
+
+### Versions
+
+- Image `ghcr.io/langstroth-ai/langstroth-relay:0.4.0` and
+  `ghcr.io/langstroth-ai/langstroth-auth:0.4.0`; Helm charts
+  `langstroth-relay` 0.4.0 and `langstroth-auth` 0.1.3 (app version 0.4.0).
+  The Docker Compose files (relay, and the langstroth-auth Dex and Pocket ID
+  examples) pin the same images. Pairs with Ligus 0.4.0.
 
 ## v0.3.2
 
