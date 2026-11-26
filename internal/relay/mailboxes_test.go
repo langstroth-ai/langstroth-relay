@@ -801,3 +801,83 @@ func TestExistingRoutesMatchGoldenWithMailboxesOff(t *testing.T) {
 	t.Setenv("LANGSTROTH_RELAY_MAILBOXES", "off")
 	checkGolden(t, runGoldenRequests(t))
 }
+
+// ---- the client's reading of a 404 (Ligus 0.4 code-match wire note, 4) ----
+
+// mbClass404 classifies a 404 the way ligus-runtime's approval_mailbox client
+// does: a mailbox problem document's code ("error" first, then "code"), and
+// "no_routes" for any 404 without one.
+func mbClass404(t *testing.T, status int, raw string) string {
+	t.Helper()
+	if status != 404 {
+		t.Fatalf("got %d, want 404: %s", status, raw)
+	}
+	var doc map[string]any
+	if json.Unmarshal([]byte(raw), &doc) == nil {
+		e, _ := doc["error"].(string)
+		c, _ := doc["code"].(string)
+		if e != c {
+			t.Fatalf("problem document's error %q and code %q differ: %s", e, c, raw)
+		}
+		if e == mbCodeUnknown || e == mbCodeRequestUnknown {
+			return e
+		}
+	}
+	return "no_routes"
+}
+
+func TestMailbox404sReadAsTheLigusClientReadsThem(t *testing.T) {
+	e := newMBEnv(t, gatedPolicy("tok"), 1, false)
+	e.token = "tok"
+	class := func(r mbResp) string { return mbClass404(t, r.status, r.raw) }
+
+	// No mailbox yet: every route that names one answers mailbox_unknown.
+	if c := class(e.do("GET", "/v1/mailboxes/"+e.id, nil, nil)); c != mbCodeUnknown {
+		t.Fatalf("GET mailbox: %s", c)
+	}
+	if c := class(e.member("GET", "/v1/mailboxes/"+e.id+"/requests", nil)); c != mbCodeUnknown {
+		t.Fatalf("list: %s", c)
+	}
+	if c := class(e.put(putCap(1), rid(1), readKey(1), nil)); c != mbCodeUnknown {
+		t.Fatalf("put: %s", c)
+	}
+
+	// Registered: an unknown, deleted or expired rid is request_unknown,
+	// for a member and for a requester.
+	want(t, e.register(putCap(1), 0), 201, "")
+	for _, r := range []mbResp{
+		e.member("POST", e.reqPath(rid(9))+"/msgs", msgBody("members")),
+		e.member("GET", e.reqPath(rid(9))+"/msgs", nil),
+		e.do("GET", e.reqPath(rid(9))+"/msgs", nil, readHdr(readKey(9))),
+		e.do("DELETE", e.reqPath(rid(9)), nil, readHdr(readKey(9))),
+	} {
+		if c := class(r); c != mbCodeRequestUnknown {
+			t.Fatalf("unknown rid: %s (%s)", c, r.raw)
+		}
+	}
+	want(t, e.put(putCap(1), rid(1), readKey(1), nil), 201, "")
+	want(t, e.do("DELETE", e.reqPath(rid(1)), nil, readHdr(readKey(1))), 204, "")
+	if c := class(e.do("GET", e.reqPath(rid(1))+"/msgs", nil, readHdr(readKey(1)))); c != mbCodeRequestUnknown {
+		t.Fatalf("deleted rid: %s", c)
+	}
+
+	// Register needs the access token on a gated relay (401, not a 404).
+	e.token = ""
+	want(t, e.register(putCap(1), 0), 401, mbCodeTokenRequired)
+
+	// Mailboxes off on a gated relay: plain 404s, no token asked for.
+	t.Setenv("LANGSTROTH_RELAY_MAILBOXES", "off")
+	off := httptest.NewServer(New(Options{Store: newMemoryStore(), Entitlement: gatedPolicy("tok")}).Handler())
+	defer off.Close()
+	for _, p := range []string{"/v1/mailboxes/" + e.id, "/v1/mailboxes/" + e.id + "/requests/" + rid(1) + "/msgs"} {
+		resp, err := http.Get(off.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if c := mbClass404(t, resp.StatusCode, string(b)); c != "no_routes" {
+			t.Fatalf("off %s: %s", p, c)
+		}
+	}
+}

@@ -5,8 +5,8 @@
 #
 # Before the first start:
 #   mkdir -p secrets && chmod 700 secrets
-#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/langstroth-ai/langstroth-auth:0.3.0 keygen --out /out/signing-key
-#   docker run --rm ghcr.io/langstroth-ai/langstroth-auth:0.3.0 gen-token > secrets/dex-client-secret && chmod 600 secrets/dex-client-secret
+#   docker run --rm -v "$PWD/secrets:/out" --user "$(id -u)" ghcr.io/langstroth-ai/langstroth-auth:0.4.0 keygen --out /out/signing-key
+#   docker run --rm ghcr.io/langstroth-ai/langstroth-auth:0.4.0 gen-token > secrets/dex-client-secret && chmod 600 secrets/dex-client-secret
 #   Put the same secret in .env as LANGSTROTH_AUTH_DEX_SECRET, plus the GitHub
 #   OAuth app id/secret as GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET.
 services:
@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
 
   langstroth-auth:
-    image: ghcr.io/langstroth-ai/langstroth-auth:0.3.0
+    image: ghcr.io/langstroth-ai/langstroth-auth:0.4.0
     command: ["serve", "--config", "/etc/langstroth-auth/config.json"]
     volumes:
       - ./langstroth-auth.json:/etc/langstroth-auth/config.json:ro
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   relay:
-    image: ghcr.io/langstroth-ai/langstroth-relay:0.3.0
+    image: ghcr.io/langstroth-ai/langstroth-relay:0.4.0
     environment:
       LANGSTROTH_RELAY_TOKEN_PUBKEY: ${LANGSTROTH_RELAY_TOKEN_PUBKEY:?set it from langstroth-auth keygen}
       LANGSTROTH_RELAY_WORKSPACE_SCOPE: strict
