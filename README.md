@@ -162,6 +162,7 @@ All under `/v1`, JSON unless noted. Details: [docs/reference.md](docs/reference.
 | Pairing | `POST /v1/pair`, `GET /v1/pair/{code}`: single-use short codes |
 | Contacts | `PUT`/`GET`/`DELETE /v1/contacts/{cid}`, `.../drop` |
 | Approval mailboxes | `GET`/`PUT /v1/mailboxes/{mailbox}`, `.../requests`, `.../requests/{rid}`, `.../requests/{rid}/msgs` (long poll): sealed join requests for code-match approval (`LANGSTROTH_RELAY_MAILBOXES`, on by default) |
+| Short link codes | `PUT`/`GET`/`DELETE /v1/mailboxes/{mailbox}/codes/{code}`, `POST /v1/link-codes/{code}`: a short code a new device types instead of the approval address; the relay sees only an Argon2id lookup id and a sealed blob (on and off with the mailboxes) |
 | Phone tunnel | `/v1/tunnel/info`, `host`, `accept`, `connect` (WebSocket, Noise end to end), `revoke` |
 | Tenancy | `GET /v1/tenant`, `GET /v1/tenant/rooms`, `DELETE /v1/tenant/rooms/{id}` |
 | Operations | `GET /` (status page), `GET /v1/health`, `GET /metrics` |

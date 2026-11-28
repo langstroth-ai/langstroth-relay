@@ -622,6 +622,80 @@ mailbox to a room, and it can withhold or delay requests; it can't read or
 forge one, and the code the two people compare catches a relay that
 substitutes keys.
 
+## Short link codes (`/v1/mailboxes/{mailbox}/codes/*`, `/v1/link-codes/*`)
+
+Ligus 0.5 links a person's new device by a short code instead of a pasted
+approval address: the device the person already uses shows `K7Q-4MX`, and
+the new device types it. The relay maps the code to the mailbox and to the
+address sealed by the client, and stays content-blind: it never sees the
+short code or the address. On with the approval mailboxes and off with them
+(`LANGSTROTH_RELAY_MAILBOXES=off`: every route is a plain `404`, and Ligus
+falls back to the pasted address). Additive: no existing route changes.
+
+**What the client sends.** The short code is 6 Crockford base32 symbols
+(30 bits). The client stretches it with Argon2id (64 MiB, 3 passes, 1 lane,
+48 bytes out; salt `"ligus-link-code-v1\0"` followed by the relay's base
+URL), takes the first 16 bytes as the **lookup id** (`{code}` below, 32
+lowercase hex) and the other 32 as the key that seals the approval address
+(ChaCha20-Poly1305). The relay checks only that the lookup id is 32 hex
+characters and the blob is base64url; it can't tell a code from the lookup
+id, and finding the code from it takes up to 2^30 Argon2id guesses.
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| `PUT` | `/v1/mailboxes/{mailbox}/codes/{code}` | member | `{"blob":"<b64u ≤ 2 KiB>","ttlSecs":60..600}` (`ttlSecs` optional, default 600) | `201 {"code","expiresAt","used":false}` new; `200` the same mailbox posting it again while live and unused (the blob is replaced, the expiry kept); `409 code_taken` (another mailbox holds it), `409 code_used`, `429 link_codes_full`, `429 link_code_rate` |
+| `GET` | `/v1/mailboxes/{mailbox}/codes/{code}` | member | | `200 {"code","expiresAt","used"}`; `404 code_unknown` (expired, deleted, another mailbox's, or the relay restarted) |
+| `DELETE` | `/v1/mailboxes/{mailbox}/codes/{code}` | member | | `204`, also when it is already gone |
+| `POST` | `/v1/link-codes/{code}` | none (a token with `token` mode) | | `200 {"mailbox","blob","expiresAt"}` and the code is used; `404 code_unknown` (mistyped, expired or already used); `429 link_code_attempts` |
+
+"Member" is the mailbox member auth above (`X-Ligus-Mailbox-Auth` signed
+over the body, plus the access token on a gated relay), so only a holder of
+the workspace key can post a code for its mailbox. A resolve needs no token,
+like a put: the new device has none yet. These routes skip the access gate
+and check their own auth.
+
+**Single-use.** The first resolve uses the code: the entry keeps no blob
+after that and stays, marked used, until it expires, so the device showing
+the code can tell "used" (a request should arrive) from `code_unknown`.
+
+**Restarts.** Codes live in the relay process with the mailboxes, never in
+the snapshot or Postgres. After a restart the status call answers
+`code_unknown`; the device that shows the code registers its mailbox again
+and posts the same code again (`201`), so the person keeps the code they
+were given.
+
+**Limits.** 10 minutes at most; 4 live, unused codes per mailbox (`429
+link_codes_full`); 10 posts a minute per mailbox (`429 link_code_rate`); 32 codes held, used
+ones included, for the codes posted from one IPv4 address or IPv6 /48 (`429
+link_codes_full`: anyone can register a mailbox, so one network can't fill
+the pool);
+10 000 codes per process, used ones included until they expire (`507
+link_codes_full`); a blob of at most 2 KiB (`413 too_large`). Every resolve,
+found or not, spends the client's budget: 10 a minute per client address
+(an IPv6 /64) and 160 per IPv6 /48 (`429 link_code_attempts` with
+`Retry-After`).
+
+**How hard is guessing?** One address gets at most 100 lookups in a code's
+10 minutes: a 1 in 10 million chance (100 / 2^30) of hitting one given live
+code, and a thousand addresses together get 1 in 10 000, each lookup
+costing the guesser one 64 MiB Argon2id run. A hit gives the guesser only
+the approval address, which is not a secret and grants nothing (the person
+still compares a code on both screens and confirms with a passkey), and
+uses the code up, so the real device sees `code_unknown` and the person
+asks for a new code.
+
+**Errors** are the mailbox problem documents above. Codes: `code_unknown`,
+`code_taken`, `code_used`, `link_codes_full`, `link_code_rate`,
+`link_code_attempts`, plus the mailbox ones for auth and bodies
+(`mailbox_unknown`, `auth_required`, `bad_member_auth`, `token_required`,
+`invalid_request`, `too_large`). A `404` without a problem document means
+the relay has no code routes (an older relay, mailboxes off, or the
+tunnel-only pod).
+
+**Metrics.** `hive_relay_link_codes` (gauge), and the `link_codes_full`,
+`link_code_rate` and `link_code_attempts` refusals in
+`hive_relay_mailbox_refusals_total{code}`.
+
 ## GitHub social routes (deprecated, off by default)
 
 The identity directory, account and friends routes (`/v1/directory/*`,

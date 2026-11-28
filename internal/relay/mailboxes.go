@@ -135,6 +135,7 @@ const (
 // mailboxRefusalCodes are the 429/507 codes counted on /metrics (fixed label set).
 var mailboxRefusalCodes = []string{
 	mbCodeFull, mbCodeTooManyMsgs, mbCodePutRate, mbCodeRegister, mbCodeMailboxesFull, mbCodeStorage, mbCodePolls,
+	lcCodeFull, lcCodeRate, lcCodeAttempts,
 }
 
 // mailboxModeFromEnv reads LANGSTROTH_RELAY_MAILBOXES (default on).
@@ -1231,6 +1232,9 @@ func (s *Server) writeMailboxMetrics(w io.Writer) {
 	fmt.Fprintf(w, "# HELP hive_relay_mailboxes Registered approval mailboxes.\n# TYPE hive_relay_mailboxes gauge\nhive_relay_mailboxes %d\n", boxes)
 	fmt.Fprintf(w, "# HELP hive_relay_mailbox_requests Live approval requests.\n# TYPE hive_relay_mailbox_requests gauge\nhive_relay_mailbox_requests %d\n", reqs)
 	fmt.Fprintf(w, "# HELP hive_relay_mailbox_bytes Blob bytes held by live approval requests and their messages.\n# TYPE hive_relay_mailbox_bytes gauge\nhive_relay_mailbox_bytes %d\n", bytes)
+	if s.codes != nil {
+		fmt.Fprintf(w, "# HELP hive_relay_link_codes Short link codes held (live and used, until they expire).\n# TYPE hive_relay_link_codes gauge\nhive_relay_link_codes %d\n", s.codes.count(h.now()))
+	}
 	fmt.Fprintf(w, "# HELP hive_relay_mailbox_refusals_total Mailbox requests refused by a limit (429 or 507).\n# TYPE hive_relay_mailbox_refusals_total counter\n")
 	for _, c := range mailboxRefusalCodes {
 		fmt.Fprintf(w, "hive_relay_mailbox_refusals_total{code=%q} %d\n", c, h.refusals[c].Load())

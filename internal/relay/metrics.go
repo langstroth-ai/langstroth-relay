@@ -112,6 +112,8 @@ var routeTemplates = [][]string{
 	{"v1", "mailboxes", "{}", "requests", "{}", "msgs"},
 	{"v1", "mailboxes", "{}", "requests", "{}"},
 	{"v1", "mailboxes", "{}", "requests"},
+	{"v1", "mailboxes", "{}", "codes", "{}"},
+	{"v1", "link-codes", "{}"},
 	{"v1", "mailboxes", "{}"},
 	{"v1", "pair", "{}"},
 	{"v1", "pair"},
