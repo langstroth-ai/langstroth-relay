@@ -125,7 +125,8 @@ type Server struct {
 
 	githubRoutes bool // deprecated GitHub social routes registered (github_routes.go)
 
-	mbox *mailboxHub // nil = /v1/mailboxes/ off (404) (mailboxes.go)
+	mbox  *mailboxHub // nil = /v1/mailboxes/ off (404) (mailboxes.go)
+	codes *linkCodes  // short link codes, with the mailboxes (linkcodes.go)
 
 	contacts   ContactStore // nil = /v1/contacts/ off (404)
 	contactCfg contactConfig
@@ -253,6 +254,7 @@ func New(o Options) *Server {
 	} else if mode != mailboxesOff {
 		_, open := s.entitlement.Allow("", nowUnix())
 		s.mbox = newMailboxHub(mode, !open)
+		s.codes = newLinkCodes()
 	}
 	// A tenant-confined gate is always workspace-strict (see
 	// entitlementConfigError): tid alone would let one tenant's token reach
@@ -361,6 +363,8 @@ func (s *Server) Handler() http.Handler {
 
 	// Approval mailboxes (Ligus 0.4): additive; off -> 404.
 	s.registerMailboxes(mux)
+	// Short link codes (Ligus 0.5): additive, with the mailboxes; off -> 404.
+	s.registerLinkCodes(mux)
 
 	// User/token management — gated by the AdminAuthorizer seam (not the relay
 	// access token), so these bypass the access gate below.
@@ -429,12 +433,14 @@ func (s *Server) gate(next http.Handler) http.Handler {
 			defer release()
 		}
 		if r.URL.Path == "/" || r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/v1/admin/") ||
-			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") || strings.HasPrefix(r.URL.Path, "/v1/mailboxes/") || (s.tenancy != nil && (r.URL.Path == "/v1/tenant" || strings.HasPrefix(r.URL.Path, "/v1/tenant/"))) {
+			strings.HasPrefix(r.URL.Path, "/v1/tunnel/") || strings.HasPrefix(r.URL.Path, "/v1/mailboxes/") || strings.HasPrefix(r.URL.Path, "/v1/link-codes/") || (s.tenancy != nil && (r.URL.Path == "/v1/tenant" || strings.HasPrefix(r.URL.Path, "/v1/tenant/"))) {
 			// The tunnel authenticates hosts and phones itself (signed
 			// challenges + host-signed credentials); a host's registration
 			// token is checked against this same access policy (tunnel_policy.go).
 			// Approval mailboxes check their own auth (mailboxes.go): a
 			// requester has no token, and a member's token is checked there.
+			// Short link codes too (linkcodes.go): resolving one needs no
+			// token, like a put, since the new device has none yet.
 			// The status page, health, and metrics are public; the admin API runs
 			// its own AdminAuthorizer (an operator credential, not a relay token).
 			next.ServeHTTP(w, r)

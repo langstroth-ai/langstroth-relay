@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- **Short link codes** (`PUT|GET|DELETE /v1/mailboxes/{mailbox}/codes/{code}`,
+  `POST /v1/link-codes/{code}`), for Ligus 0.5: a person's device shows a
+  6-character code and their new device types it instead of pasting the
+  approval address. The client derives a lookup id and a sealing key from
+  the code with Argon2id, so the relay holds only the lookup id, the mailbox
+  and a sealed blob, and never sees the code or the address. Posting a code
+  is a member call on the mailbox; resolving one needs no token (as for a
+  put) and uses it up. Limits: 10 minutes at most, 4 live codes per mailbox,
+  10 posts a minute per mailbox, 32 codes from one IPv4 address or IPv6
+  /48, 10 000 codes per process, 2 KiB blobs, and
+  10 resolves a minute per client address (160 per IPv6 /48), found or not.
+  In memory with the mailboxes (on and off with
+  `LANGSTROTH_RELAY_MAILBOXES`); after a restart the device that shows the
+  code posts it again. Additive: no existing route changes and no new
+  setting. New metric `hive_relay_link_codes`. `langstroth-relay help
+  mailboxes` and [docs/reference.md](docs/reference.md#short-link-codes-v1mailboxesmailboxcodes-v1link-codes).
+
 ## v0.4.0
 
 The relay side of Ligus 0.4: approval mailboxes for code-match approval,

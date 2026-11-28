@@ -456,6 +456,26 @@ bad_signature, mailbox_mismatch, invalid_request, too_large.
 
 Metrics: hive_relay_mailboxes, hive_relay_mailbox_requests,
 hive_relay_mailbox_bytes and hive_relay_mailbox_refusals_total{code}.
+
+Short link codes (Ligus 0.5), on and off with the mailboxes: a person's
+device posts a short code for its mailbox, and their new device types it
+instead of pasting the approval address. The client stretches the 6-symbol
+code with Argon2id into a lookup id and a key that seals the address, so the
+relay sees neither the code nor the address.
+  PUT    /v1/mailboxes/{mailbox}/codes/{code}   a member: post or re-post
+                                                {blob, ttlSecs 60..600}
+  GET    /v1/mailboxes/{mailbox}/codes/{code}   a member: {code, expiresAt, used}
+  DELETE /v1/mailboxes/{mailbox}/codes/{code}   a member
+  POST   /v1/link-codes/{code}                  anyone: {mailbox, blob}; single-use
+Limits: 10 minutes at most, 4 live codes per mailbox (429 link_codes_full),
+10 posts a minute per mailbox (429 link_code_rate), 32 posted from one
+IPv4 address or IPv6 /48 and 10000 per process (429 and 507
+link_codes_full), a 2 KiB blob, and 10 resolves a minute per client address
+(160 per IPv6 /48; 429 link_code_attempts), found or not. Codes are in
+memory too: after a restart the status call answers code_unknown and the
+device posts the same code again. Codes: code_unknown, code_taken,
+code_used, link_codes_full, link_code_rate, link_code_attempts. Metric:
+hive_relay_link_codes. docs/reference.md, "Short link codes".
 `
 
 const tunnelHelp = `Tunnel: the Ligus iPhone app to a ligus serve host
